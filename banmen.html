@@ -630,7 +630,7 @@
       // 所属ごとにグループ化（同じbusho_codeのブロックを1カードにまとめる）
       const bushoGroups = {};
       configData.forEach(c => {
-        if (c.sp_jun === 99 || c.sp_jun === 98) return;
+        if (c.sp_jun === 99 || c.sp_jun === 98 || c.sp_jun === 97) return;
         if (!bushoGroups[c.busho_code]) {
           // busho_hyoji_junでカードの列・行位置を決める
           // col_no（0始まり）→ +1で1始まりに
@@ -672,6 +672,18 @@
         });
       }
 
+      // 車検カード
+      const syakenConfig = configData.find(c => c.sp_jun === 97);
+      if (syakenConfig) {
+        allCards.push({
+          type: 'syaken',
+          col: (syakenConfig.col_no || 0) + 1,
+          row: (syakenConfig.row_no || 0) + 1,
+          hyoji: syakenConfig.busho_hyoji_jun ?? 999,
+          cfg: syakenConfig
+        });
+      }
+
       // ===== スマホ表示：左パネルなし・SP順（busho_hyoji_jun）で縦一列 =====
       if (window.innerWidth <= 768) {
         allCards.sort((a, b) => (a.hyoji || 0) - (b.hyoji || 0));
@@ -690,6 +702,8 @@
             card = buildYasumiCard(c.cfg);
           } else if (c.type === 'oen') {
             card = buildOenCard(c.cfg);
+          } else if (c.type === 'syaken') {
+            card = buildSyakenCard(c.cfg);
           }
           if (card) colDiv.appendChild(card);
         });
@@ -725,6 +739,8 @@
             card = buildYasumiCard(c.cfg);
           } else if (c.type === 'oen') {
             card = buildOenCard(c.cfg);
+          } else if (c.type === 'syaken') {
+            card = buildSyakenCard(c.cfg);
           }
           if (card) colDiv.appendChild(card);
         });
@@ -974,6 +990,35 @@
       oenList.id = 'oen-list';
       renderOenList(oenList);
       body.appendChild(oenList);
+
+      card.appendChild(body);
+      return card;
+    }
+
+    // ===== 車検カード（この日、車検などで使えない車の一覧。表示のみ）=====
+    function buildSyakenCard(cfg) {
+      const card = document.createElement('div');
+      card.className = 'yasumi-card';
+      card.innerHTML = `<div class="yasumi-header" style="color:#e67e22">🔧 車検</div>`;
+
+      const body = document.createElement('div');
+      body.className = 'yasumi-body';
+
+      if (syakenCarCodes.size === 0) {
+        body.innerHTML = `<div style="text-align:center;color:#aaa;font-size:0.8rem;padding:8px 0;">本日はありません</div>`;
+      } else {
+        const list = document.createElement('div');
+        list.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px;padding:2px;';
+        [...syakenCarCodes].forEach(carCode => {
+          const car = masters.carMap[carCode];
+          const label = car ? (car.car_no || car.car_code) : carCode;
+          const chip = document.createElement('span');
+          chip.style.cssText = 'background:#fdecea;color:#c0392b;font-size:0.75rem;font-weight:bold;padding:3px 8px;border-radius:3px;';
+          chip.textContent = label;
+          list.appendChild(chip);
+        });
+        body.appendChild(list);
+      }
 
       card.appendChild(body);
       return card;
@@ -1470,7 +1515,7 @@
       const allCards = [];
       const bushoGroups = {};
       configData.forEach(c => {
-        if (c.sp_jun === 99 || c.sp_jun === 98) return;
+        if (c.sp_jun === 99 || c.sp_jun === 98 || c.sp_jun === 97) return;
         if (!bushoGroups[c.busho_code]) {
           bushoGroups[c.busho_code] = { col: (c.col_no || 0) + 1, row: (c.row_no || 0) + 1, hyoji: c.busho_hyoji_jun || 0, items: [] };
         }
