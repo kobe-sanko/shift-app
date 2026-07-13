@@ -46,8 +46,9 @@
     }
 
     /* シフト表 */
-    .table-wrap { overflow-x: auto; overflow-y: visible; flex: 1; }
-    table { border-collapse: collapse; background: white; font-size: 0.75rem; white-space: nowrap; box-shadow: 0 1px 4px rgba(0,0,0,0.1); }
+    .table-wrap { overflow-x: auto; overflow-y: auto; max-height: 75vh; flex: 1; }
+    /* border-collapse:collapseだとブラウザによってはposition:stickyのthが固定されないため、separateにしている */
+    table { border-collapse: separate; border-spacing: 0; background: white; font-size: 0.75rem; white-space: nowrap; box-shadow: 0 1px 4px rgba(0,0,0,0.1); }
     th { background: #dde; padding: 4px 3px; text-align: center; border: 1px solid #ccc; min-width: 38px; position: sticky; top: 0; z-index: 2; }
     th.name-th { min-width: 100px; position: sticky; left: 0; top: 0; z-index: 3; background: #dde; }
     td { padding: 3px 2px; text-align: center; border: 1px solid #eee; }
