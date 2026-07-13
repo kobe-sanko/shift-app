@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>応援一覧</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="common.js"></script>
+  <style>
+    body { font-family: sans-serif; margin: 0; padding: 10px; background: #f5f5f5; }
+    h1 { font-size: 1.2rem; text-align: center; margin: 6px 0; }
+    .back { display: table; text-align: center; margin: 4px auto 8px; color: #4a90e2; text-decoration: none; }
+    .top-bar { display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+    .month-select { font-size: 0.9rem; padding: 4px 8px; border: 1px solid #ccc; border-radius: 4px; }
+    .btn { font-size: 0.82rem; padding: 5px 12px; border: none; border-radius: 4px; cursor: pointer; color: white; background: #4a90e2; }
+    .filter-row { display: flex; flex-wrap: wrap; gap: 5px; justify-content: center; margin-bottom: 8px; }
+    .filter-btn { padding: 3px 10px; border: none; border-radius: 4px; cursor: pointer; font-size: 0.82rem; }
+    .filter-btn.active { outline: 3px solid #333; font-weight: bold; }
+    .msg { text-align: center; font-size: 0.85rem; padding: 6px; border-radius: 4px; margin-bottom: 6px; display: none; }
+    .msg.ok  { background: #d4edda; color: #155724; display: block; }
+    .msg.err { background: #fdecea; color: #c0392b; display: block; }
+
+    .table-wrap { overflow-x: auto; }
+    table { border-collapse: collapse; background: white; font-size: 0.75rem; white-space: nowrap; box-shadow: 0 1px 4px rgba(0,0,0,0.1); margin: 0 auto; }
+    th { background: #dde; padding: 4px 3px; text-align: center; border: 1px solid #ccc; min-width: 34px; }
+    th.name-th { min-width: 90px; position: sticky; left: 0; z-index: 2; background: #dde; }
+    th.sat { background: #d0e8ff; }
+    th.sun { background: #ffd0d0; }
+    td { padding: 3px 2px; text-align: center; border: 1px solid #eee; vertical-align: top; }
+    td.name-td { position: sticky; left: 0; background: white; z-index: 1; padding: 3px 6px; min-width: 90px; font-size: 0.78rem; text-align: left; }
+    td.sat-col { background: #f0f6ff; }
+    td.sun-col { background: #fff0f0; }
+    tr.hidden { display: none; }
+    .badge { display: block; padding: 1px 4px; border-radius: 3px; font-size: 0.68rem; font-weight: bold; margin: 1px auto; }
+    .loading { text-align: center; padding: 30px; color: #888; font-size: 1rem; }
+  </style>
+</head>
+<body>
+  <h1 id="page-title">🔄 応援一覧</h1>
+  <a class="back" href="index.html">← メニューへ</a>
+  <div id="msg" class="msg"></div>
+
+  <div class="top-bar">
+    <select class="month-select" id="month-sel" onchange="loadData()"></select>
+    <button class="btn" onclick="loadData()">表示</button>
+  </div>
+
+  <div class="filter-row" id="filter-row">
+    <button class="filter-btn active" style="background:#555;color:white" onclick="filterTable('', this)">全員</button>
+  </div>
+
+  <div class="loading" id="loading">読み込み中…</div>
+
+  <div class="table-wrap" id="table-wrap" style="display:none">
+    <table>
+      <thead id="thead"></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+
+  <script>
+    let masters = {};
+    let staffRows = [];
+    let oenRows = [];   // その月のshift_banmen_oen全件
+    let currentYM = '';
+    let daysInMonth = 31;
+    let currentFilter = '';
+
+    async function init() {
+      masters = await loadMasters();
+
+      currentYM = typeof getCurrentYearMonth === 'function' ? getCurrentYearMonth()
+        : (() => { const n = new Date(); return `${n.getFullYear()}${String(n.getMonth() + 1).padStart(2, '0')}`; })();
+      buildMonthSelect();
+      buildFilterButtons();
+
+      await loadData();
+    }
+
+    // ===== 月セレクト =====
+    function buildMonthSelect() {
+      const sel = document.getElementById('month-sel');
+      const now = new Date();
+      for (let i = -6; i <= 1; i++) {
+        const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const ym = `${y}${m}`;
+        const opt = document.createElement('option');
+        opt.value = ym;
+        opt.textContent = `${y}年${m}月`;
+        if (ym === currentYM) opt.selected = true;
+        sel.appendChild(opt);
+      }
+    }
+
+    // ===== 所属フィルターボタン（900番台は除く）=====
+    function buildFilterButtons() {
+      const row = document.getElementById('filter-row');
+      masters.bushos.filter(b => parseInt(b.busho_code) < 900).forEach(b => {
+        const btn = document.createElement('button');
+        btn.className = 'filter-btn';
+        btn.style.background = b.color_h || '#888';
+        btn.style.color = getTextColor(b.color_h || '#888');
+        btn.textContent = b.busho_name;
+        btn.onclick = () => filterTable(b.busho_code, btn);
+        row.appendChild(btn);
+      });
+    }
+
+    function filterTable(bushoCode, btn) {
+      currentFilter = bushoCode;
+      document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+      if (btn) btn.classList.add('active');
+      renderTable();
+    }
+
+    // ===== データ読み込み =====
+    async function loadData() {
+      currentYM = document.getElementById('month-sel').value || currentYM;
+      document.getElementById('loading').style.display = 'block';
+      document.getElementById('table-wrap').style.display = 'none';
+
+      const year = parseInt(currentYM.substring(0, 4));
+      const month = parseInt(currentYM.substring(4, 6));
+      daysInMonth = new Date(year, month, 0).getDate();
+
+      const dateFrom = `${currentYM}01`;
+      const dateTo = `${currentYM}${String(daysInMonth).padStart(2, '0')}`;
+
+      const [staffRes, oenRes] = await Promise.all([
+        sb.from('shift_staff').select('staff_code, name').order('staff_code'),
+        sb.from('shift_banmen_oen').select('date, staff_code, busho_code')
+          .gte('date', dateFrom).lte('date', dateTo),
+      ]);
+
+      if (staffRes.error || oenRes.error) {
+        showMsg('データの読み込みに失敗しました', 'err');
+        console.error(staffRes.error || oenRes.error);
+        return;
+      }
+
+      staffRows = staffRes.data || [];
+      oenRows = oenRes.data || [];
+
+      buildHeader();
+      renderTable();
+
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('table-wrap').style.display = 'block';
+    }
+
+    // ===== ヘッダー（日付列）構築 =====
+    function buildHeader() {
+      const thead = document.getElementById('thead');
+      const year = parseInt(currentYM.substring(0, 4));
+      const month = parseInt(currentYM.substring(4, 6));
+
+      let html = '<tr><th class="name-th">氏名</th>';
+      for (let d = 1; d <= daysInMonth; d++) {
+        const wd = new Date(year, month - 1, d).getDay();
+        const cls = wd === 0 ? 'sun' : wd === 6 ? 'sat' : '';
+        html += `<th class="${cls}">${d}<br><span style="font-size:0.62rem">${getWeekdayName(wd)}</span></th>`;
+      }
+      html += '</tr>';
+      thead.innerHTML = html;
+    }
+
+    function getDayClass(d) {
+      const year = parseInt(currentYM.substring(0, 4));
+      const month = parseInt(currentYM.substring(4, 6));
+      const wd = new Date(year, month - 1, d).getDay();
+      return wd === 0 ? 'sun-col' : wd === 6 ? 'sat-col' : '';
+    }
+
+    // ===== 本体テーブル描画 =====
+    function renderTable() {
+      const tbody = document.getElementById('tbody');
+      tbody.innerHTML = '';
+
+      // staff_code → 日付ごとの応援エントリー一覧
+      const byStaff = {};
+      oenRows.forEach(r => {
+        if (!byStaff[r.staff_code]) byStaff[r.staff_code] = {};
+        if (!byStaff[r.staff_code][r.date]) byStaff[r.staff_code][r.date] = [];
+        byStaff[r.staff_code][r.date].push(r);
+      });
+
+      // その月に応援実績がある社員だけ表示（社員コード順）
+      const targetStaffCodes = Object.keys(byStaff).sort();
+
+      targetStaffCodes.forEach(staffCode => {
+        const staff = staffRows.find(s => s.staff_code === staffCode);
+        const staffName = staff?.name || staffCode;
+        const dayMap = byStaff[staffCode];
+
+        // フィルター中：その所属の応援が1件もない社員は非表示
+        if (currentFilter) {
+          const hasMatch = Object.values(dayMap).some(list => list.some(e => e.busho_code === currentFilter));
+          if (!hasMatch) return;
+        }
+
+        let rowHtml = `<tr><td class="name-td">${staffName}</td>`;
+        for (let d = 1; d <= daysInMonth; d++) {
+          const dateStr = `${currentYM}${String(d).padStart(2, '0')}`;
+          let entries = dayMap[dateStr] || [];
+          if (currentFilter) entries = entries.filter(e => e.busho_code === currentFilter);
+
+          const badges = entries.map(e => {
+            const b = masters.bushoMap[e.busho_code];
+            const color = b?.color_h || '#888';
+            const name = b?.busho_name || e.busho_code;
+            return `<span class="badge" style="background:${color};color:${getTextColor(color)}">${name}</span>`;
+          }).join('');
+
+          rowHtml += `<td class="${getDayClass(d)}">${badges}</td>`;
+        }
+        rowHtml += '</tr>';
+        tbody.insertAdjacentHTML('beforeend', rowHtml);
+      });
+
+      if (tbody.innerHTML === '') {
+        tbody.innerHTML = `<tr><td colspan="${daysInMonth + 1}" style="padding:20px;color:#888;">この月の応援データはありません</td></tr>`;
+      }
+    }
+
+    function showMsg(text, type) {
+      const el = document.getElementById('msg');
+      el.textContent = text;
+      el.className = 'msg ' + type;
+      setTimeout(() => { el.className = 'msg'; }, 3000);
+    }
+
+    init();
+  </script>
+</body>
+</html>

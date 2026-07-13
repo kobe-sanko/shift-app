@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>駐車場マスタ</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="common.js"></script>
+  <style>
+    body { font-family: sans-serif; margin: 0 auto; padding: 10px; background: #f5f5f5; max-width: 600px; }
+    h1 { font-size: 1.2rem; text-align: center; margin: 10px 0; }
+    .back { display: block; text-align: center; margin: 8px 0; color: #4a90e2; text-decoration: none; width: fit-content; margin-left: auto; margin-right: auto; }
+    .msg { text-align: center; font-size: 0.85rem; padding: 6px; border-radius: 4px; margin-bottom: 8px; display: none; }
+    .msg.ok  { background: #d4edda; color: #155724; display: block; }
+    .msg.err { background: #fdecea; color: #c0392b; display: block; }
+
+    /* フォーム */
+    .form-box { background: #fff0e8; border-radius: 8px; padding: 8px; margin-bottom: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.1); }
+    .form-table { width: 100%; table-layout: fixed; border-collapse: separate; border-spacing: 4px 0; display: table; }
+    .form-cell { display: table-cell; vertical-align: bottom; }
+    .form-cell label { display: block; font-size: 0.75rem; color: #666; text-align: center; margin-bottom: 3px; }
+    .form-cell input, .form-cell select {
+      width: 100%; font-size: 0.85rem; padding: 4px 2px;
+      border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; text-align: center;
+    }
+    .btn-row { display: flex; gap: 6px; margin-top: 6px; }
+    button { font-size: 0.85rem; padding: 5px 12px; border: none; border-radius: 4px; cursor: pointer; color: white; }
+    .btn-update { background: #27ae60; }
+    .btn-clear  { background: #e67e22; }
+    .btn-add-slot { background: #8e44ad; }
+    .btn-del-slot { background: #e74c3c; }
+
+    /* テーブル */
+    table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,0.1); font-size: 0.85rem; table-layout: fixed; }
+    th { background: #6c3483; color: white; padding: 7px 4px; text-align: center; border-bottom: 1px solid #ddd; }
+    td { padding: 8px 4px; text-align: center; border-bottom: 1px solid #f0f0f0; cursor: pointer; }
+    tr:hover td { background: #f0f8ff; }
+    tr.selected td { background: #d0e8ff !important; }
+    .empty-slot { color: #bbb; }
+    .loading { text-align: center; padding: 20px; color: #888; }
+    .slot-manage { display: flex; gap: 8px; justify-content: flex-end; margin-bottom: 8px; }
+  </style>
+</head>
+<body>
+  <h1>🅿️ 駐車場マスタ</h1>
+  <a class="back" href="index.html">← メニューへ</a>
+  <div id="msg" class="msg"></div>
+
+  <!-- 割り当てフォーム -->
+  <div class="form-box">
+    <div class="form-table">
+      <div class="form-cell" style="width:80px">
+        <label>枠番号</label>
+        <input type="number" id="f_slot" readonly style="background:#f0f0f0">
+      </div>
+      <div class="form-cell">
+        <label>社員</label>
+        <select id="f_staff">
+          <option value="">-- 空き --</option>
+        </select>
+      </div>
+    </div>
+    <div class="btn-row">
+      <button class="btn-update"  onclick="saveRow()">割り当て更新</button>
+      <button class="btn-clear"   onclick="clearRow()">空きにする</button>
+    </div>
+  </div>
+
+  <!-- 枠の追加・削除ボタン -->
+  <div class="slot-manage">
+    <button class="btn-add-slot" onclick="addSlot()">＋ 枠を追加</button>
+    <button class="btn-del-slot" onclick="deleteLastSlot()">－ 最後の枠を削除</button>
+  </div>
+
+  <div id="loading" class="loading">読み込み中...</div>
+  <table id="main-table" style="display:none">
+    <thead>
+      <tr>
+        <th style="width:80px">枠番号</th>
+        <th>社員名</th>
+        <th style="width:110px">社員コード</th>
+      </tr>
+    </thead>
+    <tbody id="tbody"></tbody>
+  </table>
+
+  <script>
+    let masters = {};
+    let rows = [];
+    let selectedSlot = null;
+
+    async function init() {
+      masters = await loadMasters();
+      buildSelects();
+      await loadRows();
+    }
+
+    function buildSelects() {
+      const sel = document.getElementById('f_staff');
+      masters.staffs.filter(s => !s.retired).forEach(s => {
+        const opt = document.createElement('option');
+        opt.value = s.staff_code;
+        opt.textContent = `${s.name}（${s.staff_code}）`;
+        sel.appendChild(opt);
+      });
+    }
+
+    async function loadRows() {
+      const { data, error } = await sb.from('shift_chusyajo').select('*').order('slot_no');
+      if (error) { showMsg('データの読み込みに失敗しました: ' + error.message, 'err'); return; }
+      rows = data || [];
+      renderTable();
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('main-table').style.display = '';
+    }
+
+    function renderTable() {
+      const tbody = document.getElementById('tbody');
+      tbody.innerHTML = '';
+      rows.forEach(r => {
+        const staff = masters.staffMap[r.staff_code];
+        const tr = document.createElement('tr');
+        if (r.slot_no === selectedSlot) tr.classList.add('selected');
+        tr.onclick = () => selectRow(r);
+        const nameHtml = staff
+          ? `<strong>${staff.name}</strong>`
+          : `<span class="empty-slot">（空き）</span>`;
+        tr.innerHTML = `
+          <td>${r.slot_no}</td>
+          <td>${nameHtml}</td>
+          <td>${r.staff_code || '－'}</td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    function selectRow(r) {
+      selectedSlot = r.slot_no;
+      document.getElementById('f_slot').value  = r.slot_no;
+      document.getElementById('f_staff').value = r.staff_code || '';
+      renderTable();
+    }
+
+    async function saveRow() {
+      const slot = document.getElementById('f_slot').value;
+      if (!slot) { showMsg('枠を選択してください（一覧をクリック）', 'err'); return; }
+      const staffCode = document.getElementById('f_staff').value || null;
+      const { error } = await sb.from('shift_chusyajo').update({ staff_code: staffCode }).eq('slot_no', parseInt(slot));
+      if (error) { showMsg('更新に失敗しました: ' + error.message, 'err'); return; }
+      showMsg('更新しました', 'ok');
+      await loadRows();
+    }
+
+    async function clearRow() {
+      const slot = document.getElementById('f_slot').value;
+      if (!slot) { showMsg('枠を選択してください（一覧をクリック）', 'err'); return; }
+      if (!confirm(`${slot}番を空きにしますか？`)) return;
+      const { error } = await sb.from('shift_chusyajo').update({ staff_code: null }).eq('slot_no', parseInt(slot));
+      if (error) { showMsg('更新に失敗しました: ' + error.message, 'err'); return; }
+      showMsg('空きにしました', 'ok');
+      document.getElementById('f_staff').value = '';
+      await loadRows();
+    }
+
+    async function addSlot() {
+      // 現在の最大番号の次の番号で追加
+      const maxNo = rows.length > 0 ? Math.max(...rows.map(r => r.slot_no)) : 0;
+      const newNo = maxNo + 1;
+      if (!confirm(`${newNo}番の枠を追加しますか？`)) return;
+      const { error } = await sb.from('shift_chusyajo').insert({ slot_no: newNo, staff_code: null });
+      if (error) { showMsg('追加に失敗しました: ' + error.message, 'err'); return; }
+      showMsg(`${newNo}番の枠を追加しました`, 'ok');
+      await loadRows();
+    }
+
+    async function deleteLastSlot() {
+      if (rows.length === 0) { showMsg('削除できる枠がありません', 'err'); return; }
+      const lastRow = rows[rows.length - 1];
+      if (lastRow.staff_code) {
+        showMsg(`${lastRow.slot_no}番には社員が割り当てられているため削除できません`, 'err');
+        return;
+      }
+      if (!confirm(`${lastRow.slot_no}番の枠を削除しますか？`)) return;
+      const { error } = await sb.from('shift_chusyajo').delete().eq('slot_no', lastRow.slot_no);
+      if (error) { showMsg('削除に失敗しました: ' + error.message, 'err'); return; }
+      showMsg(`${lastRow.slot_no}番の枠を削除しました`, 'ok');
+      selectedSlot = null;
+      document.getElementById('f_slot').value = '';
+      await loadRows();
+    }
+
+    function showMsg(text, type) {
+      const el = document.getElementById('msg');
+      el.textContent = text;
+      el.className = `msg ${type}`;
+      setTimeout(() => { el.className = 'msg'; }, 3000);
+    }
+
+    init();
+  </script>
+</body>
+</html>

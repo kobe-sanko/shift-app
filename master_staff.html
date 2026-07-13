@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>社員マスタ</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="common.js"></script>
+  <style>
+    body { font-family: sans-serif; margin: 0 auto; padding: 10px; background: #f5f5f5; max-width: 900px; }
+    h1 { font-size: 1.2rem; text-align: center; margin: 10px 0; }
+    .back { display: block; text-align: center; margin: 8px 0; color: #4a90e2; text-decoration: none; width: fit-content; margin-left: auto; margin-right: auto; }
+    .filter-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; justify-content: center; }
+    .filter-btn { padding: 4px 12px; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85rem; }
+    .filter-btn.active { outline: 3px solid #333; font-weight: bold; }
+    .hidden { display: none !important; }
+
+    .msg { text-align: center; font-size: 0.85rem; padding: 6px; border-radius: 4px; margin-bottom: 8px; display: none; }
+    .msg.ok  { background: #d4edda; color: #155724; display: block; }
+    .msg.err { background: #fdecea; color: #c0392b; display: block; }
+
+    /* テーブル */
+    table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,0.1); font-size: 0.85rem; table-layout: fixed; }
+    th { background: #eee; padding: 7px 4px; text-align: center; border-bottom: 1px solid #ddd; }
+    td { padding: 6px 4px; text-align: center; border-bottom: 1px solid #f0f0f0; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    tr:hover td { background: #f0f8ff; }
+    tr.selected td { background: #d0e8ff !important; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.8rem; }
+    .retired-text { color: #aaa; }
+    .loading { text-align: center; padding: 20px; color: #888; }
+
+    /* フォーム：テーブルと完全同幅 */
+    .form-box { background: #fff0f5; border-radius: 8px; padding: 8px; margin-bottom: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.1); }
+    .form-table { width: 100%; table-layout: fixed; border-collapse: separate; border-spacing: 4px 0; display: table; }
+    .form-cell { display: table-cell; vertical-align: bottom; }
+    .form-cell label { display: block; font-size: 0.75rem; color: #666; text-align: center; margin-bottom: 3px; }
+    .form-cell input, .form-cell select {
+      width: 100%; font-size: 0.85rem; padding: 4px 2px;
+      border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; text-align: center;
+    }
+    .btn-row { display: flex; gap: 6px; margin-top: 6px; }
+    button { font-size: 0.85rem; padding: 5px 12px; border: none; border-radius: 4px; cursor: pointer; color: white; }
+    .btn-add    { background: #4a90e2; }
+    .btn-update { background: #27ae60; }
+    .btn-delete { background: #e74c3c; }
+  </style>
+</head>
+<body>
+  <h1>👤 社員マスタ</h1>
+  <a class="back" href="index.html">← メニューへ</a>
+
+  <div id="msg" class="msg"></div>
+
+  <!-- 所属フィルター -->
+  <div class="filter-row" id="filter-row">
+    <button class="filter-btn active" style="background:#555;color:white" onclick="filterTable('',this)">全員</button>
+  </div>
+
+  <!-- 入力フォーム（テーブルと同じ列幅） -->
+  <div class="form-box">
+    <div class="form-table">
+      <div class="form-cell" style="width:110px">
+        <label>社員コード</label>
+        <input type="text" id="f_code">
+      </div>
+      <div class="form-cell" style="width:150px">
+        <label>氏名</label>
+        <input type="text" id="f_name">
+      </div>
+      <div class="form-cell" style="width:110px">
+        <label>所属</label>
+        <select id="f_busho"><option value="">-- 未選択 --</option></select>
+      </div>
+      <div class="form-cell" style="width:110px">
+        <label>車両</label>
+        <select id="f_car"><option value="">-- 未選択 --</option></select>
+      </div>
+      <div class="form-cell" style="width:90px">
+        <label>退職済み</label>
+        <select id="f_retired">
+          <option value="false">いいえ</option>
+          <option value="true">はい</option>
+        </select>
+      </div>
+      <div class="form-cell" style="width:80px">
+        <label>残業上限(h)</label>
+        <select id="f_overtime">
+          <option value="80">80</option>
+          <option value="60">60</option>
+        </select>
+      </div>
+    </div>
+    <div class="btn-row">
+      <button class="btn-add"    onclick="saveRow('add')">新規登録</button>
+      <button class="btn-update" onclick="saveRow('update')">更新</button>
+      <button class="btn-delete" onclick="deleteRow()">削除</button>
+    </div>
+  </div>
+
+  <!-- 一覧テーブル -->
+  <div id="loading" class="loading">読み込み中...</div>
+  <table id="main-table" style="display:none">
+    <thead>
+      <tr>
+        <th style="width:110px">社員コード</th>
+        <th style="width:150px">氏名</th>
+        <th style="width:110px">所属</th>
+        <th style="width:110px">車両</th>
+        <th style="width:90px">退職済み</th>
+        <th style="width:80px">残業上限</th>
+      </tr>
+    </thead>
+    <tbody id="tbody"></tbody>
+  </table>
+
+  <script>
+    let masters = {};
+    let rows = [];
+    let selectedCode = null;
+    let currentFilter = '';
+
+    async function init() {
+      masters = await loadMasters();
+      buildFilterButtons();
+      buildSelects();
+      await loadRows();
+    }
+
+    function buildFilterButtons() {
+      const row = document.getElementById('filter-row');
+      masters.bushos.filter(b => !b.busho_code.startsWith('9')).forEach(b => {
+        const btn = document.createElement('button');
+        btn.className = 'filter-btn';
+        btn.style.background = b.color_h;
+        btn.style.color = getTextColor(b.color_h);
+        btn.textContent = b.busho_name;
+        btn.onclick = () => filterTable(b.busho_code, btn);
+        row.appendChild(btn);
+      });
+    }
+
+    function buildSelects() {
+      const bushoSel = document.getElementById('f_busho');
+      masters.bushos.filter(b => !b.busho_code.startsWith('9')).forEach(b => {
+        const opt = document.createElement('option');
+        opt.value = b.busho_code;
+        opt.textContent = b.busho_name;
+        bushoSel.appendChild(opt);
+      });
+      const carSel = document.getElementById('f_car');
+      masters.cars.filter(c => c.is_active).forEach(c => {
+        const opt = document.createElement('option');
+        opt.value = c.car_code;
+        opt.textContent = c.car_no || c.car_code;
+        carSel.appendChild(opt);
+      });
+    }
+
+    async function loadRows() {
+      const { data, error } = await sb.from('shift_staff').select('*').order('staff_code');
+      if (error) { showMsg('データの読み込みに失敗しました', 'err'); return; }
+      rows = data || [];
+      renderTable();
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('main-table').style.display = '';
+    }
+
+    function renderTable() {
+      const tbody = document.getElementById('tbody');
+      tbody.innerHTML = '';
+      rows.forEach(r => {
+        const busho = masters.bushoMap[r.busho_code];
+        const car   = masters.carMap[r.car_code];
+        const isHidden = currentFilter && r.busho_code !== currentFilter;
+        const tr = document.createElement('tr');
+        if (isHidden) tr.classList.add('hidden');
+        if (r.staff_code === selectedCode) tr.classList.add('selected');
+        tr.onclick = () => selectRow(r);
+        const bushoHtml = busho
+          ? `<span class="badge" style="background:${busho.color_h};color:${getTextColor(busho.color_h)}">${busho.busho_name}</span>`
+          : '－';
+        const otHtml = r.overtime_limit == 60
+          ? `<span class="badge" style="background:#fdebd0;color:#935116">60h</span>`
+          : `<span class="badge" style="background:#d6eaf8;color:#1a5276">80h</span>`;
+        tr.innerHTML = `
+          <td>${r.staff_code}</td>
+          <td class="${r.retired ? 'retired-text' : ''}">${r.name || ''}</td>
+          <td>${bushoHtml}</td>
+          <td>${car ? (car.car_no || car.car_code) : '－'}</td>
+          <td>${r.retired ? '退職' : '在籍'}</td>
+          <td>${otHtml}</td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    function selectRow(r) {
+      selectedCode = r.staff_code;
+      document.getElementById('f_code').value     = r.staff_code || '';
+      document.getElementById('f_name').value     = r.name || '';
+      document.getElementById('f_busho').value    = r.busho_code || '';
+      document.getElementById('f_car').value      = r.car_code || '';
+      document.getElementById('f_retired').value  = r.retired ? 'true' : 'false';
+      document.getElementById('f_overtime').value = r.overtime_limit || 80;
+      renderTable();
+    }
+
+    function filterTable(bushoCode, btn) {
+      currentFilter = bushoCode;
+      document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+      if (btn) btn.classList.add('active');
+      else document.querySelector('.filter-btn').classList.add('active');
+      renderTable();
+    }
+
+    async function saveRow(mode) {
+      const code = document.getElementById('f_code').value.trim();
+      if (!code) { showMsg('社員コードを入力してください', 'err'); return; }
+      const data = {
+        staff_code:     code,
+        name:           document.getElementById('f_name').value.trim(),
+        busho_code:     document.getElementById('f_busho').value  || null,
+        car_code:       document.getElementById('f_car').value    || null,
+        retired:        document.getElementById('f_retired').value === 'true',
+        overtime_limit: parseInt(document.getElementById('f_overtime').value) || 80,
+      };
+      if (mode === 'add') {
+        const exists = rows.find(r => r.staff_code === code);
+        if (exists) { showMsg(`社員コード「${code}」はすでに存在します`, 'err'); return; }
+        const { error } = await sb.from('shift_staff').insert(data);
+        if (error) { showMsg('登録に失敗しました: ' + error.message, 'err'); return; }
+        await ensureBushoTekisei(code, data.busho_code);
+        showMsg('登録しました', 'ok');
+      } else {
+        const { error } = await sb.from('shift_staff').update(data).eq('staff_code', code);
+        if (error) { showMsg('更新に失敗しました: ' + error.message, 'err'); return; }
+        await ensureBushoTekisei(code, data.busho_code);
+        showMsg('更新しました', 'ok');
+      }
+      selectedCode = code;
+      await loadRows();
+    }
+
+    // 社員マスタの所属を、所属適性にも自動で登録する（すでにあれば何もしない）
+    async function ensureBushoTekisei(staffCode, bushoCode) {
+      if (!bushoCode) return;
+      const { data } = await sb.from('shift_busho_tekisei')
+        .select('id').eq('staff_code', staffCode).eq('busho_code', bushoCode).maybeSingle();
+      if (!data) {
+        await sb.from('shift_busho_tekisei').insert({ staff_code: staffCode, busho_code: bushoCode });
+      }
+    }
+
+    async function deleteRow() {
+      const code = document.getElementById('f_code').value.trim();
+      if (!code) { showMsg('削除する社員を選択してください', 'err'); return; }
+      if (!confirm(`「${code}」を削除しますか？`)) return;
+      const { error } = await sb.from('shift_staff').delete().eq('staff_code', code);
+      if (error) { showMsg('削除に失敗しました: ' + error.message, 'err'); return; }
+      showMsg('削除しました', 'ok');
+      selectedCode = null;
+      document.getElementById('f_code').value = '';
+      document.getElementById('f_name').value = '';
+      await loadRows();
+    }
+
+    function showMsg(text, type) {
+      const el = document.getElementById('msg');
+      el.textContent = text;
+      el.className = `msg ${type}`;
+      setTimeout(() => { el.className = 'msg'; }, 3000);
+    }
+
+    init();
+  </script>
+</body>
+</html>

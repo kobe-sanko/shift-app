@@ -1,0 +1,1153 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>業務シフト</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="common.js"></script>
+  <style>
+    body { font-family: sans-serif; margin: 0; padding: 10px; background: #f5f5f5; }
+    h1 { font-size: 1.2rem; text-align: center; margin: 6px 0; }
+    .back { display: table; text-align: center; margin: 4px auto 8px; color: #4a90e2; text-decoration: none; }
+    .top-bar { display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+    .month-select { font-size: 0.9rem; padding: 4px 8px; border: 1px solid #ccc; border-radius: 4px; }
+    .btn { font-size: 0.82rem; padding: 5px 12px; border: none; border-radius: 4px; cursor: pointer; color: white; }
+    .btn-create { background: #e67e22; }
+    .btn-save   { background: #27ae60; }
+    .filter-row { display: flex; flex-wrap: wrap; gap: 5px; justify-content: center; margin-bottom: 8px; }
+    .filter-btn { padding: 3px 10px; border: none; border-radius: 4px; cursor: pointer; font-size: 0.82rem; }
+    .filter-btn.active { outline: 3px solid #333; font-weight: bold; }
+    .msg { text-align: center; font-size: 0.85rem; padding: 6px; border-radius: 4px; margin-bottom: 6px; display: none; }
+    .msg.ok  { background: #d4edda; color: #155724; display: block; }
+    .msg.err { background: #fdecea; color: #c0392b; display: block; }
+
+    /* レイアウト */
+    .main-layout { display: flex; gap: 8px; align-items: flex-start; }
+
+    /* 業務リスト（左側） */
+    .gyomu-list-panel {
+      width: 80px; flex-shrink: 0; background: white; border-radius: 6px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.1); padding: 6px 4px;
+      max-height: 80vh; overflow-y: auto; user-select: none;
+    }
+    .gyomu-list-title { font-size: 0.72rem; color: #888; text-align: center; margin-bottom: 6px; border-bottom: 1px solid #eee; padding-bottom: 4px; }
+    .gyomu-item {
+      display: block; padding: 3px 4px; margin-bottom: 3px; border-radius: 3px;
+      font-size: 0.72rem; font-weight: bold; text-align: center; cursor: grab; word-break: break-all;
+    }
+    .gyomu-item:active { cursor: grabbing; opacity: 0.7; }
+    .gyomu-item.no-tekisei { opacity: 0.5; border: 1px dashed #aaa; }
+
+    /* シフト表 */
+    .table-wrap { overflow-x: auto; flex: 1; }
+    table { border-collapse: collapse; background: white; font-size: 0.75rem; white-space: nowrap; box-shadow: 0 1px 4px rgba(0,0,0,0.1); }
+    th { background: #dde; padding: 4px 3px; text-align: center; border: 1px solid #ccc; min-width: 38px; }
+    th.name-th { min-width: 100px; position: sticky; left: 0; z-index: 2; background: #dde; }
+    td { padding: 3px 2px; text-align: center; border: 1px solid #eee; }
+    td.name-td { position: sticky; left: 0; background: white; z-index: 1; padding: 3px 6px; min-width: 100px; font-size: 0.78rem; cursor: pointer; }
+    td.shift-td { cursor: default; }
+    tr:hover td { background: #f0f8ff; }
+    tr:hover td.name-td { background: #f0f8ff; }
+    tr.hidden { display: none; }
+    .badge { display: inline-block; padding: 1px 4px; border-radius: 3px; font-size: 0.72rem; font-weight: bold; min-width: 28px; }
+    .badge.empty { color: #bbb; background: none; }
+    th.sat { background: #d0e8ff; }
+    th.sun { background: #ffd0d0; }
+    td.sat-col { background: #f0f6ff; }
+    td.sun-col { background: #fff0f0; }
+    td.drop-over { background: #fffacd !important; outline: 2px dashed #f39c12; }
+
+    /* 選択中の行 */
+    tr.selected > td { background: #fff3cd !important; }
+    tr.selected > td.name-td { background: #ffe082 !important; font-weight: bold; }
+
+    /* 編集行・ボタン行 */
+    tr.edit-row td { background: #fff8e8 !important; cursor: default; padding: 2px; }
+    tr.edit-row td select { width: 100%; font-size: 0.72rem; padding: 1px; border: 1px solid #ccc; border-radius: 3px; box-sizing: border-box; }
+    tr.btn-row td { background: #fff8e8 !important; cursor: default; padding: 4px 8px; border-bottom: 2px solid #eee; }
+    .loading { text-align: center; padding: 30px; color: #888; font-size: 1rem; }
+
+    /* 確認ダイアログ */
+    .dialog-overlay { display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.4); z-index:1000; align-items:center; justify-content:center; }
+    .dialog-overlay.show { display:flex; }
+    .dialog-box { background:white; border-radius:8px; padding:24px; max-width:320px; text-align:center; box-shadow:0 4px 20px rgba(0,0,0,0.3); }
+    .dialog-box p { margin:0 0 16px; font-size:0.9rem; line-height:1.5; white-space: pre-line; }
+    .dialog-btns { display:flex; gap:10px; justify-content:center; }
+    .dialog-btns button { padding:8px 20px; border:none; border-radius:4px; cursor:pointer; font-size:0.85rem; font-weight:bold; }
+    .btn-ok { background:#e67e22; color:white; }
+    .btn-cancel { background:#95a5a6; color:white; }
+  </style>
+  <script src="exceljs.min.js"></script>
+</head>
+<body>
+  <h1 id="page-title">⚙️ 業務シフト</h1>
+  <a class="back" href="index.html">← メニューへ</a>
+  <div id="msg" class="msg"></div>
+
+  <div class="top-bar">
+    <select class="month-select" id="month-sel" onchange="onMonthChange()"></select>
+    <button class="btn btn-create" id="btn-create-shift" onclick="createShift()">業務シフト作成</button>
+    <button class="btn btn-save" onclick="saveAll()" id="btn-save" style="display:none">💾 保存</button>
+    <button class="btn" style="background:#1d6f42;" onclick="exportExcel(false)">📊 Excel出力</button>
+    <button class="btn" style="background:#1a5276;" onclick="exportExcel(true)">📊 Excel出力2</button>
+    <button class="btn" style="background:#8e44ad;" onclick="openHyojiJunDialog()">📋 表示順設定</button>
+  </div>
+
+  <div class="filter-row" id="filter-row">
+    <button class="filter-btn active" style="background:#555;color:white" onclick="filterTable('',this,'')">全員</button>
+  </div>
+
+  <!-- 表示順設定ダイアログ -->
+  <div id="hyoji-jun-dialog" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:1000; justify-content:center; align-items:center;">
+    <div style="background:white; border-radius:10px; padding:20px; width:340px; max-height:80vh; display:flex; flex-direction:column; box-shadow:0 4px 20px rgba(0,0,0,0.3);">
+      <div style="font-size:1rem; font-weight:bold; margin-bottom:6px; text-align:center;">📋 表示順設定 - <span id="hyoji-jun-busho-name"></span></div>
+      <div style="font-size:0.8rem; color:#888; text-align:center; margin-bottom:10px;">▲▼ボタンまたはドラッグで並び替え</div>
+      <div id="hyoji-jun-list" style="overflow-y:auto; flex:1; border:1px solid #eee; border-radius:6px; padding:4px;"></div>
+      <div style="display:flex; gap:8px; margin-top:12px; justify-content:center;">
+        <button onclick="moveHyojiJun(-1)" style="background:#4a90e2; color:white; border:none; border-radius:4px; padding:6px 16px; cursor:pointer;">▲ 上へ</button>
+        <button onclick="moveHyojiJun(1)"  style="background:#4a90e2; color:white; border:none; border-radius:4px; padding:6px 16px; cursor:pointer;">▼ 下へ</button>
+        <button onclick="saveHyojiJun()"   style="background:#27ae60; color:white; border:none; border-radius:4px; padding:6px 16px; cursor:pointer;">💾 保存</button>
+        <button onclick="closeHyojiJunDialog()" style="background:#aaa; color:white; border:none; border-radius:4px; padding:6px 16px; cursor:pointer;">閉じる</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="loading" class="loading" style="display:none">読み込み中...</div>
+
+  <div class="main-layout">
+    <div class="gyomu-list-panel" id="gyomu-list-panel">
+      <div class="gyomu-list-title">業務リスト</div>
+      <div style="text-align:center;margin-bottom:6px;">
+        <select id="gyomu-list-mode" onchange="buildGyomuList(selectedCode)" style="font-size:0.68rem;width:100%;padding:2px;">
+          <option value="">全部</option>
+        </select>
+      </div>
+      <div id="gyomu-list-items"></div>
+    </div>
+    <div class="table-wrap">
+      <table id="main-table" style="display:none">
+        <thead id="thead"></thead>
+        <tbody id="tbody"></tbody>
+      </table>
+
+      <!-- スマホ担当テーブル -->
+      <div id="smaho-section" style="display:none; margin-top: 24px;">
+        <div style="font-size:0.95rem; font-weight:bold; margin-bottom:6px; color:#e91e63;">📱 スマホ担当</div>
+        <table id="smaho-table" style="border-collapse:collapse; background:white; font-size:0.75rem; white-space:nowrap; box-shadow:0 1px 4px rgba(0,0,0,0.1);">
+          <thead id="smaho-thead"></thead>
+          <tbody id="smaho-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="dialog-overlay" id="dialog">
+    <div class="dialog-box">
+      <p id="dialog-msg"></p>
+      <div id="dialog-checkbox-row" style="text-align:left;font-size:0.85rem;margin:8px 0;">
+        <label><input type="checkbox" id="dialog-checkbox" checked> この組み合わせを、業務適性にも登録する</label>
+      </div>
+      <div class="dialog-btns">
+        <button class="btn-ok" onclick="dialogOk()">入力する</button>
+        <button class="btn-cancel" onclick="dialogCancel()">キャンセル</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const KYUJITSU_MAP = { '901': '休日', '902': '有休', '903': '健診' };
+
+    let masters = {};
+    let staffRows = [];
+    let shiftMap = {};
+    let tekiseiMap = {};
+    let currentYM = '';
+    let currentFilter = '';
+    let selectedCode = null;
+    let daysInMonth = 0;
+    let changed = {};
+    let changedCells = {};
+    let dragGyomuCode = null;
+    let dialogResolve = null;
+    let smahoData = [];      // shift_banmenのsmaho列データ（月分）
+    let smahoConfig = [];    // smaho_flg=trueの配送設定
+    let chibanCodes = new Set(); // 遅番行に対応する業務コードのセット
+    let hyojiJunMap = {};    // busho_code → { staff_code: jun } の表示順マップ
+
+    // ===== 初期化 =====
+    async function init() {
+      currentYM = getCurrentYearMonth();
+      masters = await loadMasters();
+      buildMonthSelect();
+      buildFilterButtons();
+      buildGyomuListModeSelect();
+      initTbodyEvents(); // tbodyのイベントは1回だけ設定
+      await loadData();
+    }
+
+    // 業務リストの絞り込みプルダウンに、全所属を追加する
+    function buildGyomuListModeSelect() {
+      const sel = document.getElementById('gyomu-list-mode');
+      masters.bushos.filter(b => !b.busho_code.startsWith('9')).forEach(b => {
+        const opt = document.createElement('option');
+        opt.value = b.busho_code;
+        opt.textContent = b.busho_name;
+        sel.appendChild(opt);
+      });
+    }
+
+    // ===== tbodyのイベント（1回だけ設定） =====
+    function initTbodyEvents() {
+      const tbody = document.getElementById('tbody');
+
+      // 行クリック → 社員選択
+      tbody.addEventListener('click', e => {
+        if (e.target.closest('button') || e.target.closest('select')) return;
+        const tr = e.target.closest('tr[data-staff-code]');
+        if (!tr) return;
+        const code = tr.dataset.staffCode;
+        const staff = staffRows.find(s => s.staff_code === code);
+        if (staff) toggleEdit(staff);
+      });
+
+      // ドラッグ＆ドロップ
+      tbody.addEventListener('dragover', e => {
+        const td = e.target.closest('td.shift-td');
+        if (!td) return;
+        e.preventDefault();
+        document.querySelectorAll('td.drop-over').forEach(el => el.classList.remove('drop-over'));
+        td.classList.add('drop-over');
+      });
+      tbody.addEventListener('dragleave', e => {
+        const td = e.target.closest('td.shift-td');
+        if (td) td.classList.remove('drop-over');
+      });
+      tbody.addEventListener('drop', async e => {
+        const td = e.target.closest('td.shift-td');
+        if (!td) return;
+        e.preventDefault();
+        td.classList.remove('drop-over');
+        const staffCode = td.dataset.staff;
+        const key = td.dataset.key;
+        const gyomuCode = dragGyomuCode;
+        if (gyomuCode === undefined || gyomuCode === null) return;
+
+        if (gyomuCode === '') { applyDrop(staffCode, key, null); return; }
+        if (parseInt(gyomuCode) >= 900) { applyDrop(staffCode, key, gyomuCode); return; }
+
+        const tekisei = tekiseiMap[staffCode] || [];
+        const hasTekisei = tekisei.some(t => t.gyomu_code === gyomuCode);
+        if (!hasTekisei) {
+          const staffName = staffRows.find(s => s.staff_code === staffCode)?.name || staffCode;
+          const gyomuName = masters.gyomuMap[gyomuCode]?.gyomu_name || gyomuCode;
+          const result = await showDialog(`「${staffName}」は「${gyomuName}」の業務適性がありません。\nそれでも入力しますか？`, true);
+          if (!result.ok) return;
+          if (result.register) {
+            const bushoCode = masters.gyomuMap[gyomuCode]?.busho_code || null;
+            const { error } = await sb.from('shift_gyomu_tekisei')
+              .insert({ staff_code: staffCode, busho_code: bushoCode, gyomu_code: gyomuCode });
+            if (!error) {
+              tekiseiMap[staffCode] = [...tekisei, { staff_code: staffCode, busho_code: bushoCode, gyomu_code: gyomuCode }];
+            }
+            // 所属適性にまだ登録されていなければ、あわせて登録する
+            if (bushoCode) {
+              const { data: existingBusho } = await sb.from('shift_busho_tekisei')
+                .select('id').eq('staff_code', staffCode).eq('busho_code', bushoCode).maybeSingle();
+              if (!existingBusho) {
+                await sb.from('shift_busho_tekisei').insert({ staff_code: staffCode, busho_code: bushoCode });
+              }
+            }
+          }
+        }
+        applyDrop(staffCode, key, gyomuCode);
+      });
+    }
+
+    // ===== 月セレクト =====
+    function buildMonthSelect() {
+      const sel = document.getElementById('month-sel');
+      const now = new Date();
+      for (let i = -3; i <= 3; i++) {
+        const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const ym = `${y}${m}`;
+        const opt = document.createElement('option');
+        opt.value = ym;
+        opt.textContent = `${y}年${m}月`;
+        if (ym === currentYM) opt.selected = true;
+        sel.appendChild(opt);
+      }
+    }
+
+    // ===== フィルターボタン =====
+    function buildFilterButtons() {
+      const row = document.getElementById('filter-row');
+      masters.bushos.filter(b => parseInt(b.busho_code) < 900).forEach(b => {
+        const btn = document.createElement('button');
+        btn.className = 'filter-btn';
+        btn.style.background = b.color_h;
+        btn.style.color = getTextColor(b.color_h);
+        btn.textContent = b.busho_name;
+        btn.onclick = () => filterTable(b.busho_code, btn, b.busho_name);
+        row.appendChild(btn);
+      });
+    }
+
+    // ===== 業務リスト（左側）=====
+    function buildGyomuList(staffCode) {
+      const panel = document.getElementById('gyomu-list-items');
+      panel.innerHTML = '';
+
+      const tekisei = staffCode ? (tekiseiMap[staffCode] || []) : [];
+      const tekiseiCodes = new Set(tekisei.map(t => t.gyomu_code));
+
+      // 空白
+      const emptyItem = document.createElement('div');
+      emptyItem.className = 'gyomu-item';
+      emptyItem.style.cssText = 'background:#eee;color:#888';
+      emptyItem.textContent = '空白';
+      emptyItem.draggable = true;
+      emptyItem.addEventListener('dragstart', e => { dragGyomuCode = ''; e.dataTransfer.effectAllowed = 'copy'; });
+      panel.appendChild(emptyItem);
+
+      // 業務一覧（プルダウンで選んだ所属だけに絞り込む。空欄なら全部）
+      const listMode = document.getElementById('gyomu-list-mode')?.value || '';
+      const gyomuTargets = (masters.gyomus || [])
+        .filter(g => {
+          if (listMode) return g.busho_code === listMode;
+          return true;
+        })
+        .sort((a, b) => a.gyomu_code.localeCompare(b.gyomu_code, undefined, { numeric: true }));
+      gyomuTargets.forEach(g => {
+        const hasTekisei = tekiseiCodes.has(g.gyomu_code);
+        const item = document.createElement('div');
+        item.className = 'gyomu-item' + (hasTekisei ? '' : ' no-tekisei');
+        const color = g.color_h || '#ccc';
+        item.style.background = color;
+        item.style.color = getTextColor(color);
+        item.textContent = g.gyomu_name;
+        item.title = hasTekisei ? g.gyomu_name : `${g.gyomu_name}（適性なし）`;
+        item.draggable = true;
+        item.addEventListener('dragstart', e => { dragGyomuCode = g.gyomu_code; e.dataTransfer.effectAllowed = 'copy'; });
+        panel.appendChild(item);
+      });
+
+      // 休日など
+      Object.entries(KYUJITSU_MAP).forEach(([code, label]) => {
+        const item = document.createElement('div');
+        item.className = 'gyomu-item';
+        item.style.cssText = 'background:#e0e0e0;color:#c0392b';
+        item.textContent = label;
+        item.draggable = true;
+        item.addEventListener('dragstart', e => { dragGyomuCode = code; e.dataTransfer.effectAllowed = 'copy'; });
+        panel.appendChild(item);
+      });
+    }
+
+    // ===== データ読み込み =====
+    async function onMonthChange() {
+      currentYM = document.getElementById('month-sel').value;
+      selectedCode = null;
+      changed = {};
+      changedCells = {};
+      document.getElementById('btn-save').style.display = 'none';
+      await loadData();
+    }
+
+    async function loadData() {
+      document.getElementById('loading').style.display = 'block';
+      document.getElementById('main-table').style.display = 'none';
+      document.getElementById('smaho-section').style.display = 'none';
+
+      const { year, month } = parseYearMonth(currentYM);
+      daysInMonth = getDaysInMonth(year, month);
+
+      // その月の日付範囲
+      const dateFrom = `${year}${String(month).padStart(2,'0')}01`;
+      const dateTo   = `${year}${String(month).padStart(2,'0')}${String(daysInMonth).padStart(2,'0')}`;
+
+      const [staffRes, shiftRes, tekiseiRes, configRes, smahoRes, chibanRes, hyojiJunRes] = await Promise.all([
+        sb.from('shift_staff').select('*').order('staff_code'),
+        sb.from('shift_gyomu_shift').select('*').eq('yearmonth', currentYM),
+        sb.from('shift_gyomu_tekisei').select('staff_code, gyomu_code, busho_code'),
+        sb.from('shift_banmen_config').select('*').eq('smaho_flg', true).eq('gyomu_code', '配送'),
+        sb.from('shift_banmen').select('date, busho_code, row_no, smaho')
+          .gte('date', dateFrom).lte('date', dateTo).not('smaho', 'is', null),
+        sb.from('shift_banmen_config').select('busho_code, osoban_row').eq('gyomu_code', '配送').gt('osoban_row', 0),
+        sb.from('shift_hyoji_jun').select('*'),
+      ]);
+
+      staffRows = (staffRes.data || []).filter(s => !s.retired);
+      shiftMap = Object.fromEntries((shiftRes.data || []).map(r => [r.staff_code, r]));
+      tekiseiMap = {};
+      (tekiseiRes.data || []).forEach(r => {
+        if (!tekiseiMap[r.staff_code]) tekiseiMap[r.staff_code] = [];
+        tekiseiMap[r.staff_code].push({ gyomu_code: r.gyomu_code, busho_code: r.busho_code });
+      });
+      smahoConfig = configRes.data || [];
+      smahoData   = smahoRes.data || [];
+
+      // 表示順マップを構築
+      hyojiJunMap = {};
+      (hyojiJunRes.data || []).forEach(r => {
+        if (!hyojiJunMap[r.busho_code]) hyojiJunMap[r.busho_code] = {};
+        hyojiJunMap[r.busho_code][r.staff_code] = r.hyoji_jun;
+      });
+
+      // 遅番行に対応する業務コードを特定
+      // 例：沖縄(810)のosoban_row=1 → 810-11（運転1）と810-21（助手1）
+      chibanCodes = new Set();
+      (chibanRes.data || []).forEach(r => {
+        if (!r.osoban_row) return;
+        const row = r.osoban_row;
+        // 運転（枝番の十の位=1、一の位=行番号）
+        chibanCodes.add(`${r.busho_code}-1${row}`);
+        // 助手（枝番の十の位=2、一の位=行番号）
+        chibanCodes.add(`${r.busho_code}-2${row}`);
+      });
+
+      buildHeader();
+      renderTable();
+      buildSmahoTable();
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('main-table').style.display = '';
+    }
+
+    // ===== ヘッダー =====
+    function buildHeader() {
+      const { year, month } = parseYearMonth(currentYM);
+      const thead = document.getElementById('thead');
+      let html = '<tr><th class="name-th">氏名</th><th style="min-width:56px">勤務<br>日数</th>';
+      for (let d = 1; d <= daysInMonth; d++) {
+        const wd = new Date(year, month - 1, d).getDay();
+        const cls = wd === 0 ? 'sun' : wd === 6 ? 'sat' : '';
+        html += `<th class="${cls}">${d}<br><span style="font-size:0.65rem">${getWeekdayName(wd)}</span></th>`;
+      }
+      html += '</tr>';
+      thead.innerHTML = html;
+    }
+
+    // ===== バッジ表示 =====
+    function getBadgeHtml(code) {
+      if (!code || code === 'EMPTY') return `<span class="badge empty">－</span>`;
+      // 900番台（休日など）
+      if (parseInt(code) >= 900) {
+        const label = KYUJITSU_MAP[code] || (masters.bushoMap[code]?.busho_name) || code;
+        return `<span class="badge" style="background:#e0e0e0;color:#c0392b;font-weight:bold">${label}</span>`;
+      }
+      // 遅番フラグ
+      const isChiban = chibanCodes.has(code);
+      const chibanStyle = isChiban ? 'outline:2px solid #e67e22;' : '';
+      // 業務
+      const g = masters.gyomuMap[code];
+      if (g) {
+        const color = g.color_h || '#ccc';
+        return `<span class="badge" style="background:${color};color:${getTextColor(color)};${chibanStyle}">${g.gyomu_name}</span>`;
+      }
+      // 所属コード
+      const b = masters.bushoMap[code];
+      if (b) {
+        const color = b.color_h || '#ccc';
+        return `<span class="badge" style="background:${color};color:${getTextColor(color)};${chibanStyle}">${b.busho_name}</span>`;
+      }
+      return `<span class="badge empty">${code}</span>`;
+    }
+
+    // ===== テーブル描画 =====
+    function getDayClass(d) {
+      const { year, month } = parseYearMonth(currentYM);
+      const wd = new Date(year, month - 1, d).getDay();
+      return wd === 0 ? 'sun-col' : wd === 6 ? 'sat-col' : '';
+    }
+
+    // 勤務日数を数える（休日は含めない。有休・健診は含める）
+    function countWorkDays(shift) {
+      let count = 0;
+      for (let d = 1; d <= daysInMonth; d++) {
+        const key = `d${String(d).padStart(2,'0')}`;
+        const val = shift[key];
+        if (val && val !== '901') count++;
+      }
+      return count;
+    }
+
+    function renderTable() {
+      const tbody = document.getElementById('tbody');
+      tbody.innerHTML = '';
+
+      // 表示順を考慮して社員を並び替え
+      const sortedStaffs = [...staffRows].sort((a, b) => {
+        if (!currentFilter) return 0;
+        const junA = hyojiJunMap[currentFilter]?.[a.staff_code] ?? 9999;
+        const junB = hyojiJunMap[currentFilter]?.[b.staff_code] ?? 9999;
+        if (junA !== junB) return junA - junB;
+        return a.staff_code.localeCompare(b.staff_code);
+      });
+
+      sortedStaffs.forEach(s => {
+        const shift = shiftMap[s.staff_code] || {};
+        const isHidden = isFilterHidden(s);
+
+        // データ行
+        const tr = document.createElement('tr');
+        tr.dataset.staffCode = s.staff_code;
+        if (isHidden) tr.classList.add('hidden');
+        if (s.staff_code === selectedCode) tr.classList.add('selected');
+
+        let html = `<td class="name-td">${s.name || ''}</td><td style="text-align:center;font-weight:bold;background:#fafafa">${countWorkDays(shift)}</td>`;
+        for (let d = 1; d <= daysInMonth; d++) {
+          const key = `d${String(d).padStart(2,'0')}`;
+          const cls = getDayClass(d);
+          html += `<td class="shift-td ${cls}" data-staff="${s.staff_code}" data-key="${key}">${getBadgeHtml(shift[key])}</td>`;
+        }
+        tr.innerHTML = html;
+        tbody.appendChild(tr);
+
+        // 編集行（選択中の人だけ）
+        if (s.staff_code === selectedCode) {
+          const editTr = document.createElement('tr');
+          editTr.className = 'edit-row';
+          if (isHidden) editTr.classList.add('hidden');
+
+          let editHtml = `<td class="name-td" style="font-size:0.72rem;color:#888">▲編集中</td><td></td>`;
+          for (let d = 1; d <= daysInMonth; d++) {
+            const key = `d${String(d).padStart(2,'0')}`;
+            const id = `sel_${s.staff_code}_${key}`;
+            const cls = getDayClass(d);
+            editHtml += `<td class="${cls}">${buildSelectHtml(id, s.staff_code, shift[key] || '', key)}</td>`;
+          }
+          editTr.innerHTML = editHtml;
+          tbody.appendChild(editTr);
+
+          const btnTr = document.createElement('tr');
+          btnTr.className = 'btn-row';
+          if (isHidden) btnTr.classList.add('hidden');
+          btnTr.innerHTML = `
+            <td colspan="${daysInMonth + 2}" style="text-align:left">
+              <button class="btn btn-create" style="background:#3498db" onclick="copyFromBase('${s.staff_code}')">ベース業務からコピー</button>
+              <button class="btn btn-save" onclick="saveStaff('${s.staff_code}')" style="margin-left:8px">この社員を保存</button>
+            </td>`;
+          tbody.appendChild(btnTr);
+        }
+      });
+
+      // 業務リスト更新
+      buildGyomuList(selectedCode);
+    }
+
+    // ===== ドロップダウン =====
+    function buildSelectHtml(id, staffCode, currentVal, key) {
+      const tekisei = tekiseiMap[staffCode] || [];
+      const grouped = {};
+      tekisei.forEach(t => {
+        const g = masters.gyomuMap[t.gyomu_code];
+        if (!g) return;
+        if (!grouped[g.busho_code]) grouped[g.busho_code] = [];
+        grouped[g.busho_code].push(g);
+      });
+
+      let html = `<select id="${id}" data-orig="${currentVal}" data-key="${key}" onchange="onCellChange('${staffCode}','${key}')"><option value="">－</option>`;
+      Object.keys(grouped).sort().forEach(bCode => {
+        const bName = masters.bushoMap[bCode]?.busho_name || bCode;
+        html += `<optgroup label="${bName}">`;
+        grouped[bCode]
+          .sort((a, b) => a.gyomu_code.localeCompare(b.gyomu_code, undefined, { numeric: true }))
+          .forEach(g => {
+            const sel = g.gyomu_code === currentVal ? ' selected' : '';
+            html += `<option value="${g.gyomu_code}"${sel}>${g.gyomu_name}</option>`;
+          });
+        html += `</optgroup>`;
+      });
+      html += `<optgroup label="休日など">`;
+      Object.entries(KYUJITSU_MAP).forEach(([code, label]) => {
+        const sel = code === currentVal ? ' selected' : '';
+        html += `<option value="${code}"${sel}>${label}</option>`;
+      });
+      html += `</optgroup></select>`;
+      return html;
+    }
+
+    // ===== フィルター =====
+    function isFilterHidden(s) {
+      if (!currentFilter) return false;
+      const shift = shiftMap[s.staff_code] || {};
+      const hasBusho = s.busho_code === currentFilter;
+      const hasGyomu = Array.from({length: daysInMonth}, (_, i) => {
+        const key = `d${String(i+1).padStart(2,'0')}`;
+        const code = shift[key];
+        if (!code || code === 'EMPTY') return false;
+        const g = masters.gyomuMap[code];
+        return g ? g.busho_code === currentFilter : code === currentFilter;
+      }).some(Boolean);
+      return !hasBusho && !hasGyomu;
+    }
+
+    function filterTable(bushoCode, btn, bushoName) {
+      currentFilter = bushoCode;
+      document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+      if (btn) btn.classList.add('active');
+      document.getElementById('page-title').textContent =
+        bushoCode ? `⚙️ 業務シフト - ${bushoName}` : '⚙️ 業務シフト';
+      document.getElementById('btn-create-shift').textContent =
+        bushoCode ? `業務シフト作成（${bushoName}のみ）` : '業務シフト作成（全員）';
+      renderTable();
+      buildSmahoTable();
+    }
+
+    // ===== 社員選択 =====
+    function toggleEdit(staff) {
+      selectedCode = selectedCode === staff.staff_code ? null : staff.staff_code;
+      renderTable();
+      if (selectedCode) {
+        setTimeout(() => {
+          const sel = document.querySelector('tr.selected');
+          if (sel) sel.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }, 50);
+      }
+    }
+
+    // ===== セル変更 =====
+    function onCellChange(staffCode, key) {
+      changed[staffCode] = true;
+      if (!changedCells[staffCode]) changedCells[staffCode] = {};
+      changedCells[staffCode][key] = true;
+      document.getElementById('btn-save').style.display = '';
+    }
+
+    // ===== ドラッグ＆ドロップ適用 =====
+    function applyDrop(staffCode, key, gyomuCode) {
+      if (!shiftMap[staffCode]) shiftMap[staffCode] = { yearmonth: currentYM, staff_code: staffCode };
+      shiftMap[staffCode][key] = gyomuCode;
+      changed[staffCode] = true;
+      document.getElementById('btn-save').style.display = '';
+      const td = document.querySelector(`td.shift-td[data-staff="${staffCode}"][data-key="${key}"]`);
+      if (td) td.innerHTML = getBadgeHtml(gyomuCode);
+    }
+
+    // ===== ダイアログ =====
+    function showDialog(msg, showCheckbox = false) {
+      return new Promise(resolve => {
+        document.getElementById('dialog-msg').textContent = msg;
+        const row = document.getElementById('dialog-checkbox-row');
+        row.style.display = showCheckbox ? 'block' : 'none';
+        document.getElementById('dialog-checkbox').checked = true;
+        document.getElementById('dialog').classList.add('show');
+        dialogResolve = resolve;
+      });
+    }
+    function dialogOk() {
+      document.getElementById('dialog').classList.remove('show');
+      const register = document.getElementById('dialog-checkbox').checked;
+      if (dialogResolve) dialogResolve({ ok: true, register });
+    }
+    function dialogCancel() {
+      document.getElementById('dialog').classList.remove('show');
+      if (dialogResolve) dialogResolve({ ok: false, register: false });
+    }
+
+    // ===== ベース業務からコピー =====
+    async function copyFromBase(staffCode) {
+      const { data } = await sb.from('shift_base_gyomu').select('*').eq('staff_code', staffCode).single();
+      if (!data) { showMsg('ベース業務が登録されていません', 'err'); return; }
+
+      const { year, month } = parseYearMonth(currentYM);
+      const dayNames = ['sun','mon','tue','wed','thu','fri','sat'];
+      for (let d = 1; d <= daysInMonth; d++) {
+        const wd = new Date(year, month - 1, d).getDay();
+        const baseKey = dayNames[wd] + '_gyomu';
+        const key = `d${String(d).padStart(2,'0')}`;
+        const sel = document.getElementById(`sel_${staffCode}_${key}`);
+        if (sel) {
+          sel.value = data[baseKey] || '';
+          if (!changedCells[staffCode]) changedCells[staffCode] = {};
+          changedCells[staffCode][key] = true;
+        }
+      }
+      changed[staffCode] = true;
+      document.getElementById('btn-save').style.display = '';
+      showMsg('ベース業務からコピーしました。「この社員を保存」で保存してください。', 'ok');
+    }
+
+    // ===== 保存 =====
+    async function saveStaff(staffCode) {
+      const current = shiftMap[staffCode] || {};
+      const cellChanged = changedCells[staffCode] || {};
+      const data = { yearmonth: currentYM, staff_code: staffCode };
+
+      for (let d = 1; d <= daysInMonth; d++) {
+        const key = `d${String(d).padStart(2,'0')}`;
+        if (cellChanged[key]) {
+          // ドロップダウンで実際に操作したセル
+          const sel = document.getElementById(`sel_${staffCode}_${key}`);
+          data[key] = sel ? (sel.value || null) : (current[key] || null);
+        } else {
+          // ドラッグ＆ドロップ変更 or 変更なし → shiftMapの値
+          data[key] = current[key] || null;
+        }
+      }
+
+      // 既存レコードがあるか確認してから、更新か追加かを判断する
+      const { data: existing } = await sb.from('shift_gyomu_shift')
+        .select('yearmonth')
+        .eq('yearmonth', currentYM).eq('staff_code', staffCode).maybeSingle();
+
+      let error;
+      if (existing) {
+        ({ error } = await sb.from('shift_gyomu_shift').update(data)
+          .eq('yearmonth', currentYM).eq('staff_code', staffCode));
+      } else {
+        ({ error } = await sb.from('shift_gyomu_shift').insert(data));
+      }
+      if (error) { showMsg('保存に失敗しました: ' + error.message, 'err'); return; }
+
+      showMsg('保存しました', 'ok');
+      shiftMap[staffCode] = { ...current, ...data };
+      delete changed[staffCode];
+      delete changedCells[staffCode];
+      if (Object.keys(changed).length === 0) document.getElementById('btn-save').style.display = 'none';
+      renderTable();
+    }
+
+    async function saveAll() {
+      const codes = Object.keys(changed);
+      if (codes.length === 0) { showMsg('変更がありません', 'err'); return; }
+      for (const code of codes) await saveStaff(code);
+    }
+
+    // ===== 一括作成 =====
+    async function createShift() {
+      const scopeLabel = currentFilter ? (masters.bushoMap[currentFilter]?.busho_name || currentFilter) : '全員';
+      if (!confirm(`${currentYM.slice(0,4)}年${currentYM.slice(4)}月のシフトを、「${scopeLabel}」の分だけベース業務から作成しますか？\n※すでにデータがある社員は上書きされます`)) return;
+      document.getElementById('loading').style.display = 'block';
+      document.getElementById('main-table').style.display = 'none';
+
+      const { data: baseData } = await sb.from('shift_base_gyomu').select('*');
+      const { year, month } = parseYearMonth(currentYM);
+      const dayNames = ['sun','mon','tue','wed','thu','fri','sat'];
+
+      // 作成対象のレコードを組み立てる
+      const targetRecords = [];
+      for (const base of (baseData || [])) {
+        // 所属で絞り込み中は、その所属の社員だけを対象にする
+        if (currentFilter) {
+          const staff = staffRows.find(s => s.staff_code === base.staff_code);
+          if (!staff || staff.busho_code !== currentFilter) continue;
+        }
+        const data = { yearmonth: currentYM, staff_code: base.staff_code };
+        for (let d = 1; d <= daysInMonth; d++) {
+          const wd = new Date(year, month - 1, d).getDay();
+          const key = `d${String(d).padStart(2,'0')}`;
+          data[key] = base[dayNames[wd] + '_gyomu'] || null;
+        }
+        targetRecords.push(data);
+      }
+
+      // すでにある社員（この年月）を先に調べておき、更新か追加かを振り分ける
+      const { data: existingRows } = await sb.from('shift_gyomu_shift')
+        .select('staff_code').eq('yearmonth', currentYM);
+      const existingSet = new Set((existingRows || []).map(r => r.staff_code));
+
+      let errorCount = 0;
+      for (const rec of targetRecords) {
+        let error;
+        if (existingSet.has(rec.staff_code)) {
+          ({ error } = await sb.from('shift_gyomu_shift').update(rec)
+            .eq('yearmonth', rec.yearmonth).eq('staff_code', rec.staff_code));
+        } else {
+          ({ error } = await sb.from('shift_gyomu_shift').insert(rec));
+        }
+        if (error) { errorCount++; console.error(error); }
+      }
+
+      if (errorCount > 0) {
+        showMsg(`一部の保存に失敗しました（${errorCount}件）。詳しくはブラウザのコンソールをご確認ください`, 'err');
+      } else {
+        showMsg(`「${scopeLabel}」のシフトを作成しました（${targetRecords.length}件）`, 'ok');
+      }
+      await loadData();
+    }
+
+    // ===== スマホ担当テーブル =====
+    function buildSmahoTable() {
+      // smaho_flgがtrueの所属が現在のフィルターに一致する場合のみ表示
+      // 全員（currentFilter=''）の場合は非表示
+      const smahoConfigFiltered = smahoConfig.filter(cfg =>
+        currentFilter && cfg.busho_code === currentFilter
+      );
+      if (smahoConfigFiltered.length === 0) {
+        document.getElementById('smaho-section').style.display = 'none';
+        return;
+      }
+
+      const { year, month } = parseYearMonth(currentYM);
+
+      // 前月の最後の日曜日を起点に計算
+      const firstOfMonth = new Date(year, month - 1, 1);
+      const firstDayOfWeek = firstOfMonth.getDay(); // 0=日,1=月...
+      // 当月1日が日曜なら前月の1週前の日曜から、そうでなければ前月の最後の日曜から
+      const startDate = new Date(firstOfMonth);
+      startDate.setDate(1 - firstDayOfWeek); // 当月1日から曜日分だけ戻る
+
+      // 当月末の次の土曜日まで延ばす
+      const lastOfMonth = new Date(year, month, 0);
+      const endDate = new Date(lastOfMonth);
+      const lastDayOfWeek = lastOfMonth.getDay();
+      if (lastDayOfWeek !== 6) {
+        endDate.setDate(lastOfMonth.getDate() + (6 - lastDayOfWeek));
+      }
+
+      // 表示する全日付リストを生成
+      const allDates = [];
+      for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
+        allDates.push(new Date(d));
+      }
+
+      // 前月分のsmaho_dataも取得済みか確認（loadDataで取得済みのsmahoDataを使う）
+      // smahoDataは当月分のみなので前月分も追加取得が必要
+      // → 前月分は別途取得する（buildSmahoTableAsync化）
+      buildSmahoTableAsync(allDates, year, month);
+    }
+
+    async function buildSmahoTableAsync(allDates, year, month) {
+      // 前月の日付範囲
+      const prevYear  = month === 1 ? year - 1 : year;
+      const prevMonth = month === 1 ? 12 : month - 1;
+      const startDate = allDates[0];
+      const startStr  = `${startDate.getFullYear()}${String(startDate.getMonth()+1).padStart(2,'0')}${String(startDate.getDate()).padStart(2,'0')}`;
+      const endStr    = `${year}${String(month).padStart(2,'0')}${String(new Date(year,month,0).getDate()).padStart(2,'0')}`;
+
+      // 前月分のsmaho_dataを追加取得
+      let extraSmahoData = [];
+      if (startStr.slice(0,6) !== `${year}${String(month).padStart(2,'0')}`) {
+        const { data } = await sb.from('shift_banmen')
+          .select('date, busho_code, row_no, smaho')
+          .gte('date', startStr).lt('date', `${year}${String(month).padStart(2,'0')}01`)
+          .not('smaho', 'is', null);
+        extraSmahoData = data || [];
+      }
+      const allSmahoData = [...extraSmahoData, ...smahoData];
+
+      // smaho担当者の一覧（当月に1回でも使った人）
+      const smahoStaffCodes = [...new Set(smahoData.map(r => r.smaho).filter(Boolean))];
+      if (smahoStaffCodes.length === 0) {
+        document.getElementById('smaho-section').style.display = 'none';
+        return;
+      }
+      // 社員コード順にソート
+      smahoStaffCodes.sort();
+
+      // ヘッダー構築
+      const thead = document.getElementById('smaho-thead');
+      let hHtml = '<tr><th class="name-th">氏名</th>';
+      allDates.forEach((d, i) => {
+        const wd  = d.getDay();
+        const isCurrentMonth = d.getMonth() === month - 1;
+        const isSun = wd === 0;
+        const isSat = wd === 6;
+        const borderStyle = isSun && i > 0 ? 'border-left:2px solid #555;' : '';
+        const cls = isSat ? 'sat' : isSun ? 'sun' : '';
+        const dayNum = d.getDate();
+        const monthLabel = !isCurrentMonth ? `<span style="font-size:0.6rem;color:#aaa">${d.getMonth()+1}/</span>` : '';
+        hHtml += `<th class="${cls}" style="${borderStyle}">${monthLabel}${dayNum}<br><span style="font-size:0.65rem">${getWeekdayName(wd)}</span></th>`;
+      });
+      hHtml += '</tr>';
+      thead.innerHTML = hHtml;
+
+      // ボディ構築
+      const tbody = document.getElementById('smaho-tbody');
+      tbody.innerHTML = '';
+
+      smahoStaffCodes.forEach(staffCode => {
+        const staff = staffRows.find(s => s.staff_code === staffCode);
+        const name  = staff?.name || staffCode;
+
+        const tr = document.createElement('tr');
+        let tdHtml = `<td class="name-td">${name}</td>`;
+
+        allDates.forEach((d, i) => {
+          const dateStr = `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;
+          const wd = d.getDay();
+          const isSun = wd === 0;
+          const isSat = wd === 6;
+          const isCurrentMonth = d.getMonth() === month - 1;
+          const cls = isSat ? 'sat' : isSun ? 'sun' : '';
+          const borderStyle = isSun && i > 0 ? 'border-left:2px solid #555;' : '';
+          const bgStyle = !isCurrentMonth ? 'background:#f0f0f0;' : '';
+
+          // その日のその人のsmaho担当便を取得
+          const recs = allSmahoData.filter(r => r.date === dateStr && r.smaho === staffCode);
+          recs.sort((a,b) => a.row_no - b.row_no);
+
+          if (recs.length > 0) {
+            const labels = recs.map(r => `<span style="background:#e91e63;color:white;border-radius:3px;padding:1px 4px;font-size:0.72rem;display:inline-block;">${r.row_no}便</span>`).join('<br>');
+            tdHtml += `<td class="${cls}" style="text-align:center;${borderStyle}${bgStyle}">${labels}</td>`;
+          } else {
+            tdHtml += `<td class="${cls}" style="text-align:center;${borderStyle}${bgStyle}"><span style="color:#ccc;">－</span></td>`;
+          }
+        });
+
+        tr.innerHTML = tdHtml;
+        tbody.appendChild(tr);
+      });
+
+      document.getElementById('smaho-section').style.display = '';
+    }
+
+    // ===== Excel出力（業務シフト）=====
+    async function exportExcel(useArrow) {
+      const { year, month } = parseYearMonth(currentYM);
+      const days = daysInMonth;
+      const workbook = new ExcelJS.Workbook();
+      const sheetLabel = `${year}年${month}月`;
+      const bushoName = currentFilter
+        ? (masters.bushoMap[currentFilter]?.busho_name || currentFilter)
+        : '全員';
+      const titleSuffix = useArrow ? '（矢印表示）' : '';
+      const sheet = workbook.addWorksheet(`${sheetLabel} ${bushoName}`);
+
+      const weekNames = ['日','月','火','水','木','金','土'];
+      const KYUJITSU = { '900': '休日', '901': '休日', '902': '有休', '903': '健診',
+                         '900-01': '休日', '901-01': '休日', '902-01': '有休', '903-01': '健診' };
+
+      // コードから表示名と色を取得
+      function getCodeInfo(code) {
+        if (!code || code === 'EMPTY') return { name: '', color: null, isKyu: false };
+        // 900番台の判定（900-01などのハイフン形式も含む）
+        const baseNum = parseInt(code.split('-')[0]);
+        if (baseNum >= 900) {
+          const name = KYUJITSU[code] || KYUJITSU[String(baseNum)] || '休日';
+          return { name, color: 'FFE0E0E0', isKyu: true };
+        }
+        const g = masters.gyomuMap[code];
+        if (g) return { name: g.gyomu_name, color: g.color_h ? g.color_h.replace('#','FF') : null, isKyu: false };
+        const b = masters.bushoMap[code];
+        if (b) return { name: b.busho_name, color: b.color_h ? b.color_h.replace('#','FF') : null, isKyu: false };
+        return { name: code, color: null, isKyu: false };
+      }
+
+      // 列幅
+      sheet.getColumn(1).width = 10; // 氏名
+      for (let d = 1; d <= days; d++) sheet.getColumn(d + 1).width = 5.5;
+
+      // タイトル行
+      const titleText = `${sheetLabel} 業務シフト${titleSuffix} - ${bushoName}`;
+      const titleRow = sheet.addRow([titleText, ...Array(days).fill('')]);
+      sheet.mergeCells(1, 1, 1, days + 1);
+      titleRow.getCell(1).font = { bold: true, size: 13 };
+      titleRow.getCell(1).alignment = { horizontal: 'center', vertical: 'middle' };
+      titleRow.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8F5E9' } };
+      titleRow.height = 22;
+
+      // ヘッダー行（氏名・日付\n曜日）
+      const hdrData = ['氏名'];
+      for (let d = 1; d <= days; d++) {
+        const wd = new Date(year, month - 1, d).getDay();
+        hdrData.push(`${d}\n${weekNames[wd]}`);
+      }
+      const headerRow = sheet.addRow(hdrData);
+      headerRow.height = 28;
+      headerRow.eachCell((cell, colNum) => {
+        cell.font = { bold: true, size: 9 };
+        cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD9D9D9' } };
+        cell.border = { top:{style:'thin'}, bottom:{style:'thin'}, left:{style:'thin'}, right:{style:'thin'} };
+        if (colNum > 1) {
+          const wd = new Date(year, month - 1, colNum - 1).getDay();
+          if (wd === 0) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFC0CB' } };
+          if (wd === 6) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFADD8E6' } };
+        }
+      });
+
+      // 対象社員（所属コードが一致する人のみ）
+      const targetStaffs = staffRows.filter(s => !isFilterHidden(s));
+
+      // データ行
+      targetStaffs.forEach(s => {
+        const shift = shiftMap[s.staff_code];
+        const rowData = [s.name];
+        const codes = [];
+        for (let d = 1; d <= days; d++) {
+          const col = `d${String(d).padStart(2,'0')}`;
+          codes.push(shift?.[col] || '');
+        }
+
+        for (let d = 0; d < days; d++) {
+          const code = codes[d];
+          const prevCode = d > 0 ? codes[d - 1] : null;
+          const info = getCodeInfo(code);
+          // 矢印表示：前日と同じ業務で休日でない場合は→
+          if (useArrow && d > 0 && code && code === prevCode && !info.isKyu) {
+            rowData.push('→');
+          } else {
+            rowData.push(info.name);
+          }
+        }
+
+        const dataRow = sheet.addRow(rowData);
+        dataRow.height = 55;
+
+        // 氏名セル
+        const nameCell = dataRow.getCell(1);
+        nameCell.alignment = { horizontal: 'left', vertical: 'middle' };
+        nameCell.border = { top:{style:'thin'}, bottom:{style:'thin'}, left:{style:'thin'}, right:{style:'thin'} };
+
+        // 日付セルに色付け
+        for (let d = 0; d < days; d++) {
+          const cell = dataRow.getCell(d + 2);
+          const code = codes[d];
+          const wd = new Date(year, month - 1, d + 1).getDay();
+          const info = getCodeInfo(code);
+          const prevCode = d > 0 ? codes[d - 1] : null;
+          const isArrow = useArrow && d > 0 && code && code === prevCode && !info.isKyu;
+
+          if (isArrow) {
+            cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: false };
+            cell.font = { color: { argb: 'FF555555' }, size: 9 };
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD5E8D4' } };
+          } else {
+            // 縦書き風：1文字ずつ改行
+            if (cell.value && typeof cell.value === 'string' && cell.value.length > 1) {
+              cell.value = cell.value.split('').join('\n');
+            }
+            cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+            cell.font = { ...(cell.font || {}), size: 10 };
+          }
+          cell.border = { top:{style:'thin'}, bottom:{style:'thin'}, left:{style:'thin'}, right:{style:'thin'} };
+
+          if (info.isKyu) {
+            // 休日・有休・健診：赤文字グレー背景
+            cell.font = { color: { argb: 'FFCC0000' }, bold: true, size: 11 };
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE0E0E0' } };
+          } else if (isArrow) {
+            // 矢印：薄い緑背景
+            cell.font = { color: { argb: 'FF555555' }, size: 11 };
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD5E8D4' } };
+          } else if (info.color) {
+            // 業務色
+            cell.font = { bold: true, size: 11 };
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: info.color } };
+          } else {
+            // 土日の色
+            if (wd === 0) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF0F0' } };
+            if (wd === 6) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF0F0FF' } };
+          }
+
+          // 遅番はオレンジ枠
+          if (chibanCodes.has(code)) {
+            cell.border = {
+              top:{style:'medium', color:{argb:'FFE67E22'}},
+              bottom:{style:'medium', color:{argb:'FFE67E22'}},
+              left:{style:'medium', color:{argb:'FFE67E22'}},
+              right:{style:'medium', color:{argb:'FFE67E22'}},
+            };
+          }
+        }
+      });
+
+      // A4横・1ページに収める印刷設定
+      sheet.pageSetup = {
+        paperSize: 9, // A4
+        orientation: 'landscape',
+        fitToPage: true,
+        fitToWidth: 1,
+        fitToHeight: 0,
+        margins: { left: 0.5, right: 0.5, top: 0.5, bottom: 0.5, header: 0.3, footer: 0.3 },
+      };
+
+      // ダウンロード
+      const arrowLabel = useArrow ? '2' : '';
+      const buf = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `業務シフト${arrowLabel}_${year}${String(month).padStart(2,'0')}_${bushoName}.xlsx`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+    // ===== 表示順設定 =====
+    let hyojiJunDialogList = [];
+    let hyojiJunSelectedIdx = null;
+
+    function openHyojiJunDialog() {
+      if (!currentFilter) { showMsg('所属を選択してください', 'err'); return; }
+      const busho = masters.bushoMap[currentFilter];
+      document.getElementById('hyoji-jun-busho-name').textContent = busho?.busho_name || currentFilter;
+
+      const filtered = staffRows.filter(s => !isFilterHidden(s));
+      hyojiJunDialogList = [...filtered].sort((a, b) => {
+        const junA = hyojiJunMap[currentFilter]?.[a.staff_code] ?? 9999;
+        const junB = hyojiJunMap[currentFilter]?.[b.staff_code] ?? 9999;
+        if (junA !== junB) return junA - junB;
+        return a.staff_code.localeCompare(b.staff_code);
+      }).map(s => s.staff_code);
+
+      hyojiJunSelectedIdx = null;
+      renderHyojiJunList();
+      document.getElementById('hyoji-jun-dialog').style.display = 'flex';
+    }
+
+    function closeHyojiJunDialog() {
+      document.getElementById('hyoji-jun-dialog').style.display = 'none';
+    }
+
+    function renderHyojiJunList() {
+      const list = document.getElementById('hyoji-jun-list');
+      list.innerHTML = '';
+      hyojiJunDialogList.forEach((code, idx) => {
+        const staff = staffRows.find(s => s.staff_code === code);
+        const div = document.createElement('div');
+        div.style.cssText = `padding:8px 12px; cursor:pointer; border-radius:4px; margin:2px 0; font-size:0.9rem;
+          background:${idx === hyojiJunSelectedIdx ? '#d0e8ff' : '#f9f9f9'};
+          border:1px solid ${idx === hyojiJunSelectedIdx ? '#4a90e2' : '#eee'};`;
+        div.textContent = staff?.name || code;
+        div.onclick = () => { hyojiJunSelectedIdx = idx; renderHyojiJunList(); };
+        list.appendChild(div);
+      });
+    }
+
+    function moveHyojiJun(dir) {
+      if (hyojiJunSelectedIdx === null) return;
+      const newIdx = hyojiJunSelectedIdx + dir;
+      if (newIdx < 0 || newIdx >= hyojiJunDialogList.length) return;
+      const tmp = hyojiJunDialogList[hyojiJunSelectedIdx];
+      hyojiJunDialogList[hyojiJunSelectedIdx] = hyojiJunDialogList[newIdx];
+      hyojiJunDialogList[newIdx] = tmp;
+      hyojiJunSelectedIdx = newIdx;
+      renderHyojiJunList();
+    }
+
+    async function saveHyojiJun() {
+      if (!currentFilter) return;
+      const records = hyojiJunDialogList.map((staff_code, idx) => ({
+        busho_code: currentFilter, staff_code, hyoji_jun: idx,
+      }));
+      // その所属の表示順を一度全部消してから、新しい並び順で入れ直す
+      const { error: delErr } = await sb.from('shift_hyoji_jun').delete().eq('busho_code', currentFilter);
+      if (delErr) { showMsg('保存に失敗しました: ' + delErr.message, 'err'); return; }
+      const { error } = await sb.from('shift_hyoji_jun').insert(records);
+      if (error) { showMsg('保存に失敗しました: ' + error.message, 'err'); return; }
+
+      if (!hyojiJunMap[currentFilter]) hyojiJunMap[currentFilter] = {};
+      hyojiJunDialogList.forEach((staff_code, idx) => {
+        hyojiJunMap[currentFilter][staff_code] = idx;
+      });
+
+      showMsg('表示順を保存しました', 'ok');
+      closeHyojiJunDialog();
+      renderTable();
+    }
+
+    function showMsg(text, type) {
+      const el = document.getElementById('msg');
+      el.textContent = text;
+      el.className = `msg ${type}`;
+      setTimeout(() => { el.className = 'msg'; }, 4000);
+    }
+
+    init();
+  </script>
+</body>
+</html>

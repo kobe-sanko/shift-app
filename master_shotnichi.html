@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>月間所定日数</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="common.js"></script>
+  <style>
+    body { font-family: sans-serif; margin: 0 auto; padding: 10px; background: #f5f5f5; max-width: 500px; }
+    h1 { font-size: 1.2rem; text-align: center; margin: 10px 0; }
+    .back { display: block; text-align: center; margin: 8px 0; color: #4a90e2; text-decoration: none; width: fit-content; margin-left: auto; margin-right: auto; }
+    .nav-row { display: flex; align-items: center; justify-content: center; gap: 12px; margin-bottom: 12px; }
+    .nav-row button.nav-btn { background: #555; color: white; border: none; border-radius: 4px; padding: 4px 14px; font-size: 0.9rem; cursor: pointer; }
+    .nav-row span { font-size: 1rem; font-weight: bold; min-width: 80px; text-align: center; }
+    .form-box { background: #fff0e8; border-radius: 8px; padding: 12px; margin-bottom: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.1); }
+    .form-group { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
+    .form-group label { font-size: 0.8rem; color: #666; }
+    .form-group input { font-size: 1rem; padding: 6px 10px; border: 1px solid #ccc; border-radius: 4px; width: 120px; text-align: center; }
+    .btn-group { display: flex; gap: 8px; }
+    button { font-size: 0.85rem; padding: 6px 14px; border: none; border-radius: 4px; cursor: pointer; color: white; }
+    .btn-add    { background: #4a90e2; }
+    .btn-update { background: #27ae60; }
+    .btn-delete { background: #e74c3c; }
+    .msg { text-align: center; font-size: 0.85rem; padding: 6px; border-radius: 4px; margin-bottom: 8px; display: none; }
+    .msg.ok  { background: #d4edda; color: #155724; display: block; }
+    .msg.err { background: #fdecea; color: #c0392b; display: block; }
+    .current-val { text-align: center; font-size: 1.1rem; padding: 16px; background: white; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.1); margin-bottom: 8px; }
+    .current-val span { font-size: 2rem; font-weight: bold; color: #2980b9; }
+    table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,0.1); font-size: 0.85rem; }
+    th { background: #eee; padding: 7px 4px; text-align: center; border-bottom: 1px solid #ddd; }
+    td { padding: 8px 4px; text-align: center; border-bottom: 1px solid #f0f0f0; cursor: pointer; }
+    tr:hover td { background: #f0f8ff; }
+    tr.selected td { background: #d0e8ff !important; }
+    .loading { text-align: center; padding: 20px; color: #888; }
+  </style>
+</head>
+<body>
+  <h1>📆 月間所定日数</h1>
+  <a class="back" href="index.html">← メニューへ</a>
+  <div id="msg" class="msg"></div>
+
+  <!-- 月ナビゲーション -->
+  <div class="nav-row">
+    <button class="nav-btn" onclick="changeMonth(-1)">◀ 前月</button>
+    <span id="month-label"></span>
+    <button class="nav-btn" onclick="changeMonth(+1)">次月 ▶</button>
+  </div>
+
+  <!-- 現在の値表示 -->
+  <div class="current-val" id="current-val">
+    この月のデータ：<span id="current-days">－</span> 日
+  </div>
+
+  <!-- 入力フォーム -->
+  <div class="form-box">
+    <div class="form-group">
+      <label>所定日数（日）</label>
+      <input type="number" id="f_days" min="0" max="31" placeholder="例：20">
+    </div>
+    <div class="btn-group">
+      <button class="btn-add"    onclick="saveRow('add')">新規登録</button>
+      <button class="btn-update" onclick="saveRow('update')">更新</button>
+      <button class="btn-delete" onclick="deleteRow()">削除</button>
+    </div>
+  </div>
+
+  <!-- 一覧テーブル（直近12ヶ月） -->
+  <div id="loading" class="loading">読み込み中...</div>
+  <table id="main-table" style="display:none">
+    <thead>
+      <tr>
+        <th>年月</th>
+        <th style="width:100px">所定日数</th>
+        <th style="width:150px">標準上限（80h）</th>
+        <th style="width:130px">上限（60h）</th>
+      </tr>
+    </thead>
+    <tbody id="tbody"></tbody>
+  </table>
+
+  <script>
+    let rows = [];
+    let currentYM = getCurrentYearMonth();
+    let currentRow = null;
+
+    async function init() {
+      updateLabel();
+      await loadRows();
+    }
+
+    function updateLabel() {
+      const { year, month } = parseYearMonth(currentYM);
+      document.getElementById('month-label').textContent = `${year}年${month}月`;
+    }
+
+    function changeMonth(delta) {
+      const { year, month } = parseYearMonth(currentYM);
+      const d = new Date(year, month - 1 + delta, 1);
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      currentYM = `${y}${m}`;
+      updateLabel();
+      loadRows();
+    }
+
+    async function loadRows() {
+      document.getElementById('loading').style.display = 'block';
+      document.getElementById('main-table').style.display = 'none';
+      // 全件取得して一覧表示（新しい順）
+      const { data, error } = await sb.from('shift_shotnichi').select('*').order('yearmonth', { ascending: false });
+      if (error) { showMsg('データの読み込みに失敗しました: ' + error.message, 'err'); return; }
+      rows = data || [];
+
+      // 現在の月のデータを探して表示
+      currentRow = rows.find(r => r.yearmonth === currentYM) || null;
+      if (currentRow) {
+        document.getElementById('current-days').textContent = currentRow.shotei_days;
+        document.getElementById('f_days').value = currentRow.shotei_days;
+      } else {
+        document.getElementById('current-days').textContent = '未登録';
+        document.getElementById('f_days').value = '';
+      }
+
+      renderTable();
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('main-table').style.display = '';
+    }
+
+    function renderTable() {
+      const tbody = document.getElementById('tbody');
+      tbody.innerHTML = '';
+      rows.forEach(r => {
+        const { year, month } = parseYearMonth(r.yearmonth);
+        const tr = document.createElement('tr');
+        if (r.yearmonth === currentYM) tr.classList.add('selected');
+        tr.onclick = () => {
+          const { year: y, month: m } = parseYearMonth(r.yearmonth);
+          currentYM = r.yearmonth;
+          updateLabel();
+          document.getElementById('f_days').value = r.shotei_days;
+          document.getElementById('current-days').textContent = r.shotei_days;
+          currentRow = r;
+          renderTable();
+        };
+        const limit80 = r.shotei_days * 8 + 80;
+        const limit60 = r.shotei_days * 8 + 60;
+        tr.innerHTML = `<td>${year}年${month}月</td><td>${r.shotei_days} 日</td><td>${limit80} 時間</td><td>${limit60} 時間</td>`;
+        tbody.appendChild(tr);
+      });
+    }
+
+    async function saveRow(mode) {
+      const days = document.getElementById('f_days').value;
+      if (days === '') { showMsg('所定日数を入力してください', 'err'); return; }
+      const data = { yearmonth: currentYM, shotei_days: parseInt(days) };
+
+      if (mode === 'add') {
+        if (currentRow) { showMsg('この月のデータはすでに存在します。「更新」を使ってください。', 'err'); return; }
+        const { error } = await sb.from('shift_shotnichi').insert(data);
+        if (error) { showMsg('登録に失敗しました: ' + error.message, 'err'); return; }
+        showMsg('登録しました', 'ok');
+      } else {
+        if (!currentRow) { showMsg('この月のデータがありません。「新規登録」を使ってください。', 'err'); return; }
+        const { error } = await sb.from('shift_shotnichi').update({ shotei_days: parseInt(days) }).eq('yearmonth', currentYM);
+        if (error) { showMsg('更新に失敗しました: ' + error.message, 'err'); return; }
+        showMsg('更新しました', 'ok');
+      }
+      await loadRows();
+    }
+
+    async function deleteRow() {
+      if (!currentRow) { showMsg('この月のデータがありません', 'err'); return; }
+      const { year, month } = parseYearMonth(currentYM);
+      if (!confirm(`${year}年${month}月の所定日数を削除しますか？`)) return;
+      const { error } = await sb.from('shift_shotnichi').delete().eq('yearmonth', currentYM);
+      if (error) { showMsg('削除に失敗しました: ' + error.message, 'err'); return; }
+      showMsg('削除しました', 'ok');
+      await loadRows();
+    }
+
+    function showMsg(text, type) {
+      const el = document.getElementById('msg');
+      el.textContent = text;
+      el.className = `msg ${type}`;
+      setTimeout(() => { el.className = 'msg'; }, 3000);
+    }
+
+    init();
+  </script>
+</body>
+</html>

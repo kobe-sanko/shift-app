@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>派遣会社マスタ</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="common.js"></script>
+  <style>
+    body { font-family: sans-serif; margin: 0 auto; padding: 10px; background: #f5f5f5; max-width: 600px; }
+    h1 { font-size: 1.2rem; text-align: center; margin: 10px 0; }
+    .back { display: block; text-align: center; margin: 8px 0; color: #4a90e2; text-decoration: none; width: fit-content; margin-left: auto; margin-right: auto; }
+    .msg { text-align: center; font-size: 0.85rem; padding: 6px; border-radius: 4px; margin-bottom: 8px; display: none; }
+    .msg.ok  { background: #d4edda; color: #155724; display: block; }
+    .msg.err { background: #fdecea; color: #c0392b; display: block; }
+
+    /* フォーム */
+    .form-box { background: #fff0e8; border-radius: 8px; padding: 8px; margin-bottom: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.1); }
+    .form-table { width: 100%; table-layout: fixed; border-collapse: separate; border-spacing: 4px 0; display: table; }
+    .form-cell { display: table-cell; vertical-align: bottom; }
+    .form-cell label { display: block; font-size: 0.75rem; color: #666; text-align: center; margin-bottom: 3px; }
+    .form-cell input, .form-cell select {
+      width: 100%; font-size: 0.85rem; padding: 4px 2px;
+      border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; text-align: center;
+    }
+    .btn-row { display: flex; gap: 6px; margin-top: 6px; }
+    button { font-size: 0.85rem; padding: 5px 12px; border: none; border-radius: 4px; cursor: pointer; color: white; }
+    .btn-add    { background: #4a90e2; }
+    .btn-update { background: #27ae60; }
+    .btn-delete { background: #e74c3c; }
+
+    /* テーブル */
+    table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,0.1); font-size: 0.85rem; table-layout: fixed; }
+    th { background: #eee; padding: 7px 4px; text-align: center; border-bottom: 1px solid #ddd; }
+    td { padding: 6px 4px; text-align: center; border-bottom: 1px solid #f0f0f0; cursor: pointer; }
+    tr:hover td { background: #f0f8ff; }
+    tr.selected td { background: #d0e8ff !important; }
+    .loading { text-align: center; padding: 20px; color: #888; }
+  </style>
+</head>
+<body>
+  <h1>🏭 派遣会社マスタ</h1>
+  <a class="back" href="index.html">← メニューへ</a>
+  <div id="msg" class="msg"></div>
+
+  <div class="form-box">
+    <div class="form-table">
+      <div class="form-cell">
+        <label>派遣会社名</label>
+        <input type="text" id="f_name" placeholder="例：○○人材派遣">
+      </div>
+      <div class="form-cell" style="width:80px">
+        <label>有効</label>
+        <select id="f_active">
+          <option value="true">有効</option>
+          <option value="false">無効</option>
+        </select>
+      </div>
+    </div>
+    <div class="btn-row">
+      <button class="btn-add"    onclick="saveRow('add')">新規登録</button>
+      <button class="btn-update" onclick="saveRow('update')">更新</button>
+      <button class="btn-delete" onclick="deleteRow()">削除</button>
+    </div>
+  </div>
+
+  <div id="loading" class="loading">読み込み中...</div>
+  <table id="main-table" style="display:none">
+    <thead>
+      <tr>
+        <th>派遣会社名</th>
+        <th style="width:80px">有効</th>
+      </tr>
+    </thead>
+    <tbody id="tbody"></tbody>
+  </table>
+
+  <script>
+    let rows = [];
+    let selectedName = null;
+
+    async function init() {
+      await loadRows();
+    }
+
+    async function loadRows() {
+      const { data, error } = await sb.from('shift_haken').select('*').order('haken_name');
+      if (error) { showMsg('データの読み込みに失敗しました: ' + error.message, 'err'); return; }
+      rows = data || [];
+      renderTable();
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('main-table').style.display = '';
+    }
+
+    function renderTable() {
+      const tbody = document.getElementById('tbody');
+      tbody.innerHTML = '';
+      rows.forEach(r => {
+        const tr = document.createElement('tr');
+        if (r.haken_name === selectedName) tr.classList.add('selected');
+        tr.onclick = () => selectRow(r);
+        tr.innerHTML = `
+          <td style="text-align:left;padding-left:10px">${r.haken_name || ''}</td>
+          <td>${r.is_active ? '有効' : '無効'}</td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    function selectRow(r) {
+      selectedName = r.haken_name;
+      document.getElementById('f_name').value   = r.haken_name || '';
+      document.getElementById('f_active').value = r.is_active ? 'true' : 'false';
+      renderTable();
+    }
+
+    async function saveRow(mode) {
+      const name = document.getElementById('f_name').value.trim();
+      if (!name) { showMsg('派遣会社名を入力してください', 'err'); return; }
+      const data = {
+        haken_name: name,
+        is_active:  document.getElementById('f_active').value === 'true',
+      };
+      if (mode === 'add') {
+        const exists = rows.find(r => r.haken_name === name);
+        if (exists) { showMsg(`「${name}」はすでに存在します`, 'err'); return; }
+        const { error } = await sb.from('shift_haken').insert(data);
+        if (error) { showMsg('登録に失敗しました: ' + error.message, 'err'); return; }
+        showMsg('登録しました', 'ok');
+      } else {
+        if (!selectedName) { showMsg('更新する行を選択してください', 'err'); return; }
+        const { error } = await sb.from('shift_haken').update(data).eq('haken_name', selectedName);
+        if (error) { showMsg('更新に失敗しました: ' + error.message, 'err'); return; }
+        showMsg('更新しました', 'ok');
+      }
+      selectedName = name;
+      await loadRows();
+    }
+
+    async function deleteRow() {
+      if (!selectedName) { showMsg('削除する行を選択してください', 'err'); return; }
+      if (!confirm(`「${selectedName}」を削除しますか？`)) return;
+      const { error } = await sb.from('shift_haken').delete().eq('haken_name', selectedName);
+      if (error) { showMsg('削除に失敗しました: ' + error.message, 'err'); return; }
+      showMsg('削除しました', 'ok');
+      selectedName = null;
+      document.getElementById('f_name').value = '';
+      await loadRows();
+    }
+
+    function showMsg(text, type) {
+      const el = document.getElementById('msg');
+      el.textContent = text;
+      el.className = `msg ${type}`;
+      setTimeout(() => { el.className = 'msg'; }, 3000);
+    }
+
+    init();
+  </script>
+</body>
+</html>

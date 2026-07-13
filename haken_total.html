@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>派遣集計</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="common.js"></script>
+  <style>
+    body { font-family: sans-serif; margin: 0; padding: 10px; background: #f5f5f5; }
+    h1 { font-size: 1.2rem; text-align: center; margin: 6px 0; }
+    .back { display: table; text-align: center; margin: 4px auto 8px; color: #4a90e2; text-decoration: none; }
+    .top-bar { display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+    .month-select { font-size: 0.9rem; padding: 4px 8px; border: 1px solid #ccc; border-radius: 4px; }
+    .btn { font-size: 0.82rem; padding: 5px 12px; border: none; border-radius: 4px; cursor: pointer; color: white; background: #4a90e2; }
+    .filter-row { display: flex; flex-wrap: wrap; gap: 5px; justify-content: center; margin-bottom: 8px; }
+    .filter-btn { padding: 3px 10px; border: none; border-radius: 4px; cursor: pointer; font-size: 0.82rem; }
+    .filter-btn.active { outline: 3px solid #333; font-weight: bold; }
+    .msg { text-align: center; font-size: 0.85rem; padding: 6px; border-radius: 4px; margin-bottom: 6px; display: none; }
+    .msg.ok  { background: #d4edda; color: #155724; display: block; }
+    .msg.err { background: #fdecea; color: #c0392b; display: block; }
+
+    .table-wrap { overflow-x: auto; }
+    table { border-collapse: collapse; background: white; font-size: 0.75rem; white-space: nowrap; box-shadow: 0 1px 4px rgba(0,0,0,0.1); margin: 0 auto; }
+    th { background: #dde; padding: 4px 3px; text-align: center; border: 1px solid #ccc; min-width: 30px; }
+    th.name-th { min-width: 110px; position: sticky; left: 0; z-index: 2; background: #dde; }
+    th.total-th { min-width: 40px; }
+    th.sat { background: #d0e8ff; }
+    th.sun { background: #ffd0d0; }
+    td { padding: 3px 2px; text-align: center; border: 1px solid #eee; }
+    td.name-td { position: sticky; left: 0; background: white; z-index: 1; padding: 3px 6px; min-width: 110px; font-size: 0.78rem; text-align: left; }
+    td.sat-col { background: #f0f6ff; }
+    td.sun-col { background: #fff0f0; }
+    tr.grand-total td { background: #cfe0f5 !important; font-weight: bold; }
+    tr.company-total td { background: #e8e8e8; font-weight: bold; }
+    tr.company-total td.name-td { padding-left: 10px; }
+    .badge { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 0.7rem; font-weight: bold; }
+    .loading { text-align: center; padding: 30px; color: #888; font-size: 1rem; }
+  </style>
+</head>
+<body>
+  <h1 id="page-title">🚚 派遣集計</h1>
+  <a class="back" href="index.html">← メニューへ</a>
+  <div id="msg" class="msg"></div>
+
+  <div class="top-bar">
+    <select class="month-select" id="month-sel" onchange="loadData()"></select>
+    <button class="btn" onclick="loadData()">表示</button>
+  </div>
+
+  <div class="filter-row" id="filter-row">
+    <button class="filter-btn active" style="background:#555;color:white" onclick="filterTable('', this)">全員</button>
+  </div>
+
+  <div class="loading" id="loading">読み込み中…</div>
+
+  <div class="table-wrap" id="table-wrap" style="display:none">
+    <table>
+      <thead id="thead"></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+
+  <script>
+    let masters = {};
+    let hakenRows = []; // その月のshift_banmen_haken全件
+    let currentYM = '';
+    let daysInMonth = 31;
+    let currentFilter = '';
+
+    async function init() {
+      masters = await loadMasters();
+
+      currentYM = typeof getCurrentYearMonth === 'function' ? getCurrentYearMonth()
+        : (() => { const n = new Date(); return `${n.getFullYear()}${String(n.getMonth() + 1).padStart(2, '0')}`; })();
+      buildMonthSelect();
+      buildFilterButtons();
+
+      await loadData();
+    }
+
+    // ===== 月セレクト =====
+    function buildMonthSelect() {
+      const sel = document.getElementById('month-sel');
+      const now = new Date();
+      for (let i = -6; i <= 1; i++) {
+        const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const ym = `${y}${m}`;
+        const opt = document.createElement('option');
+        opt.value = ym;
+        opt.textContent = `${y}年${m}月`;
+        if (ym === currentYM) opt.selected = true;
+        sel.appendChild(opt);
+      }
+    }
+
+    // ===== 所属フィルターボタン（900番台は除く）=====
+    function buildFilterButtons() {
+      const row = document.getElementById('filter-row');
+      masters.bushos.filter(b => parseInt(b.busho_code) < 900).forEach(b => {
+        const btn = document.createElement('button');
+        btn.className = 'filter-btn';
+        btn.style.background = b.color_h || '#888';
+        btn.style.color = getTextColor(b.color_h || '#888');
+        btn.textContent = b.busho_name;
+        btn.onclick = () => filterTable(b.busho_code, btn);
+        row.appendChild(btn);
+      });
+    }
+
+    function filterTable(bushoCode, btn) {
+      currentFilter = bushoCode;
+      document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+      if (btn) btn.classList.add('active');
+      renderTable();
+    }
+
+    // ===== データ読み込み =====
+    async function loadData() {
+      currentYM = document.getElementById('month-sel').value || currentYM;
+      document.getElementById('loading').style.display = 'block';
+      document.getElementById('table-wrap').style.display = 'none';
+
+      const year = parseInt(currentYM.substring(0, 4));
+      const month = parseInt(currentYM.substring(4, 6));
+      daysInMonth = new Date(year, month, 0).getDate();
+
+      const dateFrom = `${currentYM}01`;
+      const dateTo = `${currentYM}${String(daysInMonth).padStart(2, '0')}`;
+
+      const { data, error } = await sb.from('shift_banmen_haken').select('date, haken_name, busho_code')
+        .gte('date', dateFrom).lte('date', dateTo);
+
+      if (error) {
+        showMsg('データの読み込みに失敗しました', 'err');
+        console.error(error);
+        return;
+      }
+
+      hakenRows = data || [];
+
+      buildHeader();
+      renderTable();
+
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('table-wrap').style.display = 'block';
+    }
+
+    // ===== ヘッダー（日付列）構築 =====
+    function buildHeader() {
+      const thead = document.getElementById('thead');
+      const year = parseInt(currentYM.substring(0, 4));
+      const month = parseInt(currentYM.substring(4, 6));
+
+      let html = '<tr><th class="name-th">派遣会社／所属</th><th class="total-th">月計</th>';
+      for (let d = 1; d <= daysInMonth; d++) {
+        const wd = new Date(year, month - 1, d).getDay();
+        const cls = wd === 0 ? 'sun' : wd === 6 ? 'sat' : '';
+        html += `<th class="${cls}">${d}<br><span style="font-size:0.62rem">${getWeekdayName(wd)}</span></th>`;
+      }
+      html += '</tr>';
+      thead.innerHTML = html;
+    }
+
+    function getDayClass(d) {
+      const year = parseInt(currentYM.substring(0, 4));
+      const month = parseInt(currentYM.substring(4, 6));
+      const wd = new Date(year, month - 1, d).getDay();
+      return wd === 0 ? 'sun-col' : wd === 6 ? 'sat-col' : '';
+    }
+
+    // ===== 本体テーブル描画 =====
+    function renderTable() {
+      const tbody = document.getElementById('tbody');
+      tbody.innerHTML = '';
+
+      // フィルター中は対象の所属だけに絞る
+      const rows = currentFilter ? hakenRows.filter(r => r.busho_code === currentFilter) : hakenRows;
+
+      // 派遣会社 → 所属 → 日付 の3階層で件数を集計
+      const byCompany = {}; // { haken_name: { total, days:{d:count}, bushos:{busho_code:{total, days:{d:count}}} } }
+      rows.forEach(r => {
+        const d = parseInt(r.date.substring(6, 8), 10);
+        if (!byCompany[r.haken_name]) byCompany[r.haken_name] = { total: 0, days: {}, bushos: {} };
+        const c = byCompany[r.haken_name];
+        c.total++;
+        c.days[d] = (c.days[d] || 0) + 1;
+
+        if (!c.bushos[r.busho_code]) c.bushos[r.busho_code] = { total: 0, days: {} };
+        const b = c.bushos[r.busho_code];
+        b.total++;
+        b.days[d] = (b.days[d] || 0) + 1;
+      });
+
+      const companyNames = Object.keys(byCompany).sort((a, b) => a.localeCompare(b, 'ja'));
+
+      if (companyNames.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="${daysInMonth + 2}" style="padding:20px;color:#888;">この月の派遣データはありません</td></tr>`;
+        return;
+      }
+
+      // ---- 合計行 ----
+      let grandTotal = 0;
+      const grandDays = {};
+      companyNames.forEach(name => {
+        grandTotal += byCompany[name].total;
+        for (let d = 1; d <= daysInMonth; d++) {
+          grandDays[d] = (grandDays[d] || 0) + (byCompany[name].days[d] || 0);
+        }
+      });
+
+      let html = `<tr class="grand-total"><td class="name-td">合計</td><td>${grandTotal}</td>`;
+      for (let d = 1; d <= daysInMonth; d++) {
+        html += `<td class="${getDayClass(d)}">${grandDays[d] || ''}</td>`;
+      }
+      html += '</tr>';
+
+      // ---- 派遣会社ごと ----
+      companyNames.forEach(name => {
+        const c = byCompany[name];
+        html += `<tr class="company-total"><td class="name-td">${name}</td><td>${c.total}</td>`;
+        for (let d = 1; d <= daysInMonth; d++) {
+          html += `<td class="${getDayClass(d)}">${c.days[d] || ''}</td>`;
+        }
+        html += '</tr>';
+
+        // 所属ごとの内訳（masters.bushosの並び順を踏襲）
+        masters.bushos.forEach(busho => {
+          const b = c.bushos[busho.busho_code];
+          if (!b) return; // その月に実績がない所属は表示しない
+          const color = busho.color_h || '#888';
+          html += `<tr><td class="name-td"><span class="badge" style="background:${color};color:${getTextColor(color)}">${busho.busho_name}</span></td><td>${b.total}</td>`;
+          for (let d = 1; d <= daysInMonth; d++) {
+            html += `<td class="${getDayClass(d)}">${b.days[d] || ''}</td>`;
+          }
+          html += '</tr>';
+        });
+      });
+
+      tbody.innerHTML = html;
+    }
+
+    function showMsg(text, type) {
+      const el = document.getElementById('msg');
+      el.textContent = text;
+      el.className = 'msg ' + type;
+      setTimeout(() => { el.className = 'msg'; }, 3000);
+    }
+
+    init();
+  </script>
+</body>
+</html>

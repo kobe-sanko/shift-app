@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>駐車場状況</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="common.js"></script>
+  <style>
+    body { font-family: sans-serif; margin: 0 auto; padding: 10px; background: #f5f5f5; max-width: 600px; }
+    h1 { font-size: 1.2rem; text-align: center; margin: 10px 0; }
+    .back { display: table; text-align: center; margin: 4px auto 8px; color: #4a90e2; text-decoration: none; }
+    .date-bar { display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 6px; }
+    .date-bar button { font-size: 0.9rem; padding: 4px 10px; border: none; border-radius: 4px; cursor: pointer; background: #666; color: white; }
+    .date-label { font-size: 1rem; font-weight: bold; min-width: 140px; text-align: center; }
+    .kuuki-bar { text-align: center; margin-bottom: 10px; font-size: 0.95rem; }
+    .kuuki-badge { display: inline-block; padding: 3px 12px; border-radius: 4px; font-weight: bold; background: #e74c3c; color: white; }
+    .msg { text-align: center; font-size: 0.85rem; padding: 6px; border-radius: 4px; margin-bottom: 8px; display: none; }
+    .msg.ok  { background: #d4edda; color: #155724; display: block; }
+    .msg.err { background: #fdecea; color: #c0392b; display: block; }
+
+    table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,0.1); font-size: 0.9rem; }
+    th { background: #6c3483; color: white; padding: 8px 4px; text-align: center; }
+    td { padding: 9px 4px; text-align: center; border-bottom: 1px solid #f0f0f0; }
+    .empty-name { color: #bbb; }
+    .status { display: inline-block; padding: 3px 10px; border-radius: 4px; font-size: 0.8rem; font-weight: bold; }
+    .status-work   { background: #d4edda; color: #1e7e34; }
+    .status-leave  { background: #fdecea; color: #c0392b; }
+    .status-none   { background: #eee; color: #999; }
+    tr.leave-row td { background: #fff5f5; }
+    .loading { text-align: center; padding: 20px; color: #888; }
+  </style>
+</head>
+<body>
+  <h1>🅿️ 駐車場状況</h1>
+  <a class="back" href="index.html">← メニューへ</a>
+  <div id="msg" class="msg"></div>
+
+  <div class="date-bar">
+    <button onclick="changeDate(-1)">◀</button>
+    <span class="date-label" id="date-label">読込中...</span>
+    <button onclick="changeDate(1)">▶</button>
+    <button onclick="document.getElementById('date-picker').showPicker()" style="background:#444;font-size:0.75rem">📅</button>
+    <input type="date" id="date-picker" style="position:absolute;opacity:0;width:0;height:0;" onchange="onDatePicked(this.value)">
+  </div>
+
+  <div class="kuuki-bar">空き駐車場：<span class="kuuki-badge" id="kuuki-count">-</span>台</div>
+
+  <div id="loading" class="loading">読み込み中...</div>
+  <table id="main-table" style="display:none">
+    <thead>
+      <tr><th style="width:60px">番号</th><th>氏名</th><th style="width:90px">状態</th></tr>
+    </thead>
+    <tbody id="tbody"></tbody>
+  </table>
+
+  <script>
+    const KYUJITSU_MAP = { '901': '休日', '902': '有休', '903': '健診' };
+
+    let masters = {};
+    let currentDate = new Date();
+    let slotRows = [];
+    let shiftMap = {}; // staff_code -> その日のシフト内容（gyomu_code等）
+
+    async function init() {
+      masters = await loadMasters();
+      await loadData();
+    }
+
+    function changeDate(delta) {
+      currentDate.setDate(currentDate.getDate() + delta);
+      loadData();
+    }
+
+    function onDatePicked(str) {
+      if (!str) return;
+      const [y, m, d] = str.split('-').map(Number);
+      currentDate = new Date(y, m - 1, d);
+      loadData();
+    }
+
+    function getDateLabel(d) {
+      const y = d.getFullYear();
+      const m = d.getMonth() + 1;
+      const day = d.getDate();
+      const wds = ['日', '月', '火', '水', '木', '金', '土'];
+      return `${y}年${m}月${day}日（${wds[d.getDay()]}）`;
+    }
+
+    function getYearMonth(d) {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      return `${y}${m}`;
+    }
+
+    function getDayCol(d) {
+      return `d${String(d.getDate()).padStart(2, '0')}`;
+    }
+
+    async function loadData() {
+      document.getElementById('date-label').textContent = getDateLabel(currentDate);
+      document.getElementById('loading').style.display = 'block';
+      document.getElementById('main-table').style.display = 'none';
+
+      const yearMonth = getYearMonth(currentDate);
+      const dayCol = getDayCol(currentDate);
+
+      const [slotRes, shiftRes] = await Promise.all([
+        sb.from('shift_chusyajo').select('*').order('slot_no'),
+        sb.from('shift_gyomu_shift').select(`staff_code, ${dayCol}`).eq('yearmonth', yearMonth),
+      ]);
+
+      if (slotRes.error || shiftRes.error) {
+        showMsg('データの読み込みに失敗しました', 'err');
+        console.error(slotRes.error || shiftRes.error);
+        return;
+      }
+
+      slotRows = slotRes.data || [];
+      shiftMap = {};
+      (shiftRes.data || []).forEach(r => { shiftMap[r.staff_code] = r[dayCol]; });
+
+      renderTable();
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('main-table').style.display = '';
+    }
+
+    // ===== 状態を判定 =====
+    // 戻り値: { label, cls, isLeave }
+    function getStatus(staffCode) {
+      if (!staffCode) return { label: '未割当', cls: 'status-none', isLeave: false };
+      const code = shiftMap[staffCode];
+      if (code && KYUJITSU_MAP[code]) {
+        return { label: KYUJITSU_MAP[code], cls: 'status-leave', isLeave: true };
+      }
+      return { label: '出勤', cls: 'status-work', isLeave: false };
+    }
+
+    function renderTable() {
+      const tbody = document.getElementById('tbody');
+      tbody.innerHTML = '';
+      let leaveCount = 0;
+
+      slotRows.forEach(r => {
+        const staff = masters.staffMap[r.staff_code];
+        const status = getStatus(r.staff_code);
+        if (status.isLeave) leaveCount++;
+
+        const nameHtml = staff ? staff.name : `<span class="empty-name">－</span>`;
+        const tr = document.createElement('tr');
+        if (status.isLeave) tr.className = 'leave-row';
+        tr.innerHTML = `
+          <td>${r.slot_no}番</td>
+          <td>${nameHtml}</td>
+          <td><span class="status ${status.cls}">${status.label}</span></td>
+        `;
+        tbody.appendChild(tr);
+      });
+
+      document.getElementById('kuuki-count').textContent = leaveCount;
+    }
+
+    function showMsg(text, type) {
+      const el = document.getElementById('msg');
+      el.textContent = text;
+      el.className = `msg ${type}`;
+      setTimeout(() => { el.className = 'msg'; }, 3000);
+    }
+
+    init();
+  </script>
+</body>
+</html>

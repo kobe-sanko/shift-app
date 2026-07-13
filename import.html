@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>データ エクスポート／インポート</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="common.js"></script>
+  <script src="exceljs.min.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: sans-serif; background: #f5f5f5; margin: 0; padding: 16px; }
+    .container { max-width: 900px; margin: 0 auto; }
+    h1 { font-size: 1.3rem; text-align: center; margin-bottom: 6px; }
+    .back { display: table; margin: 0 auto 16px; color: #4a90e2; text-decoration: none; }
+
+    .intro-box {
+      background: #fff3cd; border-left: 4px solid #f0ad4e; border-radius: 4px;
+      padding: 10px 14px; font-size: 0.85rem; color: #7a5800; margin-bottom: 18px; line-height: 1.6;
+    }
+
+    .group-title {
+      font-size: 0.95rem; font-weight: bold; color: #555; margin: 20px 0 8px;
+      border-left: 4px solid #888; padding-left: 8px;
+    }
+
+    .table-list { display: flex; flex-direction: column; gap: 6px; }
+    .table-row {
+      background: #fff; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+      padding: 10px 14px; display: grid;
+      grid-template-columns: 130px 65px 118px 118px 80px 120px 1fr;
+      align-items: center; gap: 4px;
+    }
+    .row-name { font-weight: bold; font-size: 0.95rem; }
+    .row-filehint { font-size: 0.72rem; color: #999; }
+    .row-count { font-size: 0.75rem; color: #888; }
+
+    .btn {
+      font-size: 0.82rem; padding: 6px 8px; border: none; border-radius: 4px; cursor: pointer; color: white;
+      white-space: nowrap; width: 100%; min-width: 0; display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+      overflow: hidden;
+    }
+    .btn-export, .btn-import { background: #27ae60; width: 110px; flex-shrink: 0; }
+    .btn-import { justify-self: end; }
+    .btn-import { background: #2980b9; }
+    .btn-import:disabled { background: #b0c4d4; cursor: default; }
+
+    .file-btn {
+      display: inline-flex; align-items: center; justify-content: center; width: 100%;
+      font-size: 0.82rem; padding: 6px 10px; border-radius: 4px;
+      background: #eee; border: 1px solid #ccc; cursor: pointer; color: #333;
+    }
+    .file-name-display { font-size: 0.78rem; color: #2980b9; word-break: break-all; }
+
+    .mode-sel { font-size: 0.75rem; padding: 5px 4px; border: 1px solid #ccc; border-radius: 4px; width: 100%; min-width: 0; }
+    .row-msg { font-size: 0.78rem; grid-column: 1 / -1; }
+    .row-msg.ok  { color: #155724; }
+    .row-msg.err { color: #c0392b; }
+    .row-msg.busy { color: #888; }
+  </style>
+</head>
+<body>
+<div class="container">
+  <h1>📦 データ エクスポート／インポート</h1>
+  <a class="back" href="index.html">← メニューへ</a>
+
+  <div style="text-align:center;margin-bottom:12px;">
+    <button class="btn" id="mode-toggle-btn" style="background:#e67e22;" onclick="toggleMode()">
+      🔄 モード切り替え（読み込み中…）
+    </button>
+  </div>
+
+  <div class="intro-box">
+    ⚠️ ここは、データの種類（テーブル）ごとに、Excelファイルとして書き出したり、取り込んだりする画面です。<br>
+    ・「エクスポート」＝そのデータをExcelファイルとしてダウンロードします<br>
+    ・「インポート」＝選んだExcelファイルの内容を取り込みます。取り込み方は2種類から選べます<br>
+    　－「全部置き換え」：今あるデータを全部消してから、Excelの内容に入れ替えます<br>
+    　－「追加のみ」：今あるデータは消さずに、Excelの内容をそのまま追加します<br>
+    インポートする前には、必ず先にエクスポートしてバックアップを取ってください。
+  </div>
+
+  <div id="groups"></div>
+</div>
+
+<script>
+  function updateModeButton() {
+    const btn = document.getElementById('mode-toggle-btn');
+    if (isTestMode()) {
+      btn.textContent = '🧪 テストモード中（押すと本番に戻る）';
+      btn.style.background = '#c0392b';
+    } else {
+      btn.textContent = '🔄 本番モード中（押すとテストに切り替え）';
+      btn.style.background = '#2980b9';
+    }
+  }
+
+  function toggleMode() {
+    const goingToTest = !isTestMode();
+    const msg = goingToTest
+      ? 'テストモードに切り替えます。テスト用の保管庫を見るようになります。よろしいですか？'
+      : '本番モードに戻します。本番の保管庫を見るようになります。よろしいですか？';
+    if (!confirm(msg)) return;
+    setTestMode(goingToTest);
+  }
+
+  updateModeButton();
+
+  // グループとテーブルの定義
+  const GROUPS = [
+    {
+      title: '🗂️ マスタ',
+      tables: [
+        { label: '社員', table: 'shift_staff', deleteKey: 'staff_code' },
+        { label: '所属', table: 'shift_busho', deleteKey: 'busho_code' },
+        { label: '業務', table: 'shift_gyomu', deleteKey: 'gyomu_code' },
+        { label: '車両', table: 'shift_car', deleteKey: 'car_code' },
+        { label: '派遣会社', table: 'shift_haken', deleteKey: 'haken_name' },
+        { label: '月間所定日数', table: 'shift_shotnichi', deleteKey: 'yearmonth' },
+        { label: '駐車場', table: 'shift_chusyajo', deleteKey: 'slot_no' },
+      ]
+    },
+    {
+      title: '✅ 適性',
+      tables: [
+        { label: '所属適性', table: 'shift_busho_tekisei', deleteKey: 'staff_code', skipCols: ['id'] },
+        { label: '業務適性', table: 'shift_gyomu_tekisei', deleteKey: 'staff_code', skipCols: ['id'] },
+      ]
+    },
+    {
+      title: '📋 シフト',
+      tables: [
+        { label: 'ベース業務シフト', table: 'shift_base_gyomu', deleteKey: 'staff_code' },
+        { label: '業務シフト（月別）', table: 'shift_gyomu_shift', deleteKey: 'staff_code' },
+        { label: '表示順', table: 'shift_hyoji_jun', deleteKey: 'busho_code', skipCols: ['id'] },
+      ]
+    },
+    {
+      title: '🖥️ 盤面',
+      tables: [
+        { label: '盤面設定', table: 'shift_banmen_config', deleteKey: 'id', skipCols: ['id'] },
+        { label: '盤面', table: 'shift_banmen', deleteKey: 'id', skipCols: ['id'] },
+        { label: '盤面_派遣', table: 'shift_banmen_haken', deleteKey: 'id', skipCols: ['id'] },
+        { label: '盤面_応援', table: 'shift_banmen_oen', deleteKey: 'id', skipCols: ['id'] },
+      ]
+    },
+    {
+      title: '⏱️ 勤怠',
+      tables: [
+        { label: '勤怠', table: 'shift_kintai', deleteKey: 'staff_code' },
+      ]
+    },
+  ];
+
+  function buildUI() {
+    const container = document.getElementById('groups');
+    GROUPS.forEach(group => {
+      const titleEl = document.createElement('div');
+      titleEl.className = 'group-title';
+      titleEl.textContent = group.title;
+      container.appendChild(titleEl);
+
+      const list = document.createElement('div');
+      list.className = 'table-list';
+
+      group.tables.forEach(t => {
+        const rowId = 'row-' + t.table;
+        const row = document.createElement('div');
+        row.className = 'table-row';
+        row.id = rowId;
+        row.innerHTML = `
+          <div>
+            <div class="row-name">${t.label}</div>
+            <div class="row-filehint">ファイル名：${t.table}.xlsx</div>
+          </div>
+          <div class="row-count" id="${rowId}-count">件数：確認中…</div>
+          <button class="btn btn-export" onclick="doExport('${t.table}','${t.label}')">📥 エクスポート</button>
+          <button class="btn btn-import" id="${rowId}-btn" disabled onclick="doImport('${t.table}','${t.label}','${t.deleteKey}', ${JSON.stringify(t.skipCols || [])})">📤 インポート</button>
+          <select class="mode-sel" id="${rowId}-mode">
+            <option value="replace">全部変更</option>
+            <option value="append">追加のみ</option>
+          </select>
+          <label class="file-btn" for="${rowId}-file">ファイルの選択</label>
+          <input type="file" accept=".xlsx" id="${rowId}-file" style="display:none" onchange="onFileChosen('${t.table}')">
+          <span class="file-name-display" id="${rowId}-filename">（未選択）</span>
+          <div class="row-msg" id="${rowId}-msg"></div>
+        `;
+        list.appendChild(row);
+      });
+      container.appendChild(list);
+      loadCounts(group.tables);
+    });
+  }
+
+  async function loadCounts(tables) {
+    for (const t of tables) {
+      const { count, error } = await sb.from(t.table).select('*', { count: 'exact', head: true });
+      const el = document.getElementById(`row-${t.table}-count`);
+      if (el) el.textContent = error ? '件数：取得失敗' : `件数：${count}件`;
+    }
+  }
+
+  function onFileChosen(table) {
+    const fileInput = document.getElementById(`row-${table}-file`);
+    const btn = document.getElementById(`row-${table}-btn`);
+    const nameEl = document.getElementById(`row-${table}-filename`);
+    const f = fileInput.files[0];
+    btn.disabled = !f;
+    nameEl.textContent = f ? f.name : '（未選択）';
+  }
+
+  function setMsg(table, text, cls) {
+    const el = document.getElementById(`row-${table}-msg`);
+    el.textContent = text;
+    el.className = 'row-msg ' + cls;
+  }
+
+  // ===== エクスポート =====
+  async function doExport(table, label) {
+    setMsg(table, '書き出し中…', 'busy');
+    try {
+      const { data, error } = await sb.from(table).select('*');
+      if (error) throw error;
+
+      const wb = new ExcelJS.Workbook();
+      const sheet = wb.addWorksheet(label);
+      if (data && data.length > 0) {
+        const cols = Object.keys(data[0]);
+        sheet.addRow(cols).font = { bold: true };
+        data.forEach(row => sheet.addRow(cols.map(c => row[c])));
+        cols.forEach((c, i) => { sheet.getColumn(i + 1).width = Math.max(12, c.length + 4); });
+      }
+
+      const buf = await wb.xlsx.writeBuffer();
+      const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${table}.xlsx`;
+      a.click();
+      URL.revokeObjectURL(url);
+
+      setMsg(table, `✅ ${data.length}件を書き出しました`, 'ok');
+    } catch (e) {
+      console.error(e);
+      setMsg(table, '❌ 書き出しに失敗しました: ' + e.message, 'err');
+    }
+  }
+
+  // ===== インポート =====
+  async function doImport(table, label, deleteKey, skipCols) {
+    const fileInput = document.getElementById(`row-${table}-file`);
+    const file = fileInput.files[0];
+    if (!file) return;
+
+    const mode = document.getElementById(`row-${table}-mode`).value; // 'replace' or 'append'
+    const confirmMsg = mode === 'replace'
+      ? `「${label}」のデータを、選んだExcelの内容で全部上書きします。\n先にエクスポートしてバックアップは取りましたか？\n\n実行してよろしいですか？`
+      : `「${label}」に、選んだExcelの内容を追加します（今あるデータは消えません）。\n\n実行してよろしいですか？`;
+    if (!confirm(confirmMsg)) return;
+
+    setMsg(table, '読み込み中…', 'busy');
+    try {
+      const buf = await file.arrayBuffer();
+      const wb = new ExcelJS.Workbook();
+      await wb.xlsx.load(buf);
+      const sheet = wb.worksheets[0];
+      if (!sheet) throw new Error('シートが見つかりません');
+
+      let headers = [];
+      const records = [];
+      sheet.eachRow((row, rowNumber) => {
+        const values = row.values.slice(1); // exceljsは1始まりなので先頭を除く
+        if (rowNumber === 1) {
+          headers = values.map(v => String(v ?? '').trim());
+          return;
+        }
+        const obj = {};
+        headers.forEach((h, i) => {
+          if (!h) return;
+          if (skipCols && skipCols.includes(h)) return; // idなど自動採番の列は取り込まない
+          let v = values[i];
+          if (v === undefined) v = null;
+          obj[h] = v;
+        });
+        // 空行はスキップ
+        if (Object.values(obj).some(v => v !== null && v !== '')) records.push(obj);
+      });
+
+      if (mode === 'replace') {
+        setMsg(table, `削除中…（既存データを消しています）`, 'busy');
+        const { error: delErr } = await sb.from(table).delete().not(deleteKey, 'is', null);
+        if (delErr) throw delErr;
+      }
+
+      setMsg(table, `書き込み中…（0/${records.length}件）`, 'busy');
+      const CHUNK = 300;
+      for (let i = 0; i < records.length; i += CHUNK) {
+        const chunk = records.slice(i, i + CHUNK);
+        if (chunk.length === 0) continue;
+        const { error: insErr } = await sb.from(table).insert(chunk);
+        if (insErr) throw insErr;
+        setMsg(table, `書き込み中…（${Math.min(i + CHUNK, records.length)}/${records.length}件）`, 'busy');
+      }
+
+      setMsg(table, `✅ ${records.length}件を取り込みました`, 'ok');
+      fileInput.value = '';
+      document.getElementById(`row-${table}-filename`).textContent = '（未選択）';
+      document.getElementById(`row-${table}-btn`).disabled = true;
+      loadCounts([{ table }]);
+    } catch (e) {
+      console.error(e);
+      setMsg(table, '❌ 取り込みに失敗しました: ' + e.message, 'err');
+    }
+  }
+
+  buildUI();
+</script>
+</body>
+</html>

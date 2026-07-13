@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>業務適性</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="common.js"></script>
+  <style>
+    body { font-family: sans-serif; margin: 0 auto; padding: 10px; background: #f5f5f5; max-width: 600px; }
+    h1 { font-size: 1.2rem; text-align: center; margin: 10px 0; }
+    .back { display: block; text-align: center; margin: 8px 0; color: #4a90e2; text-decoration: none; width: fit-content; margin-left: auto; margin-right: auto; }
+    .msg { text-align: center; font-size: 0.85rem; padding: 6px; border-radius: 4px; margin-bottom: 8px; display: none; }
+    .msg.ok  { background: #d4edda; color: #155724; display: block; }
+    .msg.err { background: #fdecea; color: #c0392b; display: block; }
+
+    .form-box { background: #fff0f5; border-radius: 8px; padding: 12px; margin-bottom: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.1); }
+    .form-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+    .form-row label { font-size: 0.85rem; color: #555; width: 80px; flex-shrink: 0; }
+    .form-row input, .form-row select { font-size: 0.85rem; padding: 4px 8px; border: 1px solid #ccc; border-radius: 4px; flex: 1; }
+    .form-row input[readonly] { background: #f5f5f5; color: #333; }
+    hr { border: none; border-top: 1px solid #ddd; margin: 10px 0; }
+    .btn-row { display: flex; gap: 6px; }
+    button { font-size: 0.85rem; padding: 5px 14px; border: none; border-radius: 4px; cursor: pointer; color: white; }
+    .btn-add    { background: #4a90e2; }
+    .btn-delete { background: #e74c3c; }
+
+    table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,0.1); font-size: 0.85rem; }
+    th { background: #eee; padding: 7px 4px; text-align: center; border-bottom: 1px solid #ddd; }
+    td { padding: 8px 4px; text-align: center; border-bottom: 1px solid #f0f0f0; cursor: pointer; }
+    tr:hover td { background: #f0f8ff; }
+    tr.selected td { background: #d0e8ff !important; }
+    .badge { display: inline-block; padding: 2px 10px; border-radius: 4px; font-size: 0.85rem; font-weight: bold; }
+    .loading { text-align: center; padding: 20px; color: #888; }
+    .no-data { text-align: center; padding: 20px; color: #aaa; }
+    .filter-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; justify-content: center; }
+    .filter-btn { padding: 4px 12px; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85rem; }
+    .filter-btn.active { outline: 3px solid #333; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <h1>⚙️ 業務適性</h1>
+  <a class="back" href="index.html">← メニューへ</a>
+  <div id="msg" class="msg"></div>
+
+  <!-- 所属フィルター -->
+  <div class="filter-row" id="filter-row">
+    <button class="filter-btn active" style="background:#555;color:white" onclick="filterByBusho('',this)">全員</button>
+  </div>
+
+  <div class="form-box">
+    <!-- 社員選択 -->
+    <div class="form-row">
+      <label>社員検索</label>
+      <select id="f_staff" onchange="onStaffChange()">
+        <option value="">-- 選択 --</option>
+      </select>
+    </div>
+    <div class="form-row">
+      <label>社員コード</label>
+      <input type="text" id="f_code" readonly>
+    </div>
+    <div class="form-row">
+      <label>氏名</label>
+      <input type="text" id="f_name" readonly>
+    </div>
+    <hr>
+    <!-- 業務追加 -->
+    <div class="form-row">
+      <label>所属</label>
+      <select id="f_busho" onchange="onBushoChange()">
+        <option value="">-- 選択 --</option>
+      </select>
+    </div>
+    <div class="form-row">
+      <label>業務</label>
+      <select id="f_gyomu">
+        <option value="">-- 選択 --</option>
+      </select>
+    </div>
+    <div class="btn-row">
+      <button class="btn-add"    onclick="addRow()">追加</button>
+      <button class="btn-delete" onclick="deleteRow()">削除</button>
+    </div>
+  </div>
+
+  <div id="loading" class="loading" style="display:none">読み込み中...</div>
+  <table id="main-table">
+    <thead>
+      <tr>
+        <th>所属名</th>
+        <th>業務名</th>
+      </tr>
+    </thead>
+    <tbody id="tbody">
+      <tr><td colspan="2" class="no-data">社員を選択してください</td></tr>
+    </tbody>
+  </table>
+
+  <script>
+    let masters = {};
+    let tekiseiRows = [];
+    let selectedId = null;
+    let currentStaffCode = null;
+    let currentBushoFilter = '';
+    let allBushoTekisei = []; // 全社員の所属適性データ（絞り込みボタン用）
+
+    async function init() {
+      masters = await loadMasters();
+      // 絞り込みボタンは「所属適性」を基準にする（業務適性ではなく）
+      const { data } = await sb.from('shift_busho_tekisei').select('staff_code, busho_code');
+      allBushoTekisei = data || [];
+      buildFilterButtons();
+      buildSelects();
+    }
+
+    function buildFilterButtons() {
+      const row = document.getElementById('filter-row');
+      masters.bushos.filter(b => !b.busho_code.startsWith('9')).forEach(b => {
+        const btn = document.createElement('button');
+        btn.className = 'filter-btn';
+        btn.style.background = b.color_h;
+        btn.style.color = getTextColor(b.color_h);
+        btn.textContent = b.busho_name;
+        btn.onclick = () => filterByBusho(b.busho_code, btn);
+        row.appendChild(btn);
+      });
+    }
+
+    function filterByBusho(bushoCode, btn) {
+      currentBushoFilter = bushoCode;
+      document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+      if (btn) btn.classList.add('active');
+
+      // 所属適性に該当所属が登録されている社員コードのセット
+      const matchCodes = bushoCode
+        ? new Set(allBushoTekisei.filter(r => r.busho_code === bushoCode).map(r => r.staff_code))
+        : null;
+
+      const staffSel = document.getElementById('f_staff');
+      const currentVal = staffSel.value;
+      staffSel.innerHTML = '<option value="">-- 選択 --</option>';
+      masters.staffs.filter(s => {
+        if (s.retired) return false;
+        if (!bushoCode) return true;
+        return s.busho_code === bushoCode || matchCodes.has(s.staff_code);
+      }).forEach(s => {
+        const opt = document.createElement('option');
+        opt.value = s.staff_code;
+        opt.textContent = s.name;
+        staffSel.appendChild(opt);
+      });
+      if (currentVal && staffSel.querySelector(`option[value="${currentVal}"]`)) {
+        staffSel.value = currentVal;
+      } else {
+        onStaffChange();
+      }
+    }
+
+    function buildSelects() {
+      const staffSel = document.getElementById('f_staff');
+      masters.staffs.filter(s => !s.retired).forEach(s => {
+        const opt = document.createElement('option');
+        opt.value = s.staff_code;
+        opt.textContent = s.name;
+        staffSel.appendChild(opt);
+      });
+
+      // 所属プルダウンは社員選択後に動的に構築する
+    }
+
+    function onBushoChange() {
+      const bushoCode = document.getElementById('f_busho').value;
+      const gyomuSel = document.getElementById('f_gyomu');
+      gyomuSel.innerHTML = '<option value="">-- 選択 --</option>';
+      if (!bushoCode) return;
+      masters.gyomus.filter(g => g.busho_code === bushoCode && g.is_active).forEach(g => {
+        const opt = document.createElement('option');
+        opt.value = g.gyomu_code;
+        opt.textContent = g.gyomu_name;
+        gyomuSel.appendChild(opt);
+      });
+    }
+
+    // 社員の所属適性に登録済みの所属だけ業務プルダウンに表示する
+    async function updateBushoSelect() {
+      const bushoSel = document.getElementById('f_busho');
+      bushoSel.innerHTML = '<option value="">-- 選択 --</option>';
+      if (!currentStaffCode) return;
+      const { data } = await sb.from('shift_busho_tekisei')
+        .select('busho_code').eq('staff_code', currentStaffCode);
+      const codes = new Set((data || []).map(r => r.busho_code));
+      // 所属適性への登録がなくても、社員マスタ本来の所属は選べるようにする
+      const staff = masters.staffMap[currentStaffCode];
+      if (staff?.busho_code) codes.add(staff.busho_code);
+      masters.bushos.filter(b => codes.has(b.busho_code)).forEach(b => {
+        const opt = document.createElement('option');
+        opt.value = b.busho_code;
+        opt.textContent = b.busho_name;
+        bushoSel.appendChild(opt);
+      });
+      document.getElementById('f_gyomu').innerHTML = '<option value="">-- 選択 --</option>';
+    }
+
+    async function onStaffChange() {
+      const code = document.getElementById('f_staff').value;
+      if (!code) {
+        document.getElementById('f_code').value = '';
+        document.getElementById('f_name').value = '';
+        tekiseiRows = [];
+        renderTable();
+        return;
+      }
+      const staff = masters.staffMap[code];
+      document.getElementById('f_code').value = staff.staff_code;
+      document.getElementById('f_name').value = staff.name;
+      currentStaffCode = code;
+      selectedId = null;
+      await updateBushoSelect();
+      await loadTekisei();
+    }
+
+    async function loadTekisei() {
+      document.getElementById('loading').style.display = 'block';
+      const { data, error } = await sb.from('shift_gyomu_tekisei')
+        .select('*').eq('staff_code', currentStaffCode).order('busho_code');
+      document.getElementById('loading').style.display = 'none';
+      if (error) { showMsg('読み込みに失敗しました: ' + error.message, 'err'); return; }
+      tekiseiRows = data || [];
+      renderTable();
+    }
+
+    function renderTable() {
+      const tbody = document.getElementById('tbody');
+      tbody.innerHTML = '';
+      if (!currentStaffCode) {
+        tbody.innerHTML = '<tr><td colspan="2" class="no-data">社員を選択してください</td></tr>';
+        return;
+      }
+      if (tekiseiRows.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="2" class="no-data">登録された業務適性がありません</td></tr>';
+        return;
+      }
+      tekiseiRows.forEach(r => {
+        const busho = masters.bushoMap[r.busho_code];
+        const gyomu = masters.gyomuMap[r.gyomu_code];
+        const tr = document.createElement('tr');
+        if (r.id === selectedId) tr.classList.add('selected');
+        tr.onclick = () => {
+          selectedId = r.id;
+          document.getElementById('f_busho').value = r.busho_code;
+          onBushoChange();
+          setTimeout(() => {
+            document.getElementById('f_gyomu').value = r.gyomu_code;
+          }, 50);
+          renderTable();
+        };
+        const bColor = busho?.color_h || '#ccc';
+        const gColor = gyomu?.color_h || '#ccc';
+        const bushoHtml = busho
+          ? `<span class="badge" style="background:${bColor};color:${getTextColor(bColor)}">${busho.busho_name}</span>`
+          : r.busho_code;
+        const gyomuHtml = gyomu
+          ? `<span class="badge" style="background:${gColor};color:${getTextColor(gColor)}">${gyomu.gyomu_name}</span>`
+          : r.gyomu_code;
+        tr.innerHTML = `<td>${bushoHtml}</td><td>${gyomuHtml}</td>`;
+        tbody.appendChild(tr);
+      });
+    }
+
+    async function addRow() {
+      if (!currentStaffCode) { showMsg('社員を選択してください', 'err'); return; }
+      const bushoCode = document.getElementById('f_busho').value;
+      const gyomuCode = document.getElementById('f_gyomu').value;
+      if (!bushoCode) { showMsg('所属を選択してください', 'err'); return; }
+      if (!gyomuCode) { showMsg('業務を選択してください', 'err'); return; }
+      const exists = tekiseiRows.find(r => r.gyomu_code === gyomuCode);
+      if (exists) { showMsg('すでに登録されています', 'err'); return; }
+      const { error } = await sb.from('shift_gyomu_tekisei').insert({
+        staff_code: currentStaffCode, busho_code: bushoCode, gyomu_code: gyomuCode
+      });
+      if (error) { showMsg('追加に失敗しました: ' + error.message, 'err'); return; }
+      showMsg('追加しました', 'ok');
+      await loadTekisei();
+    }
+
+    async function deleteRow() {
+      if (!selectedId) { showMsg('削除する行を選択してください', 'err'); return; }
+      const row = tekiseiRows.find(r => r.id === selectedId);
+      const gyomu = masters.gyomuMap[row?.gyomu_code];
+      if (!confirm(`「${gyomu?.gyomu_name || row?.gyomu_code}」を削除しますか？`)) return;
+      const { error } = await sb.from('shift_gyomu_tekisei').delete().eq('id', selectedId);
+      if (error) { showMsg('削除に失敗しました: ' + error.message, 'err'); return; }
+      showMsg('削除しました', 'ok');
+      selectedId = null;
+      await loadTekisei();
+    }
+
+    function showMsg(text, type) {
+      const el = document.getElementById('msg');
+      el.textContent = text;
+      el.className = `msg ${type}`;
+      setTimeout(() => { el.className = 'msg'; }, 3000);
+    }
+
+    init();
+  </script>
+</body>
+</html>

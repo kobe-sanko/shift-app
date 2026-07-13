@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>勤怠管理</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="common.js"></script>
+  <script src="exceljs.min.js"></script>
+  <style>
+    body { font-family: sans-serif; margin: 0; padding: 10px; background: #f5f5f5; }
+    h1 { font-size: 1.1rem; text-align: center; margin: 8px 0; }
+    .back { display: table; margin: 4px auto 8px; color: #4a90e2; text-decoration: none; }
+
+    .top-area { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: center; margin-bottom: 10px; }
+    select { font-size: 0.9rem; padding: 4px 8px; border: 1px solid #ccc; border-radius: 4px; }
+    .btn { font-size: 0.85rem; padding: 6px 12px; border: none; border-radius: 4px; cursor: pointer; color: white; }
+    .btn-blue { background: #4a90e2; }
+
+    .shd-banner { text-align: center; font-size: 0.85rem; color: #555; margin-bottom: 8px; }
+    .shd-banner a { color: #4a90e2; }
+
+    .upload-box {
+      background: #f0f8ff; border: 1px solid #4a90e2; border-radius: 8px; padding: 12px 16px;
+      margin: 0 auto 12px; max-width: 560px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: center;
+    }
+    .upload-box label { font-size: 0.85rem; color: #444; }
+    .file-btn {
+      display: inline-flex; align-items: center; justify-content: center;
+      font-size: 0.82rem; padding: 6px 10px; border-radius: 4px;
+      background: #eee; border: 1px solid #ccc; cursor: pointer; color: #333;
+    }
+    .file-name-display { font-size: 0.8rem; color: #2980b9; }
+    .upload-msg { text-align: center; font-size: 0.85rem; padding: 6px; border-radius: 4px; margin: 0 auto 10px; max-width: 560px; display: none; }
+    .upload-msg.ok  { background: #d4edda; color: #155724; display: block; }
+    .upload-msg.err { background: #fdecea; color: #c0392b; display: block; }
+
+    .filter-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; justify-content: center; }
+    .filter-btn { padding: 3px 10px; border: none; border-radius: 4px; cursor: pointer; font-size: 0.82rem; }
+    .filter-btn.active { outline: 3px solid #333; font-weight: bold; }
+
+    .table-wrap { overflow-x: auto; }
+    table { border-collapse: collapse; white-space: nowrap; margin: 0 auto; font-size: 0.82rem; background: white; box-shadow: 0 1px 4px rgba(0,0,0,0.1); border-radius: 8px; overflow: hidden; }
+    th { background: #eee; padding: 6px 8px; text-align: center; border-bottom: 1px solid #ddd; font-size: 0.78rem; }
+    td { padding: 5px 8px; text-align: center; border-bottom: 1px solid #f0f0f0; }
+    tr:hover td { background: #f8f8ff; }
+    .badge { display: inline-block; padding: 1px 7px; border-radius: 3px; font-size: 0.75rem; }
+    .warn  { background: #fff3cd; color: #856404; font-weight: bold; }
+    .over  { background: #fde8e8; color: #c0392b; font-weight: bold; }
+    .ok    { background: #e8f5e9; color: #1a6e2e; }
+    .na    { color: #bbb; }
+    .loading { text-align: center; padding: 20px; color: #888; }
+  </style>
+</head>
+<body>
+  <h1>⏱️ 勤怠管理</h1>
+  <a class="back" href="index.html">← メニューへ</a>
+
+  <div class="top-area">
+    <select id="ym-sel" onchange="loadData()"></select>
+    <a href="master_shotnichi.html" class="btn" style="background:#e67e22;text-decoration:none;">📅 所定日数設定</a>
+  </div>
+
+  <div class="shd-banner" id="shd-banner">読み込み中…</div>
+
+  <div class="upload-box">
+    <label>📂 勤怠Excelを取り込む：</label>
+    <label class="file-btn" for="kintai-file">ファイルの選択</label>
+    <input type="file" id="kintai-file" accept=".xlsx" style="display:none" onchange="onFileChosen()">
+    <span class="file-name-display" id="kintai-filename">（未選択）</span>
+    <button class="btn btn-blue" onclick="doUpload()">取り込む</button>
+  </div>
+  <div class="upload-msg" id="upload-msg"></div>
+
+  <div class="filter-row" id="filter-row">
+    <button class="filter-btn active" style="background:#555;color:white" onclick="filterTable('', this)">全員</button>
+  </div>
+
+  <div id="loading" class="loading">読み込み中...</div>
+  <div class="table-wrap" id="table-wrap" style="display:none">
+    <table>
+      <thead>
+        <tr>
+          <th>社員CD</th><th>氏名</th><th>所属</th><th>勤務日数</th>
+          <th>労働時間(h)</th><th>残業時間(h)</th><th>上限時間(h)</th>
+          <th>残り時間(h)</th><th>残り日数</th><th>1日あたり(h)</th><th>年間残業(h)</th>
+        </tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+
+  <script>
+    let masters = {};
+    let currentYM = '';
+    let kintaiRows = [];   // 選択月のshift_kintai
+    let shoteiDays = null; // 選択月の所定日数
+    let currentFilter = '';
+
+    async function init() {
+      masters = await loadMasters();
+      currentYM = getCurrentYearMonth();
+      buildYmSelect();
+      buildFilterButtons();
+      await loadData();
+    }
+
+    function buildYmSelect() {
+      const sel = document.getElementById('ym-sel');
+      const now = new Date();
+      for (let i = 1; i >= -11; i--) {
+        const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const ym = `${y}${m}`;
+        const opt = document.createElement('option');
+        opt.value = ym;
+        opt.textContent = `${y}年${m}月`;
+        if (ym === currentYM) opt.selected = true;
+        sel.appendChild(opt);
+      }
+    }
+
+    function buildFilterButtons() {
+      const row = document.getElementById('filter-row');
+      masters.bushos.filter(b => parseInt(b.busho_code) < 900).forEach(b => {
+        const btn = document.createElement('button');
+        btn.className = 'filter-btn';
+        btn.style.background = b.color_h || '#888';
+        btn.style.color = getTextColor(b.color_h || '#888');
+        btn.textContent = b.busho_name;
+        btn.onclick = () => filterTable(b.busho_code, btn);
+        row.appendChild(btn);
+      });
+    }
+
+    function filterTable(bushoCode, btn) {
+      currentFilter = bushoCode;
+      document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+      if (btn) btn.classList.add('active');
+      renderTable();
+    }
+
+    function onFileChosen() {
+      const f = document.getElementById('kintai-file').files[0];
+      document.getElementById('kintai-filename').textContent = f ? f.name : '（未選択）';
+    }
+
+    // ===== 所定日数・年度の範囲判定 =====
+    // 年度は4月始まり（例：2026年7月なら 2026年4月〜2027年3月が対象年度）
+    function fiscalYearMonths(ym) {
+      const y = parseInt(ym.substring(0, 4));
+      const m = parseInt(ym.substring(4, 6));
+      const fiscalStartYear = m >= 4 ? y : y - 1;
+      const list = [];
+      for (let i = 0; i < 12; i++) {
+        const yy = fiscalStartYear + Math.floor((3 + i) / 12);
+        const mm = ((3 + i) % 12) + 1;
+        const targetYm = `${yy}${String(mm).padStart(2, '0')}`;
+        list.push(targetYm);
+        if (targetYm === ym) break; // 選択月まで
+      }
+      return list;
+    }
+
+    async function loadData() {
+      currentYM = document.getElementById('ym-sel').value || currentYM;
+      document.getElementById('loading').style.display = 'block';
+      document.getElementById('table-wrap').style.display = 'none';
+
+      const [kintaiRes, shdRes, fyRes] = await Promise.all([
+        sb.from('shift_kintai').select('*').eq('yearmonth', currentYM),
+        sb.from('shift_shotnichi').select('*').eq('yearmonth', currentYM).maybeSingle(),
+        sb.from('shift_kintai').select('staff_code, yearmonth, overtime_hours').in('yearmonth', fiscalYearMonths(currentYM)),
+      ]);
+
+      if (kintaiRes.error) { showUploadMsg('データの読み込みに失敗しました', 'err'); }
+      kintaiRows = kintaiRes.data || [];
+      shoteiDays = shdRes.data ? shdRes.data.shotei_days : null;
+
+      // 年間残業（年度4月〜選択月までのovertime_hours合計）をstaff_codeごとに集計
+      window.__nenkanZangyo = {};
+      (fyRes.data || []).forEach(r => {
+        window.__nenkanZangyo[r.staff_code] = (window.__nenkanZangyo[r.staff_code] || 0) + (r.overtime_hours || 0);
+      });
+
+      renderShdBanner();
+      renderTable();
+
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('table-wrap').style.display = 'block';
+    }
+
+    function renderShdBanner() {
+      const el = document.getElementById('shd-banner');
+      const y = currentYM.substring(0, 4), m = currentYM.substring(4, 6);
+      if (shoteiDays) {
+        el.innerHTML = `${y}年${m}月の所定日数：<strong>${shoteiDays}日</strong>`;
+      } else {
+        el.innerHTML = `⚠️ この月の所定日数が未設定です。<a href="master_shotnichi.html">所定日数設定</a>から登録してください。`;
+      }
+    }
+
+    // ===== Excel取り込み =====
+    async function doUpload() {
+      const file = document.getElementById('kintai-file').files[0];
+      if (!file) { showUploadMsg('ファイルを選んでください', 'err'); return; }
+
+      showUploadMsg('取り込み中…', 'ok');
+      try {
+        const buf = await file.arrayBuffer();
+        const wb = new ExcelJS.Workbook();
+        await wb.xlsx.load(buf);
+        const sheet = wb.worksheets[0];
+        if (!sheet) throw new Error('シートが見つかりません');
+
+        // 1〜4行目はタイトル・見出しなので、5行目以降がデータ
+        const records = [];
+        sheet.eachRow((row, rowNumber) => {
+          if (rowNumber < 5) return;
+          const v = row.values; // 1始まり
+          const yearmonth = String(v[2] ?? '').trim();
+          const staffCode = String(v[5] ?? '').trim();
+          if (!yearmonth || !staffCode) return;
+          records.push({
+            staff_code: staffCode,
+            yearmonth: yearmonth,
+            work_days: Number(v[7]) || 0,
+            work_hours: Number(v[10]) || 0,
+            overtime_hours: Number(v[12]) || 0,
+          });
+        });
+
+        if (records.length === 0) throw new Error('取り込めるデータが0件でした。ファイルの形式を確認してください。');
+
+        // 対象となる年月（ふつうは1つ）の既存データを消してから、新しく入れ直す
+        const targetYms = [...new Set(records.map(r => r.yearmonth))];
+        const { error: delErr } = await sb.from('shift_kintai').delete().in('yearmonth', targetYms);
+        if (delErr) throw delErr;
+
+        const { error } = await sb.from('shift_kintai').insert(records);
+        if (error) throw error;
+
+        showUploadMsg(`✅ ${records.length}件のデータを取り込みました`, 'ok');
+
+        // 取り込んだ月が選択中の月であれば、表を更新
+        const importedYm = records[0].yearmonth;
+        if (importedYm !== currentYM) {
+          document.getElementById('ym-sel').value = importedYm;
+        }
+        await loadData();
+      } catch (e) {
+        console.error(e);
+        showUploadMsg('❌ 取り込みに失敗しました: ' + e.message, 'err');
+      }
+    }
+
+    function showUploadMsg(text, type) {
+      const el = document.getElementById('upload-msg');
+      el.textContent = text;
+      el.className = 'upload-msg ' + type;
+    }
+
+    // ===== テーブル描画 =====
+    function renderTable() {
+      const tbody = document.getElementById('tbody');
+      tbody.innerHTML = '';
+
+      const kintaiMap = Object.fromEntries(kintaiRows.map(r => [r.staff_code, r]));
+      let targetStaffs = masters.staffs.filter(s => !s.retired);
+      if (currentFilter) targetStaffs = targetStaffs.filter(s => s.busho_code === currentFilter);
+
+      targetStaffs.forEach(staff => {
+        const k = kintaiMap[staff.staff_code];
+        const busho = masters.bushoMap[staff.busho_code];
+        const overLimit = staff.overtime_limit || 60;
+        const jougenJikan = shoteiDays ? shoteiDays * 8 + overLimit : null;
+
+        const workDays = k ? k.work_days : null;
+        const workHours = k ? k.work_hours : null;
+        const overHours = k ? k.overtime_hours : null;
+
+        const nokoriJikan = (jougenJikan !== null && workHours !== null) ? jougenJikan - workHours : null;
+        const nokoriNissu = (shoteiDays !== null && workDays !== null) ? shoteiDays - workDays : null;
+        const hitsuyoJikan = (nokoriJikan !== null && nokoriNissu) ? nokoriJikan / nokoriNissu : null;
+        const nenkanZangyo = window.__nenkanZangyo[staff.staff_code] || 0;
+
+        const bushoHtml = busho
+          ? `<span class="badge" style="background:${busho.color_h};color:${getTextColor(busho.color_h)}">${busho.busho_name}</span>`
+          : '－';
+
+        const zangyoRate = overHours && overLimit ? (overHours / overLimit * 100) : 0;
+        const overHtml = overHours == null ? '－'
+          : zangyoRate >= 100 ? `<span class="over">${overHours.toFixed(2)}</span>`
+          : zangyoRate >= 80 ? `<span class="warn">${overHours.toFixed(2)}</span>`
+          : overHours.toFixed(2);
+
+        const nokoriHtml = nokoriJikan == null ? '<span class="na">－</span>'
+          : nokoriJikan < 0 ? `<span class="over">${nokoriJikan.toFixed(2)}</span>`
+          : nokoriJikan < 10 ? `<span class="warn">${nokoriJikan.toFixed(2)}</span>`
+          : `<span class="ok">${nokoriJikan.toFixed(2)}</span>`;
+
+        const hitsuyoHtml = hitsuyoJikan == null ? '<span class="na">－</span>'
+          : hitsuyoJikan > 10 ? `<span class="over">${hitsuyoJikan.toFixed(2)}</span>`
+          : hitsuyoJikan.toFixed(2);
+
+        const nenkanHtml = nenkanZangyo >= 360 ? `<span class="over">${nenkanZangyo.toFixed(1)}</span>`
+          : nenkanZangyo >= 300 ? `<span class="warn">${nenkanZangyo.toFixed(1)}</span>`
+          : nenkanZangyo.toFixed(1);
+
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${staff.staff_code}</td>
+          <td style="text-align:left;">${staff.name}</td>
+          <td>${bushoHtml}</td>
+          <td>${workDays ?? '－'}</td>
+          <td>${workHours != null ? workHours.toFixed(2) : '－'}</td>
+          <td>${overHtml}</td>
+          <td>${jougenJikan ?? '－'}</td>
+          <td>${nokoriHtml}</td>
+          <td>${nokoriNissu ?? '－'}</td>
+          <td>${hitsuyoHtml}</td>
+          <td>${nenkanHtml}</td>
+        `;
+        tbody.appendChild(tr);
+      });
+
+      if (targetStaffs.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="11" style="color:#aaa;padding:20px;">対象の社員がいません</td></tr>`;
+      }
+    }
+
+    init();
+  </script>
+</body>
+</html>

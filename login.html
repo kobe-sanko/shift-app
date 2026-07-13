@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ログイン - シフト管理システム</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="common.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: sans-serif; background: #f5f5f5; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+    .box { background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); text-align: center; width: 280px; }
+    h1 { font-size: 1.1rem; margin: 0 0 20px; }
+    input { width: 100%; padding: 10px; font-size: 1rem; border: 1px solid #ccc; border-radius: 6px; margin-bottom: 12px; }
+    button { width: 100%; padding: 10px; font-size: 1rem; background: #4a90e2; color: white; border: none; border-radius: 6px; cursor: pointer; }
+    button:disabled { background: #aaa; }
+    .err { color: #c0392b; font-size: 0.85rem; margin-top: 10px; display: none; }
+  </style>
+</head>
+<body>
+  <div class="box">
+    <h1>📅 シフト管理システム</h1>
+    <input type="text" id="code" placeholder="社員コードを入力" inputmode="numeric" autofocus onkeydown="if(event.key==='Enter') doLogin()">
+    <button id="btn" onclick="doLogin()">ログイン</button>
+    <div class="err" id="err">社員コードが見つかりません</div>
+  </div>
+
+  <script>
+    async function doLogin() {
+      const code = document.getElementById('code').value.trim();
+      const err = document.getElementById('err');
+      const btn = document.getElementById('btn');
+      err.style.display = 'none';
+      if (!code) return;
+
+      btn.disabled = true;
+      btn.textContent = '確認中…';
+      const { data, error } = await sb.from('shift_staff')
+        .select('staff_code, name, retired')
+        .eq('staff_code', code)
+        .maybeSingle();
+      btn.disabled = false;
+      btn.textContent = 'ログイン';
+
+      if (error || !data || data.retired) {
+        err.style.display = 'block';
+        return;
+      }
+
+      localStorage.setItem('shiftAppAuth', JSON.stringify({ code: data.staff_code, name: data.name }));
+      location.href = 'index.html';
+    }
+  </script>
+</body>
+</html>

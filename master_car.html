@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>車両管理</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="common.js"></script>
+  <style>
+    body { font-family: sans-serif; margin: 0 auto; padding: 10px; background: #f5f5f5; max-width: 800px; }
+    h1 { font-size: 1.2rem; text-align: center; margin: 10px 0; }
+    .back { display: block; text-align: center; margin: 8px 0; color: #4a90e2; text-decoration: none; width: fit-content; margin-left: auto; margin-right: auto; }
+    .filter-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; justify-content: center; }
+    .filter-btn { padding: 4px 12px; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85rem; }
+    .filter-btn.active { outline: 3px solid #333; font-weight: bold; }
+    .hidden { display: none !important; }
+    .msg { text-align: center; font-size: 0.85rem; padding: 6px; border-radius: 4px; margin-bottom: 8px; display: none; }
+    .msg.ok  { background: #d4edda; color: #155724; display: block; }
+    .msg.err { background: #fdecea; color: #c0392b; display: block; }
+
+    /* フォーム */
+    .form-box { background: #fff0e8; border-radius: 8px; padding: 8px; margin-bottom: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.1); }
+    .form-table { width: 100%; table-layout: fixed; border-collapse: separate; border-spacing: 4px 0; display: table; }
+    .form-cell { display: table-cell; vertical-align: bottom; }
+    .form-cell label { display: block; font-size: 0.75rem; color: #666; text-align: center; margin-bottom: 3px; }
+    .form-cell input, .form-cell select {
+      width: 100%; font-size: 0.85rem; padding: 4px 2px;
+      border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; text-align: center;
+    }
+    .btn-row { display: flex; gap: 6px; margin-top: 6px; }
+    button { font-size: 0.85rem; padding: 5px 12px; border: none; border-radius: 4px; cursor: pointer; color: white; }
+    .btn-add    { background: #4a90e2; }
+    .btn-update { background: #27ae60; }
+    .btn-delete { background: #e74c3c; }
+
+    /* テーブル */
+    table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,0.1); font-size: 0.85rem; table-layout: fixed; }
+    th { background: #eee; padding: 7px 4px; text-align: center; border-bottom: 1px solid #ddd; }
+    td { padding: 6px 4px; text-align: center; border-bottom: 1px solid #f0f0f0; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    tr:hover td { background: #f0f8ff; }
+    tr.selected td { background: #d0e8ff !important; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.8rem; font-weight: bold; }
+    .loading { text-align: center; padding: 20px; color: #888; }
+  </style>
+</head>
+<body>
+  <h1>🚗 車両管理</h1>
+  <a class="back" href="index.html">← メニューへ</a>
+  <div id="msg" class="msg"></div>
+
+  <!-- 所属フィルター -->
+  <div class="filter-row" id="filter-row">
+    <button class="filter-btn active" style="background:#555;color:white" onclick="filterTable('',this)">全員</button>
+  </div>
+
+  <!-- 入力フォーム -->
+  <div class="form-box">
+    <div class="form-table">
+      <div class="form-cell" style="width:130px">
+        <label>車両コード</label>
+        <input type="text" id="f_code" placeholder="例：1111">
+      </div>
+      <div class="form-cell" style="width:200px">
+        <label>車番</label>
+        <input type="text" id="f_no" placeholder="例：1111">
+      </div>
+      <div class="form-cell" style="width:130px">
+        <label>所属</label>
+        <select id="f_busho"><option value="">-- 未選択 --</option></select>
+      </div>
+      <div class="form-cell" style="width:80px">
+        <label>有効</label>
+        <select id="f_active">
+          <option value="true">有効</option>
+          <option value="false">無効</option>
+        </select>
+      </div>
+    </div>
+    <div class="btn-row">
+      <button class="btn-add"    onclick="saveRow('add')">新規登録</button>
+      <button class="btn-update" onclick="saveRow('update')">更新</button>
+      <button class="btn-delete" onclick="deleteRow()">削除</button>
+    </div>
+  </div>
+
+  <!-- 一覧テーブル -->
+  <div id="loading" class="loading">読み込み中...</div>
+  <table id="main-table" style="display:none">
+    <thead>
+      <tr>
+        <th style="width:130px">車両コード</th>
+        <th style="width:200px">車番</th>
+        <th style="width:130px">所属</th>
+        <th style="width:80px">有効</th>
+      </tr>
+    </thead>
+    <tbody id="tbody"></tbody>
+  </table>
+
+  <script>
+    let masters = {};
+    let rows = [];
+    let selectedCode = null;
+    let currentFilter = '';
+
+    async function init() {
+      masters = await loadMasters();
+      buildFilterButtons();
+      buildSelects();
+      await loadRows();
+    }
+
+    function buildFilterButtons() {
+      const row = document.getElementById('filter-row');
+      masters.bushos.filter(b => !b.busho_code.startsWith('9')).forEach(b => {
+        const btn = document.createElement('button');
+        btn.className = 'filter-btn';
+        btn.style.background = b.color_h;
+        btn.style.color = getTextColor(b.color_h);
+        btn.textContent = b.busho_name;
+        btn.onclick = () => filterTable(b.busho_code, btn);
+        row.appendChild(btn);
+      });
+    }
+
+    function buildSelects() {
+      const sel = document.getElementById('f_busho');
+      masters.bushos.filter(b => !b.busho_code.startsWith('9')).forEach(b => {
+        const opt = document.createElement('option');
+        opt.value = b.busho_code;
+        opt.textContent = b.busho_name;
+        sel.appendChild(opt);
+      });
+    }
+
+    async function loadRows() {
+      const { data, error } = await sb.from('shift_car').select('*').order('car_code');
+      if (error) { showMsg('データの読み込みに失敗しました: ' + error.message, 'err'); return; }
+      rows = data || [];
+      renderTable();
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('main-table').style.display = '';
+    }
+
+    function renderTable() {
+      const tbody = document.getElementById('tbody');
+      tbody.innerHTML = '';
+      rows.forEach(r => {
+        const busho = masters.bushoMap[r.busho_code];
+        const isHidden = currentFilter && r.busho_code !== currentFilter;
+        const tr = document.createElement('tr');
+        if (isHidden) tr.classList.add('hidden');
+        if (r.car_code === selectedCode) tr.classList.add('selected');
+        tr.onclick = () => selectRow(r);
+        const bushoHtml = busho
+          ? `<span class="badge" style="background:${busho.color_h};color:${getTextColor(busho.color_h)}">${busho.busho_name}</span>`
+          : '－';
+        tr.innerHTML = `
+          <td>${r.car_code}</td>
+          <td>${r.car_no || '－'}</td>
+          <td>${bushoHtml}</td>
+          <td>${r.is_active ? '有効' : '無効'}</td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    function filterTable(bushoCode, btn) {
+      currentFilter = bushoCode;
+      document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+      if (btn) btn.classList.add('active');
+      else document.querySelector('.filter-btn').classList.add('active');
+      renderTable();
+    }
+
+    function selectRow(r) {
+      selectedCode = r.car_code;
+      document.getElementById('f_code').value   = r.car_code   || '';
+      document.getElementById('f_no').value     = r.car_no     || '';
+      document.getElementById('f_busho').value  = r.busho_code || '';
+      document.getElementById('f_active').value = r.is_active ? 'true' : 'false';
+      renderTable();
+    }
+
+    async function saveRow(mode) {
+      const code = document.getElementById('f_code').value.trim();
+      if (!code) { showMsg('車両コードを入力してください', 'err'); return; }
+      const data = {
+        car_code:   code,
+        car_no:     document.getElementById('f_no').value.trim() || null,
+        busho_code: document.getElementById('f_busho').value     || null,
+        is_active:  document.getElementById('f_active').value === 'true',
+      };
+      if (mode === 'add') {
+        const exists = rows.find(r => r.car_code === code);
+        if (exists) { showMsg(`車両コード「${code}」はすでに存在します`, 'err'); return; }
+        const { error } = await sb.from('shift_car').insert(data);
+        if (error) { showMsg('登録に失敗しました: ' + error.message, 'err'); return; }
+        showMsg('登録しました', 'ok');
+      } else {
+        const { error } = await sb.from('shift_car').update(data).eq('car_code', code);
+        if (error) { showMsg('更新に失敗しました: ' + error.message, 'err'); return; }
+        showMsg('更新しました', 'ok');
+      }
+      selectedCode = code;
+      await loadRows();
+    }
+
+    async function deleteRow() {
+      const code = document.getElementById('f_code').value.trim();
+      if (!code) { showMsg('削除する車両を選択してください', 'err'); return; }
+      if (!confirm(`「${code}」を削除しますか？`)) return;
+      const { error } = await sb.from('shift_car').delete().eq('car_code', code);
+      if (error) { showMsg('削除に失敗しました: ' + error.message, 'err'); return; }
+      showMsg('削除しました', 'ok');
+      selectedCode = null;
+      document.getElementById('f_code').value = '';
+      document.getElementById('f_no').value   = '';
+      await loadRows();
+    }
+
+    function showMsg(text, type) {
+      const el = document.getElementById('msg');
+      el.textContent = text;
+      el.className = `msg ${type}`;
+      setTimeout(() => { el.className = 'msg'; }, 3000);
+    }
+
+    init();
+  </script>
+</body>
+</html>

@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ベース業務</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="common.js"></script>
+  <style>
+    body { font-family: sans-serif; margin: 0 auto; padding: 10px; background: #f5f5f5; max-width: 1100px; }
+    h1 { font-size: 1.2rem; text-align: center; margin: 10px 0; }
+    .back { display: block; text-align: center; margin: 8px 0; color: #4a90e2; text-decoration: none; width: fit-content; margin-left: auto; margin-right: auto; }
+    .filter-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; justify-content: center; }
+    .filter-btn { padding: 4px 12px; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85rem; }
+    .filter-btn.active { outline: 3px solid #333; font-weight: bold; }
+    .hidden { display: none !important; }
+    .msg { text-align: center; font-size: 0.85rem; padding: 6px; border-radius: 4px; margin-bottom: 8px; display: none; }
+    .msg.ok  { background: #d4edda; color: #155724; display: block; }
+    .msg.err { background: #fdecea; color: #c0392b; display: block; }
+
+    table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,0.1); font-size: 0.82rem; table-layout: fixed; }
+    th { background: #dde; padding: 7px 4px; text-align: center; border-bottom: 2px solid #bbc; }
+    td { padding: 5px 3px; text-align: center; border-bottom: 1px solid #f0f0f0; cursor: pointer; overflow: hidden; }
+    tr.data-row:hover td { background: #f0f8ff; }
+    tr.selected td { background: #fff3cd !important; font-weight: bold; }
+    tr.hidden { display: none; }
+
+    /* 編集行（テーブル内に組み込み） */
+    tr.edit-row td { background: #fff0f5 !important; cursor: default; padding: 4px 3px; }
+    tr.edit-row td select { width: 100%; font-size: 0.8rem; padding: 3px 2px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+    tr.btn-row td { background: #fff0f5 !important; cursor: default; padding: 4px 8px; border-bottom: 2px solid #eee; }
+
+    .badge { display: inline-block; padding: 2px 4px; border-radius: 4px; font-size: 0.78rem; font-weight: bold; min-width: 32px; }
+    .badge.empty { background: #eee; color: #aaa; }
+    .btn-copy { background: #3498db; color: white; border: none; border-radius: 4px; padding: 5px 12px; font-size: 0.82rem; cursor: pointer; }
+    .btn-save { background: #27ae60; color: white; border: none; border-radius: 4px; padding: 5px 18px; font-size: 0.82rem; cursor: pointer; }
+    .loading { text-align: center; padding: 20px; color: #888; }
+  </style>
+</head>
+<body>
+  <h1 id="page-title">⚙️ ベース業務</h1>
+  <a class="back" href="index.html">← メニューへ</a>
+  <div id="msg" class="msg"></div>
+
+  <div class="filter-row" id="filter-row">
+    <button class="filter-btn active" style="background:#555;color:white" onclick="filterTable('',this,'')">全員</button>
+  </div>
+
+  <div id="loading" class="loading">読み込み中...</div>
+  <table id="main-table" style="display:none">
+    <thead>
+      <tr>
+        <th style="width:90px">社員コード</th>
+        <th style="width:120px">氏名</th>
+        <th>日</th><th>月</th><th>火</th><th>水</th><th>木</th><th>金</th><th>土</th>
+      </tr>
+    </thead>
+    <tbody id="tbody"></tbody>
+  </table>
+
+  <script>
+    const DAYS = ['sun','mon','tue','wed','thu','fri','sat'];
+    const DAY_LABELS = ['日','月','火','水','木','金','土'];
+
+    let masters = {};
+    let staffRows = [];
+    let baseMap = {};
+    let tekiseiMap = {};
+    let selectedCode = null;
+    let currentFilter = '';
+
+    async function init() {
+      masters = await loadMasters();
+      buildFilterButtons();
+      await loadRows();
+    }
+
+    function buildFilterButtons() {
+      const row = document.getElementById('filter-row');
+      masters.bushos.filter(b => parseInt(b.busho_code) < 900).forEach(b => {
+        const btn = document.createElement('button');
+        btn.className = 'filter-btn';
+        btn.style.background = b.color_h;
+        btn.style.color = getTextColor(b.color_h);
+        btn.textContent = b.busho_name;
+        btn.onclick = () => filterTable(b.busho_code, btn, b.busho_name);
+        row.appendChild(btn);
+      });
+    }
+
+    async function loadRows() {
+      const [staffRes, baseRes, tekiseiRes] = await Promise.all([
+        sb.from('shift_staff').select('*').order('staff_code'),
+        sb.from('shift_base_gyomu').select('*'),
+        sb.from('shift_gyomu_tekisei').select('staff_code, gyomu_code'),
+      ]);
+      if (staffRes.error) { showMsg('読み込みに失敗しました', 'err'); return; }
+      staffRows = (staffRes.data || []).filter(s => !s.retired);
+      baseMap = Object.fromEntries((baseRes.data || []).map(r => [r.staff_code, r]));
+      tekiseiMap = {};
+      (tekiseiRes.data || []).forEach(r => {
+        if (!tekiseiMap[r.staff_code]) tekiseiMap[r.staff_code] = [];
+        tekiseiMap[r.staff_code].push(r.gyomu_code);
+      });
+      renderTable();
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('main-table').style.display = '';
+    }
+
+    const KYUJITSU_MAP = { '901': '休日', '902': '有休', '903': '健診' };
+
+    function getBadgeHtml(code) {
+      if (!code || code === 'EMPTY') return `<span class="badge empty">－</span>`;
+      // 900番台（休日など）→ 赤文字
+      if (parseInt(code) >= 900) {
+        const label = KYUJITSU_MAP[code] || masters.bushoMap[code]?.busho_name || code;
+        return `<span class="badge" style="background:#e0e0e0;color:#c0392b;font-weight:bold">${label}</span>`;
+      }
+      const g = masters.gyomuMap[code];
+      if (g) {
+        const color = g.color_h || '#ccc';
+        return `<span class="badge" style="background:${color};color:${getTextColor(color)}">${g.gyomu_name}</span>`;
+      }
+      const b = masters.bushoMap[code];
+      if (b) {
+        const color = b.color_h || '#ccc';
+        return `<span class="badge" style="background:${color};color:${getTextColor(color)}">${b.busho_name}</span>`;
+      }
+      return `<span class="badge empty">${code}</span>`;
+    }
+
+    function buildSelectHtml(id, staffCode, currentVal) {
+      const gyomuCodes = tekiseiMap[staffCode] || [];
+      const grouped = {};
+      gyomuCodes.forEach(code => {
+        const g = masters.gyomuMap[code];
+        if (!g) return;
+        if (!grouped[g.busho_code]) grouped[g.busho_code] = [];
+        grouped[g.busho_code].push(g);
+      });
+
+      let html = `<select id="${id}"><option value="">－</option>`;
+      Object.keys(grouped).sort().forEach(bCode => {
+        const bName = masters.bushoMap[bCode]?.busho_name || bCode;
+        html += `<optgroup label="${bName}">`;
+        grouped[bCode]
+          .sort((a, b) => a.gyomu_code.localeCompare(b.gyomu_code, undefined, { numeric: true }))
+          .forEach(g => {
+            const sel = g.gyomu_code === currentVal ? ' selected' : '';
+            html += `<option value="${g.gyomu_code}"${sel}>${g.gyomu_name}</option>`;
+          });
+        html += `</optgroup>`;
+      });
+      html += `<optgroup label="休日など">`;
+      Object.entries(KYUJITSU_MAP).forEach(([code, label]) => {
+        const sel = code === currentVal ? ' selected' : '';
+        html += `<option value="${code}"${sel}>${label}</option>`;
+      });
+      html += `</optgroup></select>`;
+      return html;
+    }
+
+    function renderTable() {
+      const tbody = document.getElementById('tbody');
+      tbody.innerHTML = '';
+      staffRows.forEach(s => {
+        const base = baseMap[s.staff_code] || {};
+        // フィルター判定：所属一致 OR ベース業務にその所属の業務が1つでも含まれる
+        let isHidden = false;
+        if (currentFilter) {
+          const base = baseMap[s.staff_code] || {};
+          const hasBusho = s.busho_code === currentFilter;
+          const hasGyomu = DAYS.some(d => {
+            const code = base[d + '_gyomu'];
+            if (!code || code === 'EMPTY') return false;
+            // 業務コードの場合：その業務の所属コードで判定
+            const g = masters.gyomuMap[code];
+            if (g) return g.busho_code === currentFilter;
+            // 所属コードそのものの場合
+            return code === currentFilter;
+          });
+          isHidden = !hasBusho && !hasGyomu;
+        }
+
+        // データ行
+        const tr = document.createElement('tr');
+        tr.className = 'data-row';
+        if (isHidden) tr.classList.add('hidden');
+        if (s.staff_code === selectedCode) tr.classList.add('selected');
+        tr.onclick = () => toggleEdit(s);
+
+        let html = `<td>${s.staff_code}</td><td>${s.name || ''}</td>`;
+        DAYS.forEach(d => {
+          html += `<td>${getBadgeHtml(base[d + '_gyomu'])}</td>`;
+        });
+        tr.innerHTML = html;
+        tbody.appendChild(tr);
+
+        // 編集行（選択中のみ表示）
+        if (s.staff_code === selectedCode) {
+          const editTr = document.createElement('tr');
+          editTr.className = 'edit-row';
+
+          let editHtml = `<td colspan="2" style="text-align:left;padding-left:8px;font-size:0.8rem;color:#888">▲ 編集中</td>`;
+          DAYS.forEach((d, i) => {
+            editHtml += `<td>${buildSelectHtml('sel_' + d, s.staff_code, base[d + '_gyomu'] || '')}</td>`;
+          });
+          if (isHidden) editTr.classList.add('hidden');
+          editTr.innerHTML = editHtml;
+          tbody.appendChild(editTr);
+
+          // ボタン行
+          const btnTr = document.createElement('tr');
+          btnTr.className = 'btn-row';
+          btnTr.innerHTML = `
+            <td colspan="9" style="text-align:left">
+              <button class="btn-copy" onclick="copyFromSun()">日曜日を全曜日にコピー</button>
+              <button class="btn-save" onclick="saveRow('${s.staff_code}')" style="margin-left:8px">保存</button>
+            </td>`;
+          if (isHidden) btnTr.classList.add('hidden');
+          tbody.appendChild(btnTr);
+        }
+      });
+    }
+
+    function toggleEdit(staff) {
+      if (selectedCode === staff.staff_code) {
+        selectedCode = null;
+      } else {
+        selectedCode = staff.staff_code;
+      }
+      renderTable();
+      if (selectedCode) {
+        // 選択行にスクロール
+        const rows = document.querySelectorAll('tr.selected');
+        if (rows.length > 0) rows[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }
+
+    function filterTable(bushoCode, btn, bushoName) {
+      currentFilter = bushoCode;
+      document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+      if (btn) btn.classList.add('active');
+      // タイトル更新
+      document.getElementById('page-title').textContent =
+        bushoCode ? `⚙️ ベース業務 - ${bushoName}` : '⚙️ ベース業務';
+      renderTable();
+    }
+
+    function copyFromSun() {
+      const sunVal = document.getElementById('sel_sun').value;
+      DAYS.forEach(d => {
+        const sel = document.getElementById(`sel_${d}`);
+        if (sel) sel.value = sunVal;
+      });
+    }
+
+    async function saveRow(staffCode) {
+      const data = { staff_code: staffCode };
+      DAYS.forEach(d => {
+        const sel = document.getElementById(`sel_${d}`);
+        data[d + '_gyomu'] = sel ? (sel.value || null) : null;
+      });
+      const exists = baseMap[staffCode];
+      let error;
+      if (exists) {
+        ({ error } = await sb.from('shift_base_gyomu').update(data).eq('staff_code', staffCode));
+      } else {
+        ({ error } = await sb.from('shift_base_gyomu').insert(data));
+      }
+      if (error) { showMsg('保存に失敗しました: ' + error.message, 'err'); return; }
+      showMsg('保存しました', 'ok');
+      baseMap[staffCode] = data;
+      renderTable();
+    }
+
+    function showMsg(text, type) {
+      const el = document.getElementById('msg');
+      el.textContent = text;
+      el.className = `msg ${type}`;
+      setTimeout(() => { el.className = 'msg'; }, 3000);
+    }
+
+    init();
+  </script>
+</body>
+</html>

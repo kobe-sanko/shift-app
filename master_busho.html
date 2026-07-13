@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>所属マスタ</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="common.js"></script>
+  <style>
+    body { font-family: sans-serif; margin: 0 auto; padding: 10px; background: #f5f5f5; max-width: 700px; }
+    h1 { font-size: 1.2rem; text-align: center; margin: 10px 0; }
+    .back { display: block; text-align: center; margin: 8px 0; color: #4a90e2; text-decoration: none; width: fit-content; margin-left: auto; margin-right: auto; }
+    .hidden { display: none !important; }
+    .msg { text-align: center; font-size: 0.85rem; padding: 6px; border-radius: 4px; margin-bottom: 8px; display: none; }
+    .msg.ok  { background: #d4edda; color: #155724; display: block; }
+    .msg.err { background: #fdecea; color: #c0392b; display: block; }
+
+    /* フォーム */
+    .form-box { background: #fff0e8; border-radius: 8px; padding: 8px; margin-bottom: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.1); }
+    .form-table { width: 100%; table-layout: fixed; border-collapse: separate; border-spacing: 4px 0; display: table; }
+    .form-cell { display: table-cell; vertical-align: bottom; }
+    .form-cell label { display: block; font-size: 0.75rem; color: #666; text-align: center; margin-bottom: 3px; }
+    .form-cell input, .form-cell select {
+      width: 100%; font-size: 0.85rem; padding: 4px 2px;
+      border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; text-align: center;
+    }
+    .btn-row { display: flex; gap: 6px; margin-top: 6px; }
+    button { font-size: 0.85rem; padding: 5px 12px; border: none; border-radius: 4px; cursor: pointer; color: white; }
+    .btn-add    { background: #4a90e2; }
+    .btn-update { background: #27ae60; }
+    .btn-delete { background: #e74c3c; }
+
+    /* テーブル */
+    table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,0.1); font-size: 0.85rem; table-layout: fixed; }
+    th { background: #eee; padding: 7px 4px; text-align: center; border-bottom: 1px solid #ddd; }
+    td { padding: 6px 4px; text-align: center; border-bottom: 1px solid #f0f0f0; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    tr:hover td { background: #f0f8ff; }
+    tr.selected td { background: #d0e8ff !important; }
+    .badge { display: inline-block; padding: 2px 10px; border-radius: 4px; font-size: 0.85rem; font-weight: bold; }
+    .loading { text-align: center; padding: 20px; color: #888; }
+  </style>
+</head>
+<body>
+  <h1>🏢 所属マスタ</h1>
+  <a class="back" href="index.html">← メニューへ</a>
+  <div id="msg" class="msg"></div>
+
+  <!-- 入力フォーム -->
+  <div class="form-box">
+    <div class="form-table">
+      <div class="form-cell" style="width:110px">
+        <label>所属コード</label>
+        <input type="text" id="f_code" placeholder="例：801">
+      </div>
+      <div class="form-cell" style="width:160px">
+        <label>所属名</label>
+        <input type="text" id="f_name" placeholder="例：東京">
+      </div>
+      <div class="form-cell" style="width:50px">
+        <label>色</label>
+        <input type="color" id="f_color" value="#4a90e2" style="padding:1px;height:29px;cursor:pointer;">
+      </div>
+      <div class="form-cell" style="width:120px">
+        <label>カラーコード</label>
+        <input type="text" id="f_color_text" placeholder="#FF0000" maxlength="7">
+      </div>
+      <div class="form-cell" style="width:80px">
+        <label>有効</label>
+        <select id="f_active">
+          <option value="true">有効</option>
+          <option value="false">無効</option>
+        </select>
+      </div>
+    </div>
+    <div class="btn-row">
+      <button class="btn-add"    onclick="saveRow('add')">新規登録</button>
+      <button class="btn-update" onclick="saveRow('update')">更新</button>
+      <button class="btn-delete" onclick="deleteRow()">削除</button>
+    </div>
+  </div>
+
+  <!-- 一覧テーブル -->
+  <div id="loading" class="loading">読み込み中...</div>
+  <table id="main-table" style="display:none">
+    <thead>
+      <tr>
+        <th style="width:110px">所属コード</th>
+        <th style="width:160px">所属名</th>
+        <th style="width:170px">色</th>
+        <th style="width:80px">有効</th>
+      </tr>
+    </thead>
+    <tbody id="tbody"></tbody>
+  </table>
+
+  <script>
+    let rows = [];
+    let selectedCode = null;
+
+    // カラーピッカー ↔ テキスト連動
+    document.getElementById('f_color').addEventListener('input', e => {
+      document.getElementById('f_color_text').value = e.target.value.toUpperCase();
+    });
+    document.getElementById('f_color_text').addEventListener('input', e => {
+      const v = e.target.value;
+      if (/^#[0-9A-Fa-f]{6}$/.test(v)) {
+        document.getElementById('f_color').value = v;
+      }
+    });
+
+    async function init() {
+      await loadRows();
+    }
+
+    async function loadRows() {
+      const { data, error } = await sb.from('shift_busho').select('*').order('busho_code');
+      if (error) { showMsg('データの読み込みに失敗しました: ' + error.message, 'err'); return; }
+      rows = data || [];
+      renderTable();
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('main-table').style.display = '';
+    }
+
+    function renderTable() {
+      const tbody = document.getElementById('tbody');
+      tbody.innerHTML = '';
+      rows.forEach(r => {
+        const tr = document.createElement('tr');
+        if (r.busho_code === selectedCode) tr.classList.add('selected');
+        tr.onclick = () => selectRow(r);
+        const color = r.color_h || '#cccccc';
+        const textColor = getTextColor(color);
+        const isRest = r.busho_code.startsWith('9');
+        const nameStyle = isRest ? 'color:#e74c3c;background:#f5f5f5;border:1px solid #ddd' : `background:${color};color:${textColor}`;
+        const colorStyle = isRest ? 'color:#e74c3c;background:#f5f5f5;border:1px solid #ddd' : `background:${color};color:${textColor}`;
+        tr.innerHTML = `
+          <td>${r.busho_code}</td>
+          <td><span class="badge" style="${nameStyle}">${r.busho_name || ''}</span></td>
+          <td><span class="badge" style="${colorStyle}">${color}</span></td>
+          <td>${r.is_active ? '有効' : '無効'}</td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    function selectRow(r) {
+      selectedCode = r.busho_code;
+      const color = r.color_h || '#cccccc';
+      document.getElementById('f_code').value       = r.busho_code  || '';
+      document.getElementById('f_name').value       = r.busho_name  || '';
+      document.getElementById('f_color').value      = color;
+      document.getElementById('f_color_text').value = color.toUpperCase();
+      document.getElementById('f_active').value     = r.is_active ? 'true' : 'false';
+      renderTable();
+    }
+
+    async function saveRow(mode) {
+      const code  = document.getElementById('f_code').value.trim();
+      const name  = document.getElementById('f_name').value.trim();
+      const colorText = document.getElementById('f_color_text').value.trim().toUpperCase();
+      const color = /^#[0-9A-F]{6}$/.test(colorText) ? colorText : document.getElementById('f_color').value.toUpperCase();
+      if (!code) { showMsg('所属コードを入力してください', 'err'); return; }
+      if (!name) { showMsg('所属名を入力してください', 'err'); return; }
+
+      const data = {
+        busho_code: code,
+        busho_name: name,
+        color_h:    color,
+        is_active:  document.getElementById('f_active').value === 'true',
+      };
+
+      if (mode === 'add') {
+        const exists = rows.find(r => r.busho_code === code);
+        if (exists) { showMsg(`所属コード「${code}」はすでに存在します`, 'err'); return; }
+        const { error } = await sb.from('shift_busho').insert(data);
+        if (error) { showMsg('登録に失敗しました: ' + error.message, 'err'); return; }
+        showMsg('登録しました', 'ok');
+      } else {
+        const { error } = await sb.from('shift_busho').update(data).eq('busho_code', code);
+        if (error) { showMsg('更新に失敗しました: ' + error.message, 'err'); return; }
+        showMsg('更新しました', 'ok');
+      }
+      selectedCode = code;
+      await loadRows();
+    }
+
+    async function deleteRow() {
+      const code = document.getElementById('f_code').value.trim();
+      if (!code) { showMsg('削除する所属を選択してください', 'err'); return; }
+      if (!confirm(`「${code}」を削除しますか？`)) return;
+      const { error } = await sb.from('shift_busho').delete().eq('busho_code', code);
+      if (error) { showMsg('削除に失敗しました: ' + error.message, 'err'); return; }
+      showMsg('削除しました', 'ok');
+      selectedCode = null;
+      document.getElementById('f_code').value       = '';
+      document.getElementById('f_name').value       = '';
+      document.getElementById('f_color_text').value = '';
+      await loadRows();
+    }
+
+    function showMsg(text, type) {
+      const el = document.getElementById('msg');
+      el.textContent = text;
+      el.className = `msg ${type}`;
+      setTimeout(() => { el.className = 'msg'; }, 3000);
+    }
+
+    init();
+  </script>
+</body>
+</html>

@@ -1,0 +1,548 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>盤面レイアウト設定</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="common.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: sans-serif; margin: 0 auto; padding: 10px; background: #f5f5f5; max-width: 860px; }
+    h1 { font-size: 1.1rem; text-align: center; margin: 8px 0; }
+    .back { display: block; text-align: center; margin-bottom: 8px; color: #4a90e2; text-decoration: none; }
+    .desc { background: #e8f4fd; border-radius: 6px; padding: 10px 14px; margin-bottom: 14px; font-size: 0.85rem; }
+    .msg { text-align: center; font-size: 0.85rem; padding: 6px; border-radius: 4px; margin-bottom: 8px; display: none; }
+    .msg.ok  { background: #d4edda; color: #155724; display: block; }
+    .msg.err { background: #fdecea; color: #c0392b; display: block; }
+
+    /* 追加フォーム */
+    .add-box { background: #fff0f5; border-radius: 8px; padding: 12px 14px; margin-bottom: 14px; box-shadow: 0 1px 4px rgba(0,0,0,0.1); }
+    .add-box h3 { font-size: 0.9rem; margin: 0 0 10px; }
+    .add-top { display: flex; align-items: flex-end; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }
+    .add-group { display: flex; flex-direction: column; gap: 3px; }
+    .add-group label { font-size: 0.75rem; color: #666; }
+    .add-group select, .add-group input { font-size: 0.9rem; padding: 5px 8px; border: 1px solid #ccc; border-radius: 4px; }
+
+    .gyomu-inputs { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
+    .gyomu-input-block { background: white; border-radius: 6px; padding: 8px 12px; border-left: 4px solid; display: flex; flex-direction: column; gap: 6px; }
+    .gyomu-input-block.配送 { border-color: #3498db; }
+    .gyomu-input-block.倉庫 { border-color: #e67e22; }
+    .gyomu-input-block.事務 { border-color: #9b59b6; }
+    .block-title { font-size: 0.8rem; font-weight: bold; color: #333; }
+    .gyomu-input-row { display: flex; gap: 8px; align-items: flex-end; }
+    .sub-group { display: flex; flex-direction: column; gap: 2px; }
+    .sub-group label { font-size: 0.72rem; color: #888; }
+    .sub-group input[type=number] { width: 55px; font-size: 0.9rem; padding: 4px 6px; border: 1px solid #ccc; border-radius: 4px; text-align: center; }
+    .sub-group select { font-size: 0.85rem; padding: 4px 6px; border: 1px solid #ccc; border-radius: 4px; }
+
+    .btn { padding: 6px 18px; border: none; border-radius: 4px; cursor: pointer; color: white; font-size: 0.9rem; }
+    .btn-add  { background: #4a90e2; }
+    .btn-save { background: #27ae60; font-size: 0.95rem; padding: 9px 28px; display: block; margin: 0 auto; }
+    .btn-cancel { background: #aaa; }
+
+    /* 設定リスト */
+    .config-list { background: white; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.1); overflow: hidden; margin-bottom: 16px; }
+    .list-head { display: grid; grid-template-columns: 110px 1fr 50px 50px 60px 70px; background: #eee; padding: 7px 12px; font-size: 0.78rem; font-weight: bold; color: #555; gap: 8px; align-items: center; }
+    .config-item { display: grid; grid-template-columns: 110px 1fr 50px 50px 60px 70px; align-items: center; padding: 8px 12px; border-bottom: 1px solid #f0f0f0; gap: 8px; }
+    .config-item:last-child { border-bottom: none; }
+    .config-item:hover { background: #f8f8f8; cursor: pointer; }
+    .config-item.editing { background: #fff8e1 !important; outline: 2px solid #f39c12; }
+    .busho-badge { display: inline-block; padding: 3px 10px; border-radius: 4px; font-size: 0.82rem; font-weight: bold; }
+    .gyomu-summary { display: flex; gap: 6px; flex-wrap: wrap; }
+    .gyomu-chip { font-size: 0.78rem; padding: 2px 8px; border-radius: 3px; color: white; }
+    .chip-配送 { background: #3498db; }
+    .chip-倉庫 { background: #e67e22; }
+    .chip-事務 { background: #9b59b6; }
+    .chip-chiban { background: #e74c3c; font-size: 0.72rem; }
+    .item-actions { display: flex; gap: 4px; justify-content: flex-end; }
+    .btn-move { background: #bbb; color: white; border: none; border-radius: 3px; padding: 3px 7px; cursor: pointer; font-size: 0.72rem; }
+    .btn-move:hover { background: #888; }
+    .btn-del { background: #e74c3c; color: white; border: none; border-radius: 3px; padding: 3px 8px; cursor: pointer; font-size: 0.75rem; }
+    .inp-small { width: 44px; text-align: center; padding: 3px; border: 1px solid #ccc; border-radius: 4px; font-size: 0.85rem; }
+    .empty-msg { text-align: center; padding: 20px; color: #aaa; font-size: 0.85rem; }
+    .special-item { background: #f9f9f9; }
+    .loading { text-align: center; padding: 20px; color: #888; }
+  </style>
+</head>
+<body>
+  <h1>⚙️ 盤面レイアウト設定</h1>
+  <a class="back" href="banmen.html">← 盤面へ戻る</a>
+  <div id="msg" class="msg"></div>
+
+  <div class="desc">
+    📋 <strong>使い方：</strong>所属を選んで、配送・倉庫・事務それぞれの人数（枠数）を入力して「追加」。
+    不要な区分は <strong>0</strong> にしてください。▲▼で表示順を変更できます。最後に「保存」を押してください。
+  </div>
+
+  <!-- 追加フォーム -->
+  <div class="add-box">
+    <h3 id="form-title">➕ 追加</h3>
+    <div class="add-top">
+      <div class="add-group">
+        <label>所属</label>
+        <select id="sel-busho"><option value="">-- 選択 --</option></select>
+      </div>
+    </div>
+    <div class="gyomu-inputs">
+      <div class="gyomu-input-block 配送">
+        <div class="block-title">🚗 配送</div>
+        <div class="gyomu-input-row">
+          <div class="sub-group"><label>台数（行数）</label><input type="number" id="inp-配送-rows" value="5" min="0" max="20"></div>
+          <div class="sub-group"><label>助手</label>
+            <select id="inp-配送-helpers">
+              <option value="0">なし</option>
+              <option value="1" selected>1人</option>
+              <option value="2">2人</option>
+            </select>
+          </div>
+          <div class="sub-group"><label>遅番行（0=なし）</label><input type="number" id="inp-配送-chiban" value="0" min="0" max="30"></div>
+          <div class="sub-group"><label>📱スマホ欄</label>
+            <select id="inp-配送-smaho">
+              <option value="false">なし</option>
+              <option value="true">あり</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      <div class="gyomu-input-block 倉庫">
+        <div class="block-title">📦 倉庫</div>
+        <div class="gyomu-input-row">
+          <div class="sub-group"><label>人数</label><input type="number" id="inp-倉庫-rows" value="3" min="0" max="30"></div>
+          <div class="sub-group"><label>列数</label><input type="number" id="inp-倉庫-cols" value="2" min="1" max="10"></div>
+        </div>
+      </div>
+      <div class="gyomu-input-block 事務">
+        <div class="block-title">📋 事務</div>
+        <div class="gyomu-input-row">
+          <div class="sub-group"><label>人数</label><input type="number" id="inp-事務-rows" value="2" min="0" max="30"></div>
+          <div class="sub-group"><label>列数</label><input type="number" id="inp-事務-cols" value="2" min="1" max="10"></div>
+        </div>
+      </div>
+      <div style="display:flex;gap:6px;align-items:flex-end;">
+        <button class="btn btn-add" id="btn-add" onclick="addItem()">追加</button>
+        <button class="btn btn-cancel" id="btn-cancel" style="display:none;" onclick="cancelEdit()">キャンセル</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 設定リスト -->
+  <div id="loading" class="loading">読み込み中...</div>
+  <div class="config-list" id="config-list" style="display:none;">
+    <div class="list-head">
+      <div>所属</div><div>設定内容</div>
+      <div style="text-align:center;">列</div>
+      <div style="text-align:center;">行</div>
+      <div style="text-align:center;">SP順</div>
+      <div style="text-align:right;">操作</div>
+    </div>
+    <div id="config-items"></div>
+  </div>
+
+  <div style="text-align:center;margin-top:8px;">
+    <button class="btn btn-save" onclick="saveAll()">💾 保存</button>
+  </div>
+
+  <script>
+    let masters = {};
+    let configData = []; // Supabaseから読み込んだ生データ
+    let editingBusho = null; // 編集中の所属コード
+
+    async function init() {
+      masters = await loadMasters();
+      buildBushoSelect();
+      await loadConfig();
+    }
+
+    function buildBushoSelect() {
+      const sel = document.getElementById('sel-busho');
+      masters.bushos.filter(b => !b.busho_code.startsWith('9')).forEach(b => {
+        const opt = document.createElement('option');
+        opt.value = b.busho_code;
+        opt.textContent = b.busho_name;
+        opt.dataset.color = b.color_h;
+        opt.dataset.name = b.busho_name;
+        sel.appendChild(opt);
+      });
+    }
+
+    async function loadConfig() {
+      const { data, error } = await sb.from('shift_banmen_config').select('*').order('hyoji_jun');
+      if (error) { showMsg('読み込みに失敗しました: ' + error.message, 'err'); return; }
+      configData = data || [];
+      renderList();
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('config-list').style.display = '';
+    }
+
+    // shift_banmen_configのデータを所属ごとにグループ化して画面に表示
+    function renderList() {
+      const container = document.getElementById('config-items');
+      container.innerHTML = '';
+
+      // 所属ごとにまとめる（お休み・応援は特殊扱い）
+      const bushoGroups = {}; // busho_code → { items: [] }
+      const specialItems = []; // sp_jun=99(お休み) or 98(応援)
+
+      configData.forEach(r => {
+        if (r.sp_jun === 99 || r.sp_jun === 98) {
+          specialItems.push(r);
+          return;
+        }
+        if (!bushoGroups[r.busho_code]) bushoGroups[r.busho_code] = [];
+        bushoGroups[r.busho_code].push(r);
+      });
+
+      // 通常所属の表示
+      if (Object.keys(bushoGroups).length === 0 && specialItems.length === 0) {
+        container.innerHTML = '<div class="empty-msg">まだ設定がありません。</div>';
+      }
+
+      Object.entries(bushoGroups).forEach(([bushoCode, items]) => {
+        const busho = masters.bushoMap[bushoCode];
+        const bcolor = busho?.color_h || '#888';
+        const bname = busho?.busho_name || bushoCode;
+
+        // 代表レコード（最初のもの）から列・行・SP順を取得
+        const rep = items[0];
+        const colNo = (rep.col_no ?? 0) + 1;
+        const rowNo = (rep.row_no ?? 0) + 1;
+        const spJun = rep.busho_hyoji_jun ?? 0;
+
+        // 配送・倉庫・事務のデータを取り出す
+        const haisou = items.find(r => r.gyomu_code === '配送');
+        const soko   = items.find(r => r.gyomu_code === '倉庫');
+        const jimu   = items.find(r => r.gyomu_code === '事務');
+
+        const haisouRows   = haisou?.row_count ?? 0;
+        const haisouHelper = haisou?.jyoshu_count ?? 0;
+        const chibanRow    = haisou?.osoban_row ?? '';
+        const smahoFlg     = haisou?.smaho_flg ?? false;
+        const sokoRows     = soko?.row_count ?? 0;
+        const sokoCols     = soko?.jyoshu_count ?? 2;
+        const jimuRows     = jimu?.row_count ?? 0;
+        const jimuCols     = jimu?.jyoshu_count ?? 2;
+
+        let chips = '';
+        if (haisouRows > 0) {
+          chips += `<span class="gyomu-chip chip-配送">配送:${haisouRows}台・助手${haisouHelper}人</span>`;
+          if (chibanRow > 0) chips += `<span class="gyomu-chip chip-chiban">🌙遅:${chibanRow}行</span>`;
+          if (smahoFlg)  chips += `<span class="gyomu-chip" style="background:#e91e63">📱スマホあり</span>`;
+        }
+        if (sokoRows > 0) chips += `<span class="gyomu-chip chip-倉庫">倉庫:${sokoRows}人・${sokoCols}列</span>`;
+        if (jimuRows > 0) chips += `<span class="gyomu-chip chip-事務">事務:${jimuRows}人・${jimuCols}列</span>`;
+
+        const div = document.createElement('div');
+        div.className = 'config-item';
+        div.dataset.busho        = bushoCode;
+        div.dataset.bushoColor   = bcolor;
+        div.dataset.haisouRows   = haisouRows;
+        div.dataset.haisouHelper = haisouHelper;
+        div.dataset.chiban       = chibanRow;
+        div.dataset.smahoFlg     = smahoFlg;
+        div.dataset.sokoRows     = sokoRows;
+        div.dataset.sokoCols     = sokoCols;
+        div.dataset.jimuRows     = jimuRows;
+        div.dataset.jimuCols     = jimuCols;
+        div.onclick = () => loadItem(div);
+        div.innerHTML = `
+          <div><span class="busho-badge" style="background:${bcolor};color:${getTextColor(bcolor)}">${bname}</span></div>
+          <div class="gyomu-summary">${chips}</div>
+          <div style="text-align:center;"><input type="number" class="inp-small inp-col" value="${colNo}" min="1" max="21" onclick="event.stopPropagation()"></div>
+          <div style="text-align:center;"><input type="number" class="inp-small inp-row" value="${rowNo}" min="1" max="21" onclick="event.stopPropagation()"></div>
+          <div style="text-align:center;"><input type="number" class="inp-small inp-sp"  value="${spJun}" min="0" max="999" onclick="event.stopPropagation()"></div>
+          <div class="item-actions">
+            <button class="btn-move" onclick="moveItem(event,this,-1)">▲</button>
+            <button class="btn-move" onclick="moveItem(event,this,1)">▼</button>
+            <button class="btn-del"  onclick="delItem(event,this)">✕</button>
+          </div>`;
+        container.appendChild(div);
+      });
+
+      // 特殊ブロック（お休み・応援）を末尾に固定表示
+      specialItems.sort((a, b) => b.sp_jun - a.sp_jun); // 99(お休み)→98(応援)の順
+      specialItems.forEach(r => {
+        const isOyasumi = r.sp_jun === 99;
+        const label = isOyasumi ? 'お休み' : '応援';
+        const bgColor = isOyasumi ? '#888' : '#27ae60';
+        const colNo = (r.col_no ?? 0) + 1;
+        const rowNo = (r.row_no ?? 0) + 1;
+        const spJun = r.sp_jun;
+        const ncols = r.row_count || r.col_width || 1;
+
+        const div = document.createElement('div');
+        div.className = 'config-item special-item';
+        div.dataset.busho = r.busho_code;
+        div.dataset.spJun = spJun;
+        div.innerHTML = `
+          <div><span class="busho-badge" style="background:${bgColor};color:white">${label}</span></div>
+          <div style="font-size:0.8rem;color:#888;">
+            ${isOyasumi ? `列数：<input type="number" class="inp-small inp-ncols" value="${ncols}" min="1" max="10" onclick="event.stopPropagation()" style="width:50px;">` : '配置のみ'}
+          </div>
+          <div style="text-align:center;"><input type="number" class="inp-small inp-col" value="${colNo}" min="1" max="21" onclick="event.stopPropagation()"></div>
+          <div style="text-align:center;"><input type="number" class="inp-small inp-row" value="${rowNo}" min="1" max="21" onclick="event.stopPropagation()"></div>
+          <div style="text-align:center;"><input type="number" class="inp-small inp-sp"  value="${spJun}" min="0" max="999" onclick="event.stopPropagation()"></div>
+          <div></div>`;
+        container.appendChild(div);
+      });
+    }
+
+    // 行クリックでフォームに読み込む
+    function loadItem(el) {
+      if (el.classList.contains('special-item')) return;
+      document.querySelectorAll('.config-item').forEach(e => e.classList.remove('editing'));
+      el.classList.add('editing');
+      editingBusho = el.dataset.busho;
+
+      document.getElementById('sel-busho').value = editingBusho;
+      document.getElementById('inp-配送-rows').value    = el.dataset.haisouRows || 0;
+      document.getElementById('inp-配送-helpers').value = el.dataset.haisouHelper || 0;
+      document.getElementById('inp-配送-chiban').value  = el.dataset.chiban || 0;
+      document.getElementById('inp-配送-smaho').value   = el.dataset.smahoFlg === 'true' ? 'true' : 'false';
+      document.getElementById('inp-倉庫-rows').value    = el.dataset.sokoRows || 0;
+      document.getElementById('inp-倉庫-cols').value    = el.dataset.sokoCols || 2;
+      document.getElementById('inp-事務-rows').value    = el.dataset.jimuRows || 0;
+      document.getElementById('inp-事務-cols').value    = el.dataset.jimuCols || 2;
+
+      document.getElementById('form-title').textContent = '✏️ 編集中';
+      document.getElementById('btn-add').textContent = '更新';
+      document.getElementById('btn-add').onclick = updateItem;
+      document.getElementById('btn-cancel').style.display = '';
+    }
+
+    function cancelEdit() {
+      editingBusho = null;
+      document.querySelectorAll('.config-item').forEach(e => e.classList.remove('editing'));
+      document.getElementById('form-title').textContent = '➕ 追加';
+      document.getElementById('btn-add').textContent = '追加';
+      document.getElementById('btn-add').onclick = addItem;
+      document.getElementById('btn-cancel').style.display = 'none';
+      document.getElementById('sel-busho').value = '';
+    }
+
+    function getFormValues() {
+      return {
+        haisouRows:   parseInt(document.getElementById('inp-配送-rows').value) || 0,
+        haisouHelper: parseInt(document.getElementById('inp-配送-helpers').value) || 0,
+        chibanRow:    parseInt(document.getElementById('inp-配送-chiban').value) || 0,
+        smahoFlg:     document.getElementById('inp-配送-smaho').value === 'true',
+        sokoRows:     parseInt(document.getElementById('inp-倉庫-rows').value) || 0,
+        sokoCols:     parseInt(document.getElementById('inp-倉庫-cols').value) || 2,
+        jimuRows:     parseInt(document.getElementById('inp-事務-rows').value) || 0,
+        jimuCols:     parseInt(document.getElementById('inp-事務-cols').value) || 2,
+      };
+    }
+
+    function addItem() {
+      const bushoSel = document.getElementById('sel-busho');
+      if (!bushoSel.value) { showMsg('所属を選択してください', 'err'); return; }
+      const bushoCode = bushoSel.value;
+
+      // 重複チェック
+      if (document.querySelector(`#config-items .config-item[data-busho="${bushoCode}"]:not(.special-item)`)) {
+        showMsg('この所属はすでに追加されています。行をクリックして編集してください。', 'err');
+        return;
+      }
+
+      const v = getFormValues();
+      if (v.haisouRows === 0 && v.sokoRows === 0 && v.jimuRows === 0) {
+        showMsg('少なくとも1つの区分に人数を入力してください', 'err');
+        return;
+      }
+
+      const busho = masters.bushoMap[bushoCode];
+      const bcolor = busho?.color_h || '#888';
+      const bname = busho?.busho_name || bushoCode;
+
+      let chips = buildChips(v);
+      const specialItems = document.querySelectorAll('.special-item');
+      const insertBefore = specialItems.length > 0 ? specialItems[0] : null;
+
+      const div = document.createElement('div');
+      div.className = 'config-item';
+      div.dataset.busho        = bushoCode;
+      div.dataset.bushoColor   = bcolor;
+      div.dataset.haisouRows   = v.haisouRows;
+      div.dataset.haisouHelper = v.haisouHelper;
+      div.dataset.chiban       = v.chibanRow || '';
+      div.dataset.smahoFlg     = v.smahoFlg;
+      div.dataset.sokoRows     = v.sokoRows;
+      div.dataset.sokoCols     = v.sokoCols;
+      div.dataset.jimuRows     = v.jimuRows;
+      div.dataset.jimuCols     = v.jimuCols;
+      div.onclick = () => loadItem(div);
+      div.innerHTML = buildItemInner(bname, bcolor, chips, 1, 1, 0);
+
+      const container = document.getElementById('config-items');
+      if (insertBefore) container.insertBefore(div, insertBefore);
+      else container.appendChild(div);
+    }
+
+    function updateItem() {
+      if (!editingBusho) return;
+      const el = document.querySelector(`#config-items .config-item[data-busho="${editingBusho}"]:not(.special-item)`);
+      if (!el) return;
+
+      const newBushoCode = document.getElementById('sel-busho').value;
+      if (!newBushoCode) { showMsg('所属を選択してください', 'err'); return; }
+
+      // 別の所属に変更する場合、変更先がすでに登録済みでないか確認する
+      if (newBushoCode !== editingBusho) {
+        const already = document.querySelector(`#config-items .config-item[data-busho="${newBushoCode}"]:not(.special-item)`);
+        if (already) { showMsg('その所属はすでに登録されています', 'err'); return; }
+      }
+
+      const v = getFormValues();
+      const newBusho = masters.bushoMap[newBushoCode];
+      const bname = newBusho?.busho_name || newBushoCode;
+      const bcolor = newBusho?.color_h || el.dataset.bushoColor;
+
+      el.dataset.busho        = newBushoCode;
+      el.dataset.bushoColor   = bcolor;
+      el.dataset.haisouRows   = v.haisouRows;
+      el.dataset.haisouHelper = v.haisouHelper;
+      el.dataset.chiban       = v.chibanRow || '';
+      el.dataset.smahoFlg     = v.smahoFlg;
+      el.dataset.sokoRows     = v.sokoRows;
+      el.dataset.sokoCols     = v.sokoCols;
+      el.dataset.jimuRows     = v.jimuRows;
+      el.dataset.jimuCols     = v.jimuCols;
+
+      const colNo = parseInt(el.querySelector('.inp-col')?.value ?? 1);
+      const rowNo = parseInt(el.querySelector('.inp-row')?.value ?? 1);
+      const spJun = parseInt(el.querySelector('.inp-sp')?.value ?? 0);
+
+      const chips = buildChips(v);
+      el.innerHTML = buildItemInner(bname, bcolor, chips, colNo, rowNo, spJun);
+      el.onclick = () => loadItem(el);
+      cancelEdit();
+    }
+
+    function buildChips(v) {
+      let chips = '';
+      if (v.haisouRows > 0) {
+        chips += `<span class="gyomu-chip chip-配送">配送:${v.haisouRows}台・助手${v.haisouHelper}人</span>`;
+        if (v.chibanRow > 0) chips += `<span class="gyomu-chip chip-chiban">🌙遅:${v.chibanRow}行</span>`;
+        if (v.smahoFlg)      chips += `<span class="gyomu-chip" style="background:#e91e63">📱スマホあり</span>`;
+      }
+      if (v.sokoRows > 0) chips += `<span class="gyomu-chip chip-倉庫">倉庫:${v.sokoRows}人・${v.sokoCols}列</span>`;
+      if (v.jimuRows > 0) chips += `<span class="gyomu-chip chip-事務">事務:${v.jimuRows}人・${v.jimuCols}列</span>`;
+      return chips;
+    }
+
+    function buildItemInner(bname, bcolor, chips, colNo, rowNo, spJun) {
+      return `
+        <div><span class="busho-badge" style="background:${bcolor};color:${getTextColor(bcolor)}">${bname}</span></div>
+        <div class="gyomu-summary">${chips}</div>
+        <div style="text-align:center;"><input type="number" class="inp-small inp-col" value="${colNo}" min="1" max="21" onclick="event.stopPropagation()"></div>
+        <div style="text-align:center;"><input type="number" class="inp-small inp-row" value="${rowNo}" min="1" max="21" onclick="event.stopPropagation()"></div>
+        <div style="text-align:center;"><input type="number" class="inp-small inp-sp"  value="${spJun}" min="0" max="999" onclick="event.stopPropagation()"></div>
+        <div class="item-actions">
+          <button class="btn-move" onclick="moveItem(event,this,-1)">▲</button>
+          <button class="btn-move" onclick="moveItem(event,this,1)">▼</button>
+          <button class="btn-del"  onclick="delItem(event,this)">✕</button>
+        </div>`;
+    }
+
+    function delItem(e, btn) {
+      e.stopPropagation();
+      if (!confirm('この所属の設定を削除しますか？')) return;
+      btn.closest('.config-item').remove();
+    }
+
+    function moveItem(e, btn, dir) {
+      e.stopPropagation();
+      const item = btn.closest('.config-item');
+      const items = [...document.querySelectorAll('#config-items .config-item:not(.special-item)')];
+      const idx = items.indexOf(item);
+      const container = document.getElementById('config-items');
+      const specialFirst = document.querySelector('.special-item');
+      if (dir === -1 && idx > 0) container.insertBefore(item, items[idx - 1]);
+      if (dir === 1 && idx < items.length - 1 && items[idx + 1] !== specialFirst) container.insertBefore(items[idx + 1], item);
+    }
+
+    async function saveAll() {
+      const normalItems = [...document.querySelectorAll('#config-items .config-item:not(.special-item)')];
+      const specialItems = [...document.querySelectorAll('#config-items .special-item')];
+
+      const records = [];
+      let hyojiJun = 0;
+
+      normalItems.forEach(el => {
+        const bc          = el.dataset.busho;
+        const haisouRows  = parseInt(el.dataset.haisouRows) || 0;
+        const haisouHelper= parseInt(el.dataset.haisouHelper) || 0;
+        const chibanRow   = el.dataset.chiban || '';
+        const sokoRows    = parseInt(el.dataset.sokoRows) || 0;
+        const sokoCols    = parseInt(el.dataset.sokoCols) || 2;
+        const jimuRows    = parseInt(el.dataset.jimuRows) || 0;
+        const jimuCols    = parseInt(el.dataset.jimuCols) || 2;
+        const colNo       = (parseInt(el.querySelector('.inp-col')?.value) || 1) - 1;
+        const rowNo       = (parseInt(el.querySelector('.inp-row')?.value) || 1) - 1;
+        const spJun       = parseInt(el.querySelector('.inp-sp')?.value) || 0;
+
+        const smahoFlg    = el.dataset.smahoFlg === 'true';
+
+        if (haisouRows > 0) records.push({
+          busho_code: bc, gyomu_code: '配送',
+          row_count: haisouRows, jyoshu_count: haisouHelper,
+          osoban_row: chibanRow ? parseInt(chibanRow) : 0,
+          hyoji_jun: hyojiJun++, col_no: colNo, row_no: rowNo,
+          busho_hyoji_jun: spJun, col_width: 1, sp_jun: 1,
+          smaho_flg: smahoFlg,
+        });
+        if (sokoRows > 0) records.push({
+          busho_code: bc, gyomu_code: '倉庫',
+          row_count: sokoRows, jyoshu_count: sokoCols,
+          osoban_row: 0,
+          hyoji_jun: hyojiJun++, col_no: colNo, row_no: rowNo,
+          busho_hyoji_jun: spJun, col_width: 1, sp_jun: 1,
+        });
+        if (jimuRows > 0) records.push({
+          busho_code: bc, gyomu_code: '事務',
+          row_count: jimuRows, jyoshu_count: jimuCols,
+          osoban_row: 0,
+          hyoji_jun: hyojiJun++, col_no: colNo, row_no: rowNo,
+          busho_hyoji_jun: spJun, col_width: 1, sp_jun: 1,
+        });
+      });
+
+      // 特殊ブロック（お休み・応援）
+      specialItems.forEach(el => {
+        const spJun = parseInt(el.dataset.spJun);
+        const colNo = (parseInt(el.querySelector('.inp-col')?.value) || 1) - 1;
+        const rowNo = (parseInt(el.querySelector('.inp-row')?.value) || 1) - 1;
+        const ncols = parseInt(el.querySelector('.inp-ncols')?.value) || 1;
+        records.push({
+          busho_code: spJun === 99 ? 'お休み' : '応援',
+          gyomu_code: '特殊',
+          row_count: ncols, jyoshu_count: 0, osoban_row: 0,
+          hyoji_jun: hyojiJun++, col_no: colNo, row_no: rowNo,
+          busho_hyoji_jun: 999, col_width: ncols, sp_jun: spJun,
+        });
+      });
+
+      // 全削除してから再insert
+      const { error: delErr } = await sb.from('shift_banmen_config').delete().neq('id', 0);
+      if (delErr) { showMsg('保存に失敗しました（削除エラー）: ' + delErr.message, 'err'); return; }
+
+      if (records.length > 0) {
+        const { error: insErr } = await sb.from('shift_banmen_config').insert(records);
+        if (insErr) { showMsg('保存に失敗しました（登録エラー）: ' + insErr.message, 'err'); return; }
+      }
+
+      showMsg('保存しました！', 'ok');
+      await loadConfig(); // 再読み込みして画面を最新化
+    }
+
+    function showMsg(text, type) {
+      const el = document.getElementById('msg');
+      el.textContent = text;
+      el.className = `msg ${type}`;
+      setTimeout(() => { el.className = 'msg'; }, 3000);
+    }
+
+    init();
+  </script>
+</body>
+</html>
