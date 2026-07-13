@@ -403,8 +403,10 @@
       const KYUJITSU_MAP = { '901': '休日', '902': '有休', '903': '健診' };
 
       dayShiftList.forEach(({ staff_code, gyomu_code }) => {
-        // 休日・有休・健診（901/902/903）→ お休みカードへ
+        // 休日・有休・健診（901/902/903）→ お休みカードへ（この盤面に関連する所属の人だけ）
         if (KYUJITSU_MAP[gyomu_code]) {
+          const staffObj = masters.staffMap[staff_code];
+          if (!staffObj || !isStaffRelevant(staffObj)) return;
           const key = 'お休み|' + KYUJITSU_MAP[gyomu_code];
           if (!soukoJimuGroups[key]) soukoJimuGroups[key] = [];
           soukoJimuGroups[key].push(staff_code);
@@ -570,7 +572,7 @@
         staffList.appendChild(el);
       });
       document.getElementById('staff-list-title').textContent =
-        staffFilterMode === 'relevant' ? '👤 社員（関連のみ）' : '👤 社員（全員）';
+        staffFilterMode === 'relevant' ? '👤 社員（盤面）' : '👤 社員（全員）';
 
       // 車両リスト（「関連のみ」の場合、盤面に出ている所属の車だけに絞る）
       const carList = document.getElementById('car-list');
@@ -589,7 +591,7 @@
         carList.appendChild(el);
       });
       document.getElementById('car-list-title').textContent =
-        carFilterMode === 'relevant' ? '🚛 車両（関連のみ）' : '🚛 車両（全車両）';
+        carFilterMode === 'relevant' ? '🚛 車両（盤面）' : '🚛 車両（全車両）';
 
       // 派遣リスト
       const hakenList = document.getElementById('haken-list');
