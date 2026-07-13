@@ -65,6 +65,10 @@
     th.name-th { min-width: 100px; position: sticky; left: 0; top: 0; z-index: 3; background: #dde; }
     td { padding: 3px 2px; text-align: center; border: 1px solid #eee; }
     td.name-td { position: sticky; left: 0; background: white; z-index: 1; padding: 3px 6px; min-width: 100px; font-size: 0.78rem; cursor: pointer; }
+
+    /* 車検行：常に表の一番下に固定表示 */
+    #syaken-row td { position: sticky; bottom: 0; background: #fff5f5; z-index: 2; }
+    #syaken-row td.name-td { z-index: 3; }
     td.shift-td { cursor: default; }
     tr:hover td { background: #f0f8ff; }
     tr:hover td.name-td { background: #f0f8ff; }
