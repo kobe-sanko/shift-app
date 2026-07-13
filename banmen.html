@@ -65,6 +65,11 @@
       gap: 8px;
     }
 
+    /* ===== スマホ表示：左パネルを消して縦一列に ===== */
+    @media (max-width: 768px) {
+      .left-panel { display: none; }
+    }
+
     /* ===== 所属カード ===== */
     .busho-card {
       background: white; border-radius: 6px;
@@ -580,6 +585,7 @@
           type: 'yasumi',
           col: (yasumiConfig.col_no || 0) + 1,
           row: (yasumiConfig.row_no || 0) + 1,
+          hyoji: yasumiConfig.busho_hyoji_jun ?? 999,
           cfg: yasumiConfig
         });
       }
@@ -591,11 +597,37 @@
           type: 'oen',
           col: (oenConfig.col_no || 0) + 1,
           row: (oenConfig.row_no || 0) + 1,
+          hyoji: oenConfig.busho_hyoji_jun ?? 999,
           cfg: oenConfig
         });
       }
 
-      // 最大列数を求める
+      // ===== スマホ表示：左パネルなし・SP順（busho_hyoji_jun）で縦一列 =====
+      if (window.innerWidth <= 768) {
+        allCards.sort((a, b) => (a.hyoji || 0) - (b.hyoji || 0));
+
+        grid.style.gridTemplateColumns = '1fr';
+        grid.style.alignItems = 'stretch';
+
+        const colDiv = document.createElement('div');
+        colDiv.style.cssText = 'display:flex;flex-direction:column;gap:8px;';
+        allCards.forEach(c => {
+          let card;
+          if (c.type === 'busho') {
+            const busho = masters.bushoMap[c.bushoCode];
+            card = buildBushoCard(c.bushoCode, busho, c.items);
+          } else if (c.type === 'yasumi') {
+            card = buildYasumiCard(c.cfg);
+          } else if (c.type === 'oen') {
+            card = buildOenCard(c.cfg);
+          }
+          if (card) colDiv.appendChild(card);
+        });
+        grid.appendChild(colDiv);
+        return;
+      }
+
+      // 最大列数を求める（PC表示）
       const maxCol = Math.max(...allCards.map(c => c.col), 1);
 
       // 列ごとにカードを分けてrow順でソート

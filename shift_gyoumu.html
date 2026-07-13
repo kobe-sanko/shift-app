@@ -39,6 +39,11 @@
     .gyomu-item:active { cursor: grabbing; opacity: 0.7; }
     .gyomu-item.no-tekisei { opacity: 0.5; border: 1px dashed #aaa; }
 
+    /* ===== スマホ表示：見る専用なので業務リストは非表示 ===== */
+    @media (max-width: 768px) {
+      .gyomu-list-panel { display: none; }
+    }
+
     /* シフト表 */
     .table-wrap { overflow-x: auto; flex: 1; }
     table { border-collapse: collapse; background: white; font-size: 0.75rem; white-space: nowrap; box-shadow: 0 1px 4px rgba(0,0,0,0.1); }
