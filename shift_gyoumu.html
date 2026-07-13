@@ -39,6 +39,9 @@
     .gyomu-item:active { cursor: grabbing; opacity: 0.7; }
     .gyomu-item.no-tekisei { opacity: 0.5; border: 1px dashed #aaa; }
 
+    .filter-select-mobile-wrap { display: none; text-align: center; margin-bottom: 8px; }
+    .filter-select-mobile-wrap select { font-size: 0.9rem; padding: 6px 10px; border: 1px solid #ccc; border-radius: 4px; width: 90%; max-width: 300px; }
+
     /* ===== スマホ表示：見る専用なので業務リストと編集用ボタンは非表示 ===== */
     @media (max-width: 768px) {
       .gyomu-list-panel { display: none; }
@@ -53,8 +56,6 @@
       .filter-row { display: none; }
       .filter-select-mobile-wrap { display: block; }
     }
-    .filter-select-mobile-wrap { display: none; text-align: center; margin-bottom: 8px; }
-    .filter-select-mobile-wrap select { font-size: 0.9rem; padding: 6px 10px; border: 1px solid #ccc; border-radius: 4px; width: 90%; max-width: 300px; }
 
     /* シフト表 */
     .table-wrap { overflow-x: auto; overflow-y: auto; max-height: 75vh; flex: 1; }
