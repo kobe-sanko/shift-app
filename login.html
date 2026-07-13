@@ -31,18 +31,27 @@
       const err = document.getElementById('err');
       const btn = document.getElementById('btn');
       err.style.display = 'none';
+      err.textContent = '社員コードが見つかりません';
       if (!code) return;
 
       btn.disabled = true;
       btn.textContent = '確認中…';
       const { data, error } = await sb.from('shift_staff')
-        .select('staff_code, name, retired')
+        .select('staff_code, name, retired, is_admin')
         .eq('staff_code', code)
         .maybeSingle();
       btn.disabled = false;
       btn.textContent = 'ログイン';
 
       if (error || !data || data.retired) {
+        err.style.display = 'block';
+        return;
+      }
+
+      // パソコン幅（スマホではない）の場合は、PC権限がある社員のみログインできる
+      const isPc = window.innerWidth > 768;
+      if (isPc && !data.is_admin) {
+        err.textContent = 'このパソコンからは、PC権限のある社員のみログインできます';
         err.style.display = 'block';
         return;
       }

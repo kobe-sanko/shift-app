@@ -56,8 +56,12 @@
     tr:hover td { background: #f0f8ff; }
     tr:hover td.name-td { background: #f0f8ff; }
     tr.hidden { display: none; }
-    .badge { display: inline-block; padding: 1px 4px; border-radius: 3px; font-size: 0.72rem; font-weight: bold; min-width: 28px; }
-    .badge.empty { color: #bbb; background: none; }
+    .badge {
+      display: inline-block; padding: 3px 2px; border-radius: 3px; font-size: 0.72rem; font-weight: bold;
+      min-width: 20px; min-height: 34px;
+      writing-mode: vertical-rl; text-orientation: upright; letter-spacing: 1px;
+    }
+    .badge.empty { color: #bbb; background: none; writing-mode: horizontal-tb; min-height: auto; }
     th.sat { background: #d0e8ff; }
     th.sun { background: #ffd0d0; }
     td.sat-col { background: #f0f6ff; }
