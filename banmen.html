@@ -227,11 +227,11 @@
     <!-- 左パネル -->
     <div class="left-panel" id="left-panel">
       <div class="list-section staff-section">
-        <div class="list-section-title">👤 社員</div>
+        <div class="list-section-title" id="staff-list-title" onclick="toggleStaffFilter()" style="cursor:pointer;" title="クリックで全員表示と切り替え">👤 社員</div>
         <div class="list-scroll"><div id="staff-list"></div></div>
       </div>
       <div class="list-section car-section">
-        <div class="list-section-title">🚛 車両</div>
+        <div class="list-section-title" id="car-list-title" onclick="toggleCarFilter()" style="cursor:pointer;" title="クリックで全車両表示と切り替え">🚛 車両</div>
         <div class="list-scroll"><div id="car-list"></div></div>
       </div>
       <div class="list-section haken-section">
@@ -258,6 +258,10 @@
     let hakenRows = [];
     let dragInfo = null;    // ドラッグ中の情報
     let tekiseiMap = {};    // 業務適性
+    let bushoTekiseiMap = {}; // 所属適性（staff_code → Set(busho_code)）
+    let boardBushoCodes = new Set(); // 今の盤面に表示されている所属コード
+    let staffFilterMode = 'relevant'; // 'relevant'=関連のみ / 'all'=全員
+    let carFilterMode = 'relevant';   // 'relevant'=関連のみ / 'all'=全車両
     let dialogResolve = null;
     let gyomuReverseMap = {}; // bushoCode|gyomuName → gyomu_code（業務シフト同期用）
     let currentDayCol = '';   // その日のd列名（d01〜d31）
@@ -307,7 +311,7 @@
       const yearMonth = getYearMonth(currentDate);
       const dayCol = getDayCol(currentDate);
 
-      const [staffRes, carRes, hakenRes, configRes, banmenRes, banmenHakenRes, oenRes, tekiseiRes, gyomuRes, gyomuShiftRes] = await Promise.all([
+      const [staffRes, carRes, hakenRes, configRes, banmenRes, banmenHakenRes, oenRes, tekiseiRes, gyomuRes, gyomuShiftRes, bushoTekiseiRes] = await Promise.all([
         sb.from('shift_staff').select('*').order('staff_code'),
         sb.from('shift_car').select('*').order('car_code'),
         sb.from('shift_haken').select('*').order('haken_name'),
@@ -318,6 +322,7 @@
         sb.from('shift_gyomu_tekisei').select('staff_code, gyomu_code, busho_code'),
         sb.from('shift_gyomu').select('gyomu_code, busho_code, gyomu_name'),
         sb.from('shift_gyomu_shift').select(`staff_code, ${dayCol}`).eq('yearmonth', yearMonth),
+        sb.from('shift_busho_tekisei').select('staff_code, busho_code'),
       ]);
 
       staffRows = (staffRes.data || []).filter(s => !s.retired);
@@ -333,6 +338,18 @@
         if (!tekiseiMap[r.staff_code]) tekiseiMap[r.staff_code] = [];
         tekiseiMap[r.staff_code].push({ gyomu_code: r.gyomu_code, busho_code: r.busho_code });
       });
+
+      // 所属適性マップ（staff_code → その人が対応できる所属コードの集合）
+      bushoTekiseiMap = {};
+      (bushoTekiseiRes.data || []).forEach(r => {
+        if (!bushoTekiseiMap[r.staff_code]) bushoTekiseiMap[r.staff_code] = new Set();
+        bushoTekiseiMap[r.staff_code].add(r.busho_code);
+      });
+
+      // 今の盤面に表示されている所属コードの集合（お休み・応援は除く）
+      boardBushoCodes = new Set(
+        configData.filter(c => c.sp_jun !== 99 && c.sp_jun !== 98).map(c => c.busho_code)
+      );
 
       // 業務コード→業務マスタのマップ
       const gyomuMap = {};
@@ -495,6 +512,32 @@
     }
 
     // ===== 左パネル構築 =====
+    // 社員が今の盤面に「関連あり」かどうか（本人の所属、または所属適性のどちらかが盤面の所属に含まれていれば関連あり）
+    function isStaffRelevant(s) {
+      if (boardBushoCodes.has(s.busho_code)) return true;
+      const tekisei = bushoTekiseiMap[s.staff_code];
+      if (!tekisei) return false;
+      for (const bc of tekisei) {
+        if (boardBushoCodes.has(bc)) return true;
+      }
+      return false;
+    }
+
+    // 車両が今の盤面に「関連あり」かどうか（車の所属が盤面の所属に含まれていれば関連あり）
+    function isCarRelevant(c) {
+      return boardBushoCodes.has(c.busho_code);
+    }
+
+    function toggleStaffFilter() {
+      staffFilterMode = staffFilterMode === 'relevant' ? 'all' : 'relevant';
+      buildLeftPanel();
+    }
+
+    function toggleCarFilter() {
+      carFilterMode = carFilterMode === 'relevant' ? 'all' : 'relevant';
+      buildLeftPanel();
+    }
+
     function buildLeftPanel() {
       // 配置済みのstaff_codeを収集
       const usedStaff = new Set();
@@ -510,11 +553,12 @@
       const usedHaken = new Set();
       hakenData.forEach(r => { if (r.haken_name) usedHaken.add(r.haken_name + '_' + r.renban); });
 
-      // 社員リスト
+      // 社員リスト（「関連のみ」の場合、盤面に出ている所属の適性がある人だけに絞る）
       const staffList = document.getElementById('staff-list');
       staffList.innerHTML = '';
       staffRows.forEach(s => {
         if (usedStaff.has(s.staff_code)) return; // 配置済みは非表示
+        if (staffFilterMode === 'relevant' && !isStaffRelevant(s)) return;
         const el = document.createElement('div');
         el.className = 'list-item staff';
         el.textContent = s.name || s.staff_code;
@@ -525,12 +569,15 @@
         el.addEventListener('dragstart', onDragStart);
         staffList.appendChild(el);
       });
+      document.getElementById('staff-list-title').textContent =
+        staffFilterMode === 'relevant' ? '👤 社員（関連のみ）' : '👤 社員（全員）';
 
-      // 車両リスト
+      // 車両リスト（「関連のみ」の場合、盤面に出ている所属の車だけに絞る）
       const carList = document.getElementById('car-list');
       carList.innerHTML = '';
       carRows.forEach(c => {
         if (usedCars.has(c.car_code)) return;
+        if (carFilterMode === 'relevant' && !isCarRelevant(c)) return;
         const el = document.createElement('div');
         el.className = 'list-item car';
         el.textContent = c.car_code;
@@ -541,6 +588,8 @@
         el.addEventListener('dragstart', onDragStart);
         carList.appendChild(el);
       });
+      document.getElementById('car-list-title').textContent =
+        carFilterMode === 'relevant' ? '🚛 車両（関連のみ）' : '🚛 車両（全車両）';
 
       // 派遣リスト
       const hakenList = document.getElementById('haken-list');
@@ -1505,10 +1554,15 @@
       return s?.name || code;
     }
     async function recreate() {
-      if (!confirm('本日のシフトデータから盤面を再作成しますか？\n※現在の盤面データは上書きされます')) return;
+      if (!confirm('この日の盤面データを一度すべて削除して、業務シフトから作り直しますか？\n※現在の盤面データ（テストで入れたものも含む）は消えます')) return;
       showMsg('再作成中...', 'ok');
-      // TODO: shift_gyomu_shiftから盤面を自動生成する処理
-      showMsg('再作成機能は今後実装予定です', 'err');
+
+      const dateStr = getDateStr(currentDate);
+      const { error: delErr } = await sb.from('shift_banmen').delete().eq('date', dateStr);
+      if (delErr) { showMsg('再作成に失敗しました: ' + delErr.message, 'err'); return; }
+
+      await loadData(); // 削除後に読み込み直すと、業務シフトから自動で組み立てられる
+      showMsg('再作成しました', 'ok');
     }
 
     function showMsg(text, type) {
