@@ -14,21 +14,24 @@
     return;
   }
 
-  // ログイン済みなら、画面右上に名前とログアウトボタンを出す
+  // ログイン済みなら、画面の一番上に細い帯で名前とログアウトを出す（他の表示と重ならないよう、浮かせずに差し込む）
   if (!isLoginPage && authRaw) {
     window.addEventListener('DOMContentLoaded', () => {
       let auth;
       try { auth = JSON.parse(authRaw); } catch (e) { auth = null; }
       const bar = document.createElement('div');
-      bar.style.cssText = 'position:fixed;top:0;right:0;background:#333;color:white;font-size:0.72rem;padding:4px 10px;border-radius:0 0 0 6px;z-index:9999;';
+      bar.style.cssText = 'background:#333;color:white;font-size:0.7rem;padding:2px 8px;text-align:right;';
       const nameLabel = auth && auth.name ? `👤 ${auth.name}さん　` : '';
       bar.innerHTML = `${nameLabel}<a href="#" style="color:#9cf;" id="shiftAppLogoutLink">ログアウト</a>`;
-      document.body.appendChild(bar);
+      document.body.prepend(bar);
       document.getElementById('shiftAppLogoutLink').onclick = (e) => {
         e.preventDefault();
         localStorage.removeItem('shiftAppAuth');
         location.href = 'login.html';
       };
+      // この帯の高さを覚えておき、画面全体の高さ計算（100vh基準のもの）が
+      // ずれないよう、CSS側から参照できる変数として渡しておく
+      document.documentElement.style.setProperty('--shift-auth-bar-h', bar.offsetHeight + 'px');
     });
   }
 })();

@@ -26,7 +26,7 @@
     .btn-config { background: #666; color: white; }
 
     /* ===== レイアウト ===== */
-    .main-layout { display: flex; height: calc(100vh - 38px); }
+    .main-layout { display: flex; height: calc(100vh - 38px - var(--shift-auth-bar-h, 0px)); }
 
     /* ===== 左パネル ===== */
     .left-panel {
@@ -74,6 +74,10 @@
       .date-nav { gap: 3px; }
       .date-label { min-width: 92px; font-size: 0.88rem; white-space: nowrap; }
       .date-nav button { padding: 4px 7px; }
+      /* スマホは実機によって画面の高さの扱いが変わりやすいため、
+         高さを固定計算せず、ページ全体が普通にスクロールする形にする */
+      .main-layout { height: auto; }
+      .main-area { overflow: visible; }
     }
 
     /* ===== 所属カード ===== */
