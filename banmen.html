@@ -65,9 +65,10 @@
       gap: 8px;
     }
 
-    /* ===== スマホ表示：左パネルを消して縦一列に ===== */
+    /* ===== スマホ表示：左パネルを消して縦一列に・見る専用なので操作ボタンも非表示 ===== */
     @media (max-width: 768px) {
       .left-panel { display: none; }
+      .btn-recreate, .btn-excel, .btn-config { display: none !important; }
     }
 
     /* ===== 所属カード ===== */

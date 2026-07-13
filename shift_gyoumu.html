@@ -39,9 +39,10 @@
     .gyomu-item:active { cursor: grabbing; opacity: 0.7; }
     .gyomu-item.no-tekisei { opacity: 0.5; border: 1px dashed #aaa; }
 
-    /* ===== スマホ表示：見る専用なので業務リストは非表示 ===== */
+    /* ===== スマホ表示：見る専用なので業務リストと編集用ボタンは非表示 ===== */
     @media (max-width: 768px) {
       .gyomu-list-panel { display: none; }
+      .pc-only-btn { display: none !important; }
     }
 
     /* シフト表 */
@@ -92,11 +93,11 @@
 
   <div class="top-bar">
     <select class="month-select" id="month-sel" onchange="onMonthChange()"></select>
-    <button class="btn btn-create" id="btn-create-shift" onclick="createShift()">業務シフト作成</button>
-    <button class="btn btn-save" onclick="saveAll()" id="btn-save" style="display:none">💾 保存</button>
-    <button class="btn" style="background:#1d6f42;" onclick="exportExcel(false)">📊 Excel出力</button>
-    <button class="btn" style="background:#1a5276;" onclick="exportExcel(true)">📊 Excel出力2</button>
-    <button class="btn" style="background:#8e44ad;" onclick="openHyojiJunDialog()">📋 表示順設定</button>
+    <button class="btn btn-create pc-only-btn" id="btn-create-shift" onclick="createShift()">業務シフト作成</button>
+    <button class="btn btn-save pc-only-btn" onclick="saveAll()" id="btn-save" style="display:none">💾 保存</button>
+    <button class="btn pc-only-btn" style="background:#1d6f42;" onclick="exportExcel(false)">📊 Excel出力</button>
+    <button class="btn pc-only-btn" style="background:#1a5276;" onclick="exportExcel(true)">📊 Excel出力2</button>
+    <button class="btn pc-only-btn" style="background:#8e44ad;" onclick="openHyojiJunDialog()">📋 表示順設定</button>
   </div>
 
   <div class="filter-row" id="filter-row">
