@@ -57,7 +57,8 @@
     tr:hover td.name-td { background: #f0f8ff; }
     tr.hidden { display: none; }
     .badge {
-      display: inline-block; padding: 3px 2px; border-radius: 3px; font-size: 0.72rem; font-weight: bold;
+      display: inline-flex; align-items: center; justify-content: center;
+      padding: 3px 2px; border-radius: 3px; font-size: 0.72rem; font-weight: bold;
       min-width: 20px; min-height: 34px;
       writing-mode: vertical-rl; text-orientation: upright; letter-spacing: 1px;
     }
@@ -429,7 +430,7 @@
     function buildHeader() {
       const { year, month } = parseYearMonth(currentYM);
       const thead = document.getElementById('thead');
-      let html = '<tr><th class="name-th">氏名</th><th style="min-width:56px">勤務<br>日数</th>';
+      let html = '<tr><th class="name-th">氏名</th><th style="min-width:36px">勤務<br>日数</th>';
       for (let d = 1; d <= daysInMonth; d++) {
         const wd = new Date(year, month - 1, d).getDay();
         const cls = wd === 0 ? 'sun' : wd === 6 ? 'sat' : '';
