@@ -123,11 +123,14 @@ async function loadMasters() {
     sb.from('shift_staff').select('*').order('staff_code'),
     sb.from('shift_car').select('*').order('car_code'),
   ]);
+  // 車番は文字としての並びだと3桁・4桁が混ざるため、数字として並べ直す
+  const carsSorted = (carRes.data || []).slice().sort((a, b) => (parseInt(a.car_code) || 0) - (parseInt(b.car_code) || 0));
+
   return {
     bushos: bushoRes.data || [],
     gyomus: gyomuRes.data || [],
     staffs: staffRes.data || [],
-    cars: carRes.data || [],
+    cars: carsSorted,
     bushoMap: Object.fromEntries((bushoRes.data||[]).map(b => [b.busho_code, b])),
     gyomuMap: Object.fromEntries((gyomuRes.data||[]).map(g => [g.gyomu_code, g])),
     staffMap: Object.fromEntries((staffRes.data||[]).map(s => [s.staff_code, s])),

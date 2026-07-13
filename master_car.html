@@ -136,7 +136,8 @@
     async function loadRows() {
       const { data, error } = await sb.from('shift_car').select('*').order('car_code');
       if (error) { showMsg('データの読み込みに失敗しました: ' + error.message, 'err'); return; }
-      rows = data || [];
+      // 車番は数字として並べ直す（3桁・4桁が混ざらないように）
+      rows = (data || []).slice().sort((a, b) => (parseInt(a.car_code) || 0) - (parseInt(b.car_code) || 0));
       renderTable();
       document.getElementById('loading').style.display = 'none';
       document.getElementById('main-table').style.display = '';

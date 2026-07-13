@@ -262,6 +262,7 @@
     let boardBushoCodes = new Set(); // 今の盤面に表示されている所属コード
     let staffFilterMode = 'relevant'; // 'relevant'=関連のみ / 'all'=全員
     let carFilterMode = 'relevant';   // 'relevant'=関連のみ / 'all'=全車両
+    let syakenCarCodes = new Set();  // この日、車検などで使えない車のcar_code集合
     let dialogResolve = null;
     let gyomuReverseMap = {}; // bushoCode|gyomuName → gyomu_code（業務シフト同期用）
     let currentDayCol = '';   // その日のd列名（d01〜d31）
@@ -311,7 +312,7 @@
       const yearMonth = getYearMonth(currentDate);
       const dayCol = getDayCol(currentDate);
 
-      const [staffRes, carRes, hakenRes, configRes, banmenRes, banmenHakenRes, oenRes, tekiseiRes, gyomuRes, gyomuShiftRes, bushoTekiseiRes] = await Promise.all([
+      const [staffRes, carRes, hakenRes, configRes, banmenRes, banmenHakenRes, oenRes, tekiseiRes, gyomuRes, gyomuShiftRes, bushoTekiseiRes, syakenRes] = await Promise.all([
         sb.from('shift_staff').select('*').order('staff_code'),
         sb.from('shift_car').select('*').order('car_code'),
         sb.from('shift_haken').select('*').order('haken_name'),
@@ -323,10 +324,15 @@
         sb.from('shift_gyomu').select('gyomu_code, busho_code, gyomu_name'),
         sb.from('shift_gyomu_shift').select(`staff_code, ${dayCol}`).eq('yearmonth', yearMonth),
         sb.from('shift_busho_tekisei').select('staff_code, busho_code'),
+        sb.from('shift_syaken').select('car_code').eq('date', dateStr),
       ]);
 
+      // この日、車検などで使えない車の集合
+      syakenCarCodes = new Set((syakenRes.data || []).map(r => r.car_code));
+
       staffRows = (staffRes.data || []).filter(s => !s.retired);
-      carRows = carRes.data || [];
+      // 車番は数字として並べ直す（3桁・4桁が混ざらないように）
+      carRows = (carRes.data || []).slice().sort((a, b) => (parseInt(a.car_code) || 0) - (parseInt(b.car_code) || 0));
       hakenRows = hakenRes.data || [];
       configData = configRes.data || [];
       banmenData = banmenRes.data || [];
@@ -445,7 +451,9 @@
       function getLinkedCar(staffCode) {
         const staff = staffRows.find(s => s.staff_code === staffCode);
         const car = staff?.car_code;
-        return (car && car !== 'EMPTY') ? car : null;
+        if (!car || car === 'EMPTY') return null;
+        if (syakenCarCodes.has(car)) return null; // 車検などで使えない車は自動セットしない
+        return car;
       }
 
       toInsert.forEach(({ bushoCode, gyomuName, rowNo, field, staff_code }) => {
@@ -579,6 +587,7 @@
       carList.innerHTML = '';
       carRows.forEach(c => {
         if (usedCars.has(c.car_code)) return;
+        if (syakenCarCodes.has(c.car_code)) return; // 車検などで使えない車は出さない
         if (carFilterMode === 'relevant' && !isCarRelevant(c)) return;
         const el = document.createElement('div');
         el.className = 'list-item car';
@@ -1038,6 +1047,12 @@
       // 型チェック
       if (acceptType === 'car' && dragInfo.type !== 'car') { showMsg('ここには車両をドロップしてください', 'err'); return; }
       if (acceptType === 'staff' && dragInfo.type === 'car') { showMsg('ここには社員または派遣をドロップしてください', 'err'); return; }
+
+      // 車検などで使えない車はここで弾く
+      if (dragInfo.type === 'car' && syakenCarCodes.has(dragInfo.code)) {
+        showMsg('この車はこの日は車検などで使えません', 'err');
+        return;
+      }
 
       // 業務適性チェック（社員かつ業務コードがある場合のみ。お休みは対象外）
       if (dragInfo.type === 'staff' && acceptType === 'staff' && bushoCode !== 'お休み') {
