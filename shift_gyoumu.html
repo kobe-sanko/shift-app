@@ -205,6 +205,7 @@
     let smahoConfig = [];    // smaho_flg=trueの配送設定
     let chibanCodes = new Set(); // 遅番行に対応する業務コードのセット
     let hyojiJunMap = {};    // busho_code → { staff_code: jun } の表示順マップ
+    let syakenByDay = {};    // d01〜d31 → その日使えない車番の配列
 
     // ===== 初期化 =====
     async function init() {
@@ -414,7 +415,7 @@
       const dateFrom = `${year}${String(month).padStart(2,'0')}01`;
       const dateTo   = `${year}${String(month).padStart(2,'0')}${String(daysInMonth).padStart(2,'0')}`;
 
-      const [staffRes, shiftRes, tekiseiRes, configRes, smahoRes, chibanRes, hyojiJunRes] = await Promise.all([
+      const [staffRes, shiftRes, tekiseiRes, configRes, smahoRes, chibanRes, hyojiJunRes, syakenRes] = await Promise.all([
         sb.from('shift_staff').select('*').order('staff_code'),
         sb.from('shift_gyomu_shift').select('*').eq('yearmonth', currentYM),
         sb.from('shift_gyomu_tekisei').select('staff_code, gyomu_code, busho_code'),
@@ -423,6 +424,7 @@
           .gte('date', dateFrom).lte('date', dateTo).not('smaho', 'is', null),
         sb.from('shift_banmen_config').select('busho_code, osoban_row').eq('gyomu_code', '配送').gt('osoban_row', 0),
         sb.from('shift_hyoji_jun').select('*'),
+        sb.from('shift_syaken').select('car_code, date').gte('date', dateFrom).lte('date', dateTo),
       ]);
 
       staffRows = (staffRes.data || []).filter(s => !s.retired);
@@ -452,6 +454,16 @@
         chibanCodes.add(`${r.busho_code}-1${row}`);
         // 助手（枝番の十の位=2、一の位=行番号）
         chibanCodes.add(`${r.busho_code}-2${row}`);
+      });
+
+      // 車検（使えない車）：日付(yyyymmdd) → その日使えない車番の配列
+      syakenByDay = {};
+      (syakenRes.data || []).forEach(r => {
+        const day = parseInt(r.date.slice(6, 8));
+        const key = `d${String(day).padStart(2, '0')}`;
+        if (!syakenByDay[key]) syakenByDay[key] = [];
+        const car = masters.carMap[r.car_code];
+        syakenByDay[key].push(car ? (car.car_no || car.car_code) : r.car_code);
       });
 
       buildHeader();
@@ -578,6 +590,20 @@
           tbody.appendChild(btnTr);
         }
       });
+
+      // 車検（使えない車）行：全社員共通で1行、一番下に表示
+      const syakenTr = document.createElement('tr');
+      syakenTr.id = 'syaken-row';
+      let syakenHtml = `<td class="name-td" style="font-weight:bold;color:#c0392b">🔧 車検</td><td></td>`;
+      for (let d = 1; d <= daysInMonth; d++) {
+        const key = `d${String(d).padStart(2,'0')}`;
+        const cls = getDayClass(d);
+        const cars = syakenByDay[key];
+        const label = cars && cars.length ? cars.join('・') : '';
+        syakenHtml += `<td class="${cls}" style="color:#c0392b;font-weight:bold;font-size:0.7rem">${label}</td>`;
+      }
+      syakenTr.innerHTML = syakenHtml;
+      tbody.appendChild(syakenTr);
 
       // 業務リスト更新
       buildGyomuList(selectedCode);

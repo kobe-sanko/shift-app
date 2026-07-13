@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>車検管理</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="common.js"></script>
+  <style>
+    body { font-family: sans-serif; margin: 0 auto; padding: 10px; background: #f5f5f5; max-width: 700px; }
+    h1 { font-size: 1.2rem; text-align: center; margin: 10px 0; }
+    .back { display: block; text-align: center; margin: 8px 0; color: #4a90e2; text-decoration: none; width: fit-content; margin-left: auto; margin-right: auto; }
+    .desc { background: #e8f4fd; border-radius: 6px; padding: 10px 14px; margin-bottom: 14px; font-size: 0.85rem; }
+    .msg { text-align: center; font-size: 0.85rem; padding: 6px; border-radius: 4px; margin-bottom: 8px; display: none; }
+    .msg.ok  { background: #d4edda; color: #155724; display: block; }
+    .msg.err { background: #fdecea; color: #c0392b; display: block; }
+
+    /* フォーム */
+    .form-box { background: #fff0e8; border-radius: 8px; padding: 8px; margin-bottom: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.1); }
+    .form-table { width: 100%; table-layout: fixed; border-collapse: separate; border-spacing: 4px 0; display: table; }
+    .form-cell { display: table-cell; vertical-align: bottom; }
+    .form-cell label { display: block; font-size: 0.75rem; color: #666; text-align: center; margin-bottom: 3px; }
+    .form-cell input, .form-cell select {
+      width: 100%; font-size: 0.85rem; padding: 4px 2px;
+      border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; text-align: center;
+    }
+    .btn-row { display: flex; gap: 6px; margin-top: 6px; }
+    button { font-size: 0.85rem; padding: 5px 12px; border: none; border-radius: 4px; cursor: pointer; color: white; }
+    .btn-add    { background: #4a90e2; }
+    .btn-delete { background: #e74c3c; }
+
+    /* テーブル */
+    table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,0.1); font-size: 0.85rem; table-layout: fixed; }
+    th { background: #eee; padding: 7px 4px; text-align: center; border-bottom: 1px solid #ddd; }
+    td { padding: 6px 4px; text-align: center; border-bottom: 1px solid #f0f0f0; }
+    tr:hover td { background: #f0f8ff; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.8rem; font-weight: bold; background: #fdecea; color: #c0392b; }
+    .loading { text-align: center; padding: 20px; color: #888; }
+    .btn-del-row { background: #e74c3c; color: white; border: none; border-radius: 3px; padding: 3px 10px; cursor: pointer; font-size: 0.78rem; }
+    .empty-msg { text-align: center; padding: 20px; color: #aaa; }
+  </style>
+</head>
+<body>
+  <h1>🔧 車検管理</h1>
+  <a class="back" href="index.html">← メニューへ</a>
+  <div id="msg" class="msg"></div>
+
+  <div class="desc">
+    📋 車検（またはその他の理由）で使えない日を、車両ごとに登録します。登録した日は、盤面でその車を割り当てられなくなります。
+  </div>
+
+  <!-- 入力フォーム -->
+  <div class="form-box">
+    <div class="form-table">
+      <div class="form-cell" style="width:140px">
+        <label>車両</label>
+        <select id="f_car"><option value="">-- 選択 --</option></select>
+      </div>
+      <div class="form-cell" style="width:150px">
+        <label>使えない日</label>
+        <input type="date" id="f_date">
+      </div>
+      <div class="form-cell">
+        <label>メモ（任意）</label>
+        <input type="text" id="f_memo" placeholder="例：車検">
+      </div>
+    </div>
+    <div class="btn-row">
+      <button class="btn-add" onclick="addRow()">登録</button>
+    </div>
+  </div>
+
+  <!-- 一覧テーブル -->
+  <div id="loading" class="loading">読み込み中...</div>
+  <table id="main-table" style="display:none">
+    <thead>
+      <tr>
+        <th style="width:100px">日付</th>
+        <th>車両</th>
+        <th>メモ</th>
+        <th style="width:70px">操作</th>
+      </tr>
+    </thead>
+    <tbody id="tbody"></tbody>
+  </table>
+
+  <script>
+    let masters = {};
+    let rows = [];
+
+    async function init() {
+      masters = await loadMasters();
+      buildCarSelect();
+      await loadRows();
+    }
+
+    function buildCarSelect() {
+      const sel = document.getElementById('f_car');
+      masters.cars.forEach(c => {
+        const opt = document.createElement('option');
+        opt.value = c.car_code;
+        opt.textContent = c.car_no || c.car_code;
+        sel.appendChild(opt);
+      });
+    }
+
+    // 日付入力（yyyy-mm-dd）→ 盤面と同じ形式（yyyymmdd）に変換
+    function toDateStr(v) {
+      return (v || '').replaceAll('-', '');
+    }
+    function fromDateStr(v) {
+      if (!v || v.length !== 8) return '';
+      return `${v.slice(0,4)}-${v.slice(4,6)}-${v.slice(6,8)}`;
+    }
+    function formatDateLabel(v) {
+      if (!v || v.length !== 8) return v;
+      return `${v.slice(0,4)}年${parseInt(v.slice(4,6))}月${parseInt(v.slice(6,8))}日`;
+    }
+
+    async function loadRows() {
+      const { data, error } = await sb.from('shift_syaken').select('*').order('date');
+      if (error) { showMsg('データの読み込みに失敗しました: ' + error.message, 'err'); return; }
+      rows = data || [];
+      renderTable();
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('main-table').style.display = '';
+    }
+
+    function renderTable() {
+      const tbody = document.getElementById('tbody');
+      tbody.innerHTML = '';
+
+      if (rows.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="4" class="empty-msg">登録はありません</td></tr>';
+        return;
+      }
+
+      rows.forEach(r => {
+        const car = masters.carMap[r.car_code];
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td><span class="badge">${formatDateLabel(r.date)}</span></td>
+          <td>${car ? (car.car_no || car.car_code) : r.car_code}</td>
+          <td>${r.memo || '－'}</td>
+          <td><button class="btn-del-row" onclick="deleteRow(${r.id})">削除</button></td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    async function addRow() {
+      const carCode = document.getElementById('f_car').value;
+      const dateStr = toDateStr(document.getElementById('f_date').value);
+      const memo = document.getElementById('f_memo').value.trim();
+      if (!carCode) { showMsg('車両を選んでください', 'err'); return; }
+      if (!dateStr) { showMsg('日付を選んでください', 'err'); return; }
+
+      const exists = rows.find(r => r.car_code === carCode && r.date === dateStr);
+      if (exists) { showMsg('その車・その日はすでに登録されています', 'err'); return; }
+
+      const { error } = await sb.from('shift_syaken').insert({ car_code: carCode, date: dateStr, memo: memo || null });
+      if (error) { showMsg('登録に失敗しました: ' + error.message, 'err'); return; }
+      showMsg('登録しました', 'ok');
+      document.getElementById('f_memo').value = '';
+      await loadRows();
+    }
+
+    async function deleteRow(id) {
+      if (!confirm('この登録を削除しますか？')) return;
+      const { error } = await sb.from('shift_syaken').delete().eq('id', id);
+      if (error) { showMsg('削除に失敗しました: ' + error.message, 'err'); return; }
+      showMsg('削除しました', 'ok');
+      await loadRows();
+    }
+
+    function showMsg(text, type) {
+      const el = document.getElementById('msg');
+      el.textContent = text;
+      el.className = `msg ${type}`;
+      setTimeout(() => { el.className = 'msg'; }, 3000);
+    }
+
+    init();
+  </script>
+</body>
+</html>
