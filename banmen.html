@@ -447,12 +447,18 @@
       const driverInserts = {}; // 新規insert用: key: bushoCode|rowNo
       const fieldUpdates = [];  // 既存行への補完update用: { id, field, staff_code }
 
+      // すでにこの日の盤面で使われている車を集めておく（自動配置で重複させないため）
+      const carsAssignedToday = new Set(
+        banmenData.filter(r => r.car_code).map(r => r.car_code)
+      );
+
       // 運転者の社員コード→車番（社員マスタに紐づく車両）を引けるようにしておく
       function getLinkedCar(staffCode) {
         const staff = staffRows.find(s => s.staff_code === staffCode);
         const car = staff?.car_code;
         if (!car || car === 'EMPTY') return null;
         if (syakenCarCodes.has(car)) return null; // 車検などで使えない車は自動セットしない
+        if (carsAssignedToday.has(car)) return null; // すでに他の人にこの日割り当て済みの車は重複させない
         return car;
       }
 
@@ -468,7 +474,10 @@
             // 運転者を新しく入れる時、車番欄がまだ空なら車番も一緒に補完する
             if (field === 'driver' && !existingRow.car_code) {
               const linkedCar = getLinkedCar(staff_code);
-              if (linkedCar) fieldUpdates.push({ id: existingRow.id, field: 'car_code', staff_code: linkedCar });
+              if (linkedCar) {
+                fieldUpdates.push({ id: existingRow.id, field: 'car_code', staff_code: linkedCar });
+                carsAssignedToday.add(linkedCar);
+              }
             }
           }
           return;
@@ -481,7 +490,10 @@
         // 運転者を新規に配置する場合、車番も一緒にセットする
         if (field === 'driver' && !driverInserts[key].car_code) {
           const linkedCar = getLinkedCar(staff_code);
-          if (linkedCar) driverInserts[key].car_code = linkedCar;
+          if (linkedCar) {
+            driverInserts[key].car_code = linkedCar;
+            carsAssignedToday.add(linkedCar);
+          }
         }
       });
 
@@ -1140,8 +1152,12 @@
         const staff = staffRows.find(s => s.staff_code === dragInfo.code);
         const linkedCar = staff?.car_code;
         const currentCarCode = existing?.car_code;
-        // すでに車番欄が埋まっていなければ自動セット
-        if (linkedCar && linkedCar !== 'EMPTY' && !currentCarCode) {
+        // すでに他の行でこの車が使われていないか確認（重複防止）
+        const carUsedElsewhere = linkedCar && banmenData.some(r =>
+          r.car_code === linkedCar && r.id !== existing?.id
+        );
+        // すでに車番欄が埋まっておらず、他で使われておらず、車検などでも使えなければ自動セット
+        if (linkedCar && linkedCar !== 'EMPTY' && !currentCarCode && !carUsedElsewhere && !syakenCarCodes.has(linkedCar)) {
           updateData.car_code = linkedCar;
         }
       }

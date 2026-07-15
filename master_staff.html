@@ -238,6 +238,14 @@
         overtime_limit: parseInt(document.getElementById('f_overtime').value) || 80,
         is_admin:       document.getElementById('f_is_admin').value === 'true',
       };
+      // 同じ車両が別の在籍社員にすでに登録されていないかチェック
+      if (data.car_code) {
+        const carConflict = rows.find(r => r.car_code === data.car_code && r.staff_code !== code && !r.retired);
+        if (carConflict) {
+          showMsg(`この車両はすでに「${carConflict.name || carConflict.staff_code}」さんに登録されています`, 'err');
+          return;
+        }
+      }
       if (mode === 'add') {
         const exists = rows.find(r => r.staff_code === code);
         if (exists) { showMsg(`社員コード「${code}」はすでに存在します`, 'err'); return; }
