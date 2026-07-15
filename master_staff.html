@@ -155,13 +155,26 @@
         opt.textContent = b.busho_name;
         bushoSel.appendChild(opt);
       });
+      buildCarSelect('');
+    }
+
+    // 車両の選択肢を作る（所属フィルターがかかっていれば、その所属の車両だけに絞る）
+    function buildCarSelect(bushoCode) {
       const carSel = document.getElementById('f_car');
-      masters.cars.filter(c => c.is_active).forEach(c => {
-        const opt = document.createElement('option');
-        opt.value = c.car_code;
-        opt.textContent = c.car_no || c.car_code;
-        carSel.appendChild(opt);
-      });
+      const prevValue = carSel.value;
+      carSel.innerHTML = '<option value="">-- 未選択 --</option>';
+      masters.cars
+        .filter(c => c.is_active && (!bushoCode || c.busho_code === bushoCode))
+        .forEach(c => {
+          const opt = document.createElement('option');
+          opt.value = c.car_code;
+          opt.textContent = c.car_no || c.car_code;
+          carSel.appendChild(opt);
+        });
+      // 絞り込み後も、元々選ばれていた車両が選択肢に残っていれば選び直しておく
+      if ([...carSel.options].some(o => o.value === prevValue)) {
+        carSel.value = prevValue;
+      }
     }
 
     async function loadRows() {
@@ -223,6 +236,7 @@
       document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
       if (btn) btn.classList.add('active');
       else document.querySelector('.filter-btn').classList.add('active');
+      buildCarSelect(bushoCode);
       renderTable();
     }
 
