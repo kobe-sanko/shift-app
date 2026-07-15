@@ -69,7 +69,7 @@
       </div>
       <div class="form-cell" style="width:110px">
         <label>所属</label>
-        <select id="f_busho"><option value="">-- 未選択 --</option></select>
+        <select id="f_busho" onchange="buildCarSelect(this.value)"><option value="">-- 未選択 --</option></select>
       </div>
       <div class="form-cell" style="width:110px">
         <label>車両</label>
@@ -224,6 +224,7 @@
       document.getElementById('f_code').value     = r.staff_code || '';
       document.getElementById('f_name').value     = r.name || '';
       document.getElementById('f_busho').value    = r.busho_code || '';
+      buildCarSelect(r.busho_code || '');
       document.getElementById('f_car').value      = r.car_code || '';
       document.getElementById('f_retired').value  = r.retired ? 'true' : 'false';
       document.getElementById('f_overtime').value = r.overtime_limit || 80;
