@@ -428,7 +428,7 @@
           .gte('date', dateFrom).lte('date', dateTo).not('smaho', 'is', null),
         sb.from('shift_banmen_config').select('busho_code, osoban_row').eq('gyomu_code', '配送').gt('osoban_row', 0),
         sb.from('shift_hyoji_jun').select('*'),
-        sb.from('shift_syaken').select('car_code, date').gte('date', dateFrom).lte('date', dateTo),
+        sb.from('shift_syaken').select('car_code, date, memo').gte('date', dateFrom).lte('date', dateTo),
       ]);
 
       staffRows = (staffRes.data || []).filter(s => !s.retired);
@@ -460,14 +460,17 @@
         chibanCodes.add(`${r.busho_code}-2${row}`);
       });
 
-      // 車検（使えない車）：日付(yyyymmdd) → その日使えない車番の配列
+      // 車検・修理（使えない車）：日付(yyyymmdd) → その日使えない車番＋理由の配列
       syakenByDay = {};
       (syakenRes.data || []).forEach(r => {
         const day = parseInt(r.date.slice(6, 8));
         const key = `d${String(day).padStart(2, '0')}`;
         if (!syakenByDay[key]) syakenByDay[key] = [];
         const car = masters.carMap[r.car_code];
-        syakenByDay[key].push(car ? (car.car_no || car.car_code) : r.car_code);
+        const carLabel = car ? (car.car_no || car.car_code) : r.car_code;
+        const reason = r.memo || '車検';
+        // 車検はこれまで通り車番だけ、それ以外の理由は区別できるようカッコで添える
+        syakenByDay[key].push(reason === '車検' ? carLabel : `${carLabel}(${reason})`);
       });
 
       buildHeader();
@@ -598,7 +601,7 @@
       // 車検（使えない車）行：全社員共通で1行、一番下に表示
       const syakenTr = document.createElement('tr');
       syakenTr.id = 'syaken-row';
-      let syakenHtml = `<td class="name-td" style="font-weight:bold;color:#c0392b">🔧 車検</td><td></td>`;
+      let syakenHtml = `<td class="name-td" style="font-weight:bold;color:#c0392b">🔧 車検・修理</td><td></td>`;
       for (let d = 1; d <= daysInMonth; d++) {
         const key = `d${String(d).padStart(2,'0')}`;
         const cls = getDayClass(d);

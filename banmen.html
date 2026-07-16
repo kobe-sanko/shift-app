@@ -262,7 +262,7 @@
     let boardBushoCodes = new Set(); // 今の盤面に表示されている所属コード
     let staffFilterMode = 'relevant'; // 'relevant'=関連のみ / 'all'=全員
     let carFilterMode = 'relevant';   // 'relevant'=関連のみ / 'all'=全車両
-    let syakenCarCodes = new Set();  // この日、車検などで使えない車のcar_code集合
+    let syakenCarCodes = new Map();  // この日、車検・修理などで使えない車のcar_code→理由（車検/修理/その他の自由記述）
     let dialogResolve = null;
     let gyomuReverseMap = {}; // bushoCode|gyomuName → gyomu_code（業務シフト同期用）
     let currentDayCol = '';   // その日のd列名（d01〜d31）
@@ -324,11 +324,11 @@
         sb.from('shift_gyomu').select('gyomu_code, busho_code, gyomu_name'),
         sb.from('shift_gyomu_shift').select(`staff_code, ${dayCol}`).eq('yearmonth', yearMonth),
         sb.from('shift_busho_tekisei').select('staff_code, busho_code'),
-        sb.from('shift_syaken').select('car_code').eq('date', dateStr),
+        sb.from('shift_syaken').select('car_code, memo').eq('date', dateStr),
       ]);
 
-      // この日、車検などで使えない車の集合
-      syakenCarCodes = new Set((syakenRes.data || []).map(r => r.car_code));
+      // この日、車検・修理などで使えない車 → 理由のマップ
+      syakenCarCodes = new Map((syakenRes.data || []).map(r => [r.car_code, r.memo || '車検']));
 
       staffRows = (staffRes.data || []).filter(s => !s.retired);
       // 車番は数字として並べ直す（3桁・4桁が混ざらないように）
@@ -1011,7 +1011,7 @@
     function buildSyakenCard(cfg) {
       const card = document.createElement('div');
       card.className = 'yasumi-card';
-      card.innerHTML = `<div class="yasumi-header" style="color:#e67e22">🔧 車検</div>`;
+      card.innerHTML = `<div class="yasumi-header" style="color:#e67e22">🔧 車検・修理</div>`;
 
       const body = document.createElement('div');
       body.className = 'yasumi-body';
@@ -1021,12 +1021,18 @@
       } else {
         const list = document.createElement('div');
         list.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px;padding:2px;';
-        [...syakenCarCodes].forEach(carCode => {
+        // 理由ごとに色を変える（車検＝赤系、修理＝黄系、それ以外＝グレー）
+        const REASON_STYLE = {
+          '車検': { bg: '#fdecea', col: '#c0392b' },
+          '修理': { bg: '#fff3cd', col: '#8a6d1d' },
+        };
+        [...syakenCarCodes.entries()].forEach(([carCode, reason]) => {
           const car = masters.carMap[carCode];
-          const label = car ? (car.car_no || car.car_code) : carCode;
+          const carLabel = car ? (car.car_no || car.car_code) : carCode;
+          const style = REASON_STYLE[reason] || { bg: '#e8e8e8', col: '#555' };
           const chip = document.createElement('span');
-          chip.style.cssText = 'background:#fdecea;color:#c0392b;font-size:0.75rem;font-weight:bold;padding:3px 8px;border-radius:3px;';
-          chip.textContent = label;
+          chip.style.cssText = `background:${style.bg};color:${style.col};font-size:0.75rem;font-weight:bold;padding:3px 8px;border-radius:3px;`;
+          chip.textContent = `${carLabel}（${reason}）`;
           list.appendChild(chip);
         });
         body.appendChild(list);
@@ -1105,9 +1111,9 @@
       if (acceptType === 'car' && dragInfo.type !== 'car') { showMsg('ここには車両をドロップしてください', 'err'); return; }
       if (acceptType === 'staff' && dragInfo.type === 'car') { showMsg('ここには社員または派遣をドロップしてください', 'err'); return; }
 
-      // 車検などで使えない車はここで弾く
+      // 車検・修理などで使えない車はここで弾く
       if (dragInfo.type === 'car' && syakenCarCodes.has(dragInfo.code)) {
-        showMsg('この車はこの日は車検などで使えません', 'err');
+        showMsg(`この車はこの日は${syakenCarCodes.get(dragInfo.code)}のため使えません`, 'err');
         return;
       }
 
@@ -1234,7 +1240,7 @@
 
       // 業務シフト同期（社員の配置変更時。スマホ欄は対象外）
       if (dragInfo.type === 'staff' && field !== 'smaho') {
-        const newGyomuCode = resolveGyomuCode(bushoCode, gyomuCode, rowNo, field);
+        const newGyomuCode = await resolveOrCreateGyomuCode(bushoCode, gyomuCode, rowNo, field);
 
         // 盤面内移動の場合：移動先の業務コードを書く（元の場所は自動的に上書きされる）
         if (dragInfo.fromBusho && !(
@@ -1301,30 +1307,75 @@
     async function syncGyomuShift(staffCode, gyomuCode) {
       if (!staffCode || !currentDayCol) return;
       const yearMonth = getYearMonth(currentDate);
-      const { error } = await sb.from('shift_gyomu_shift')
-        .update({ [currentDayCol]: gyomuCode })
-        .eq('staff_code', staffCode)
-        .eq('yearmonth', yearMonth);
+      // その社員・その月の行がまだなければ新規作成、あれば更新する
+      const { data: existing } = await sb.from('shift_gyomu_shift')
+        .select('yearmonth')
+        .eq('staff_code', staffCode).eq('yearmonth', yearMonth).maybeSingle();
+
+      let error;
+      if (existing) {
+        ({ error } = await sb.from('shift_gyomu_shift')
+          .update({ [currentDayCol]: gyomuCode })
+          .eq('staff_code', staffCode).eq('yearmonth', yearMonth));
+      } else {
+        ({ error } = await sb.from('shift_gyomu_shift')
+          .insert({ staff_code: staffCode, yearmonth: yearMonth, [currentDayCol]: gyomuCode }));
+      }
       if (error) {
         console.error('業務シフトの同期に失敗しました', error);
       }
     }
 
+    // 色を白に近づけて薄くする（業務マスタの自動登録で使う。master_gyomu.htmlの「所属色から自動生成」と同じ計算）
+    function lightenColor(hex, ratio) {
+      const r = parseInt(hex.slice(1, 3), 16);
+      const g = parseInt(hex.slice(3, 5), 16);
+      const b = parseInt(hex.slice(5, 7), 16);
+      const nr = Math.round(r + (255 - r) * ratio);
+      const ng = Math.round(g + (255 - g) * ratio);
+      const nb = Math.round(b + (255 - b) * ratio);
+      return '#' + [nr, ng, nb].map(v => v.toString(16).padStart(2, '0')).join('').toUpperCase();
+    }
+
     // 盤面のfield（driver/jyoshu1など）と配置場所から業務コードを特定する
     // 例：bushoCode=805, gyomuCode=配送, rowNo=1, field=driver → 805-11（運転1）
-    function resolveGyomuCode(bushoCode, gyomuCode, rowNo, field) {
+    // 業務マスタにまだ登録されていない場合は、盤面の配置内容からそのまま自動登録する
+    async function resolveOrCreateGyomuCode(bushoCode, gyomuCode, rowNo, field) {
       if (bushoCode === 'お休み') {
         const KYUJITSU_CODE = { '休日': '901', '有休': '902', '健診': '903' };
         return KYUJITSU_CODE[gyomuCode] || null;
       }
+
+      let gyomuName, codeSuffix;
       if (gyomuCode === '配送') {
-        const gyomuName = field === 'driver' ? `運転${rowNo}` : `助手${rowNo}`;
-        return gyomuReverseMap[bushoCode + '|' + gyomuName] || null;
+        const isDriver = field === 'driver';
+        gyomuName = (isDriver ? '運転' : '助手') + rowNo;
+        codeSuffix = (isDriver ? '1' : '2') + rowNo;
+      } else if (gyomuCode === '倉庫' || gyomuCode === '事務') {
+        gyomuName = gyomuCode;
+        codeSuffix = gyomuCode === '倉庫' ? '03' : '04';
+      } else {
+        return null;
       }
-      if (gyomuCode === '倉庫' || gyomuCode === '事務') {
-        return gyomuReverseMap[bushoCode + '|' + gyomuCode] || null;
+
+      const existingCode = gyomuReverseMap[bushoCode + '|' + gyomuName];
+      if (existingCode) return existingCode;
+
+      // 業務マスタに該当がない → 盤面の配置内容からそのまま新規登録する
+      const newCode = `${bushoCode}-${codeSuffix}`;
+      const busho = masters.bushoMap[bushoCode];
+      const color = busho?.color_h ? lightenColor(busho.color_h, 0.4) : '#CCCCCC';
+      const { error } = await sb.from('shift_gyomu').insert({
+        gyomu_code: newCode, busho_code: bushoCode, gyomu_name: gyomuName, color_h: color, is_active: true,
+      });
+      if (error) {
+        console.error('業務マスタの自動登録に失敗しました', error);
+        showMsg('業務マスタへの自動登録に失敗しました: ' + error.message, 'err');
+        return null;
       }
-      return null;
+      gyomuReverseMap[bushoCode + '|' + gyomuName] = newCode;
+      showMsg(`業務マスタに未登録だったため「${busho?.busho_name || bushoCode} / ${gyomuName}」を自動登録しました`, 'ok');
+      return newCode;
     }
 
     // ===== 1枚の業務ブロックに必要な列数 =====

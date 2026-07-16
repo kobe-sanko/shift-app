@@ -35,6 +35,36 @@
     .btn-copy { background: #3498db; color: white; border: none; border-radius: 4px; padding: 5px 12px; font-size: 0.82rem; cursor: pointer; }
     .btn-save { background: #27ae60; color: white; border: none; border-radius: 4px; padding: 5px 18px; font-size: 0.82rem; cursor: pointer; }
     .loading { text-align: center; padding: 20px; color: #888; }
+
+    /* レイアウト（左：業務リスト／右：表） */
+    .main-layout { display: flex; gap: 8px; align-items: flex-start; }
+
+    /* 業務リスト（左側） */
+    .gyomu-list-panel {
+      width: 80px; flex-shrink: 0; background: white; border-radius: 6px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.1); padding: 6px 4px;
+      max-height: 80vh; overflow-y: auto; user-select: none;
+    }
+    .gyomu-list-title { font-size: 0.72rem; color: #888; text-align: center; margin-bottom: 6px; border-bottom: 1px solid #eee; padding-bottom: 4px; }
+    .gyomu-item {
+      display: block; padding: 3px 4px; margin-bottom: 3px; border-radius: 3px;
+      font-size: 0.72rem; font-weight: bold; text-align: center; cursor: grab; word-break: break-all;
+    }
+    .gyomu-item:active { cursor: grabbing; opacity: 0.7; }
+    .gyomu-item.no-tekisei { opacity: 0.5; border: 1px dashed #aaa; }
+
+    .table-wrap { flex: 1; min-width: 0; }
+    td.drop-over { background: #fffacd !important; outline: 2px dashed #f39c12; }
+
+    /* 確認ダイアログ */
+    .dialog-overlay { display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.4); z-index:1000; align-items:center; justify-content:center; }
+    .dialog-overlay.show { display:flex; }
+    .dialog-box { background:white; border-radius:8px; padding:24px; max-width:320px; text-align:center; box-shadow:0 4px 20px rgba(0,0,0,0.3); }
+    .dialog-box p { margin:0 0 16px; font-size:0.9rem; line-height:1.5; white-space: pre-line; }
+    .dialog-btns { display:flex; gap:10px; justify-content:center; }
+    .dialog-btns button { padding:8px 20px; border:none; border-radius:4px; cursor:pointer; font-size:0.85rem; font-weight:bold; }
+    .btn-ok { background:#e67e22; color:white; }
+    .btn-cancel { background:#95a5a6; color:white; }
   </style>
 </head>
 <body>
@@ -47,16 +77,43 @@
   </div>
 
   <div id="loading" class="loading">読み込み中...</div>
-  <table id="main-table" style="display:none">
-    <thead>
-      <tr>
-        <th style="width:90px">社員コード</th>
-        <th style="width:120px">氏名</th>
-        <th>日</th><th>月</th><th>火</th><th>水</th><th>木</th><th>金</th><th>土</th>
-      </tr>
-    </thead>
-    <tbody id="tbody"></tbody>
-  </table>
+
+  <div class="main-layout">
+    <div class="gyomu-list-panel" id="gyomu-list-panel">
+      <div class="gyomu-list-title">業務リスト</div>
+      <div style="text-align:center;margin-bottom:6px;">
+        <select id="gyomu-list-mode" onchange="buildGyomuList(selectedCode)" style="font-size:0.68rem;width:100%;padding:2px;">
+          <option value="">全部</option>
+        </select>
+      </div>
+      <div id="gyomu-list-items"></div>
+    </div>
+    <div class="table-wrap">
+      <table id="main-table" style="display:none">
+        <thead>
+          <tr>
+            <th style="width:90px">社員コード</th>
+            <th style="width:120px">氏名</th>
+            <th>日</th><th>月</th><th>火</th><th>水</th><th>木</th><th>金</th><th>土</th>
+          </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="dialog-overlay" id="dialog">
+    <div class="dialog-box">
+      <p id="dialog-msg"></p>
+      <div id="dialog-checkbox-row" style="text-align:left;font-size:0.85rem;margin:8px 0;">
+        <label><input type="checkbox" id="dialog-checkbox" checked> この組み合わせを、業務適性にも登録する</label>
+      </div>
+      <div class="dialog-btns">
+        <button class="btn-ok" onclick="dialogOk()">入力する</button>
+        <button class="btn-cancel" onclick="dialogCancel()">キャンセル</button>
+      </div>
+    </div>
+  </div>
 
   <script>
     const DAYS = ['sun','mon','tue','wed','thu','fri','sat'];
@@ -68,11 +125,169 @@
     let tekiseiMap = {};
     let selectedCode = null;
     let currentFilter = '';
+    let dragGyomuCode = null;
+    let dialogResolve = null;
 
     async function init() {
       masters = await loadMasters();
       buildFilterButtons();
+      buildGyomuListModeSelect();
+      initTbodyEvents();
       await loadRows();
+      buildGyomuList(selectedCode);
+    }
+
+    // 業務リストの絞り込みプルダウンに、全所属を追加する
+    function buildGyomuListModeSelect() {
+      const sel = document.getElementById('gyomu-list-mode');
+      masters.bushos.filter(b => !b.busho_code.startsWith('9')).forEach(b => {
+        const opt = document.createElement('option');
+        opt.value = b.busho_code;
+        opt.textContent = b.busho_name;
+        sel.appendChild(opt);
+      });
+    }
+
+    // ===== 業務リスト（左側）=====
+    function buildGyomuList(staffCode) {
+      const panel = document.getElementById('gyomu-list-items');
+      panel.innerHTML = '';
+
+      const tekiseiCodes = new Set(staffCode ? (tekiseiMap[staffCode] || []) : []);
+
+      // 空白
+      const emptyItem = document.createElement('div');
+      emptyItem.className = 'gyomu-item';
+      emptyItem.style.cssText = 'background:#eee;color:#888';
+      emptyItem.textContent = '空白';
+      emptyItem.draggable = true;
+      emptyItem.addEventListener('dragstart', e => { dragGyomuCode = ''; e.dataTransfer.effectAllowed = 'copy'; });
+      panel.appendChild(emptyItem);
+
+      // 業務一覧（プルダウンで選んだ所属だけに絞り込む。空欄なら全部）
+      const listMode = document.getElementById('gyomu-list-mode')?.value || '';
+      const gyomuTargets = (masters.gyomus || [])
+        .filter(g => g.is_active !== false)
+        .filter(g => !listMode || g.busho_code === listMode)
+        .sort((a, b) => a.gyomu_code.localeCompare(b.gyomu_code, undefined, { numeric: true }));
+      gyomuTargets.forEach(g => {
+        const hasTekisei = !staffCode || tekiseiCodes.has(g.gyomu_code);
+        const item = document.createElement('div');
+        item.className = 'gyomu-item' + (hasTekisei ? '' : ' no-tekisei');
+        const color = g.color_h || '#ccc';
+        item.style.background = color;
+        item.style.color = getTextColor(color);
+        item.textContent = g.gyomu_name;
+        item.title = hasTekisei ? g.gyomu_name : `${g.gyomu_name}（適性なし）`;
+        item.draggable = true;
+        item.addEventListener('dragstart', e => { dragGyomuCode = g.gyomu_code; e.dataTransfer.effectAllowed = 'copy'; });
+        panel.appendChild(item);
+      });
+
+      // 休日など
+      Object.entries(KYUJITSU_MAP).forEach(([code, label]) => {
+        const item = document.createElement('div');
+        item.className = 'gyomu-item';
+        item.style.cssText = 'background:#e0e0e0;color:#c0392b';
+        item.textContent = label;
+        item.draggable = true;
+        item.addEventListener('dragstart', e => { dragGyomuCode = code; e.dataTransfer.effectAllowed = 'copy'; });
+        panel.appendChild(item);
+      });
+    }
+
+    // ===== tbodyのドラッグ＆ドロップ（1回だけ設定） =====
+    function initTbodyEvents() {
+      const tbody = document.getElementById('tbody');
+      tbody.addEventListener('dragover', e => {
+        const td = e.target.closest('td.shift-td');
+        if (!td) return;
+        e.preventDefault();
+        document.querySelectorAll('td.drop-over').forEach(el => el.classList.remove('drop-over'));
+        td.classList.add('drop-over');
+      });
+      tbody.addEventListener('dragleave', e => {
+        const td = e.target.closest('td.shift-td');
+        if (td) td.classList.remove('drop-over');
+      });
+      tbody.addEventListener('drop', async e => {
+        const td = e.target.closest('td.shift-td');
+        if (!td) return;
+        e.preventDefault();
+        td.classList.remove('drop-over');
+        const staffCode = td.dataset.staff;
+        const dayKey = td.dataset.key;
+        const gyomuCode = dragGyomuCode;
+        if (gyomuCode === undefined || gyomuCode === null) return;
+
+        if (gyomuCode === '') { await applyDrop(staffCode, dayKey, null); return; }
+        if (parseInt(gyomuCode) >= 900) { await applyDrop(staffCode, dayKey, gyomuCode); return; }
+
+        const tekisei = tekiseiMap[staffCode] || [];
+        const hasTekisei = tekisei.includes(gyomuCode);
+        if (!hasTekisei) {
+          const staffName = staffRows.find(s => s.staff_code === staffCode)?.name || staffCode;
+          const gyomuName = masters.gyomuMap[gyomuCode]?.gyomu_name || gyomuCode;
+          const result = await showDialog(`「${staffName}」は「${gyomuName}」の業務適性がありません。\nそれでも入力しますか？`, true);
+          if (!result.ok) return;
+          if (result.register) {
+            const bushoCode = masters.gyomuMap[gyomuCode]?.busho_code || null;
+            const { error } = await sb.from('shift_gyomu_tekisei')
+              .insert({ staff_code: staffCode, busho_code: bushoCode, gyomu_code: gyomuCode });
+            if (!error) {
+              tekiseiMap[staffCode] = [...tekisei, gyomuCode];
+            }
+            // 所属適性にまだ登録されていなければ、あわせて登録する
+            if (bushoCode) {
+              const { data: existingBusho } = await sb.from('shift_busho_tekisei')
+                .select('id').eq('staff_code', staffCode).eq('busho_code', bushoCode).maybeSingle();
+              if (!existingBusho) {
+                await sb.from('shift_busho_tekisei').insert({ staff_code: staffCode, busho_code: bushoCode });
+              }
+            }
+          }
+        }
+        await applyDrop(staffCode, dayKey, gyomuCode);
+      });
+    }
+
+    // ドロップされた内容を、その場でデータベースに保存する（1曜日分だけ）
+    async function applyDrop(staffCode, dayKey, gyomuCode) {
+      const exists = baseMap[staffCode];
+      let error;
+      if (exists) {
+        ({ error } = await sb.from('shift_base_gyomu').update({ [dayKey + '_gyomu']: gyomuCode }).eq('staff_code', staffCode));
+      } else {
+        const initData = { staff_code: staffCode };
+        DAYS.forEach(d => { initData[d + '_gyomu'] = d === dayKey ? gyomuCode : null; });
+        ({ error } = await sb.from('shift_base_gyomu').insert(initData));
+      }
+      if (error) { showMsg('保存に失敗しました: ' + error.message, 'err'); return; }
+      if (!baseMap[staffCode]) baseMap[staffCode] = { staff_code: staffCode };
+      baseMap[staffCode][dayKey + '_gyomu'] = gyomuCode;
+      showMsg('保存しました', 'ok');
+      renderTable();
+    }
+
+    // ===== ダイアログ =====
+    function showDialog(msg, showCheckbox = false) {
+      return new Promise(resolve => {
+        document.getElementById('dialog-msg').textContent = msg;
+        const row = document.getElementById('dialog-checkbox-row');
+        row.style.display = showCheckbox ? 'block' : 'none';
+        document.getElementById('dialog-checkbox').checked = true;
+        document.getElementById('dialog').classList.add('show');
+        dialogResolve = resolve;
+      });
+    }
+    function dialogOk() {
+      document.getElementById('dialog').classList.remove('show');
+      const register = document.getElementById('dialog-checkbox').checked;
+      if (dialogResolve) dialogResolve({ ok: true, register });
+    }
+    function dialogCancel() {
+      document.getElementById('dialog').classList.remove('show');
+      if (dialogResolve) dialogResolve({ ok: false, register: false });
     }
 
     function buildFilterButtons() {
@@ -191,7 +406,7 @@
 
         let html = `<td>${s.staff_code}</td><td>${s.name || ''}</td>`;
         DAYS.forEach(d => {
-          html += `<td>${getBadgeHtml(base[d + '_gyomu'])}</td>`;
+          html += `<td class="shift-td" data-staff="${s.staff_code}" data-key="${d}">${getBadgeHtml(base[d + '_gyomu'])}</td>`;
         });
         tr.innerHTML = html;
         tbody.appendChild(tr);
@@ -230,6 +445,7 @@
         selectedCode = staff.staff_code;
       }
       renderTable();
+      buildGyomuList(selectedCode);
       if (selectedCode) {
         // 選択行にスクロール
         const rows = document.querySelectorAll('tr.selected');

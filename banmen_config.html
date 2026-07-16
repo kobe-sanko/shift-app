@@ -180,12 +180,12 @@
       const container = document.getElementById('config-items');
       container.innerHTML = '';
 
-      // 所属ごとにまとめる（お休み・応援は特殊扱い）
+      // 所属ごとにまとめる（お休み・応援・車検は特殊扱い）
       const bushoGroups = {}; // busho_code → { items: [] }
-      const specialItems = []; // sp_jun=99(お休み) or 98(応援)
+      const specialItems = []; // sp_jun=99(お休み) or 98(応援) or 97(車検)
 
       configData.forEach(r => {
-        if (r.sp_jun === 99 || r.sp_jun === 98) {
+        if (r.sp_jun === 99 || r.sp_jun === 98 || r.sp_jun === 97) {
           specialItems.push(r);
           return;
         }
@@ -259,12 +259,12 @@
         container.appendChild(div);
       });
 
-      // 特殊ブロック（お休み・応援）を末尾に固定表示
-      specialItems.sort((a, b) => b.sp_jun - a.sp_jun); // 99(お休み)→98(応援)の順
+      // 特殊ブロック（お休み・応援・車検）を末尾に固定表示
+      specialItems.sort((a, b) => b.sp_jun - a.sp_jun); // 99(お休み)→98(応援)→97(車検)の順
       specialItems.forEach(r => {
         const isOyasumi = r.sp_jun === 99;
-        const label = isOyasumi ? 'お休み' : '応援';
-        const bgColor = isOyasumi ? '#888' : '#27ae60';
+        const label = isOyasumi ? 'お休み' : r.sp_jun === 98 ? '応援' : '車検・修理';
+        const bgColor = isOyasumi ? '#888' : r.sp_jun === 98 ? '#27ae60' : '#e67e22';
         const colNo = (r.col_no ?? 0) + 1;
         const rowNo = (r.row_no ?? 0) + 1;
         const spJun = r.sp_jun;
@@ -285,6 +285,35 @@
           <div></div>`;
         container.appendChild(div);
       });
+
+      // 車検カードがまだなければ、追加ボタンを出す
+      if (!specialItems.some(r => r.sp_jun === 97)) {
+        const addDiv = document.createElement('div');
+        addDiv.style.cssText = 'text-align:center;padding:10px;';
+        addDiv.innerHTML = `<button class="btn" style="background:#e67e22;color:white;" onclick="addSyakenCard()">＋ 車検・修理カードを追加</button>`;
+        container.appendChild(addDiv);
+      }
+    }
+
+    // 車検カードを一覧に追加する（保存を押すまでは画面上だけの状態）
+    function addSyakenCard() {
+      const container = document.getElementById('config-items');
+      const div = document.createElement('div');
+      div.className = 'config-item special-item';
+      div.dataset.busho = '車検';
+      div.dataset.spJun = 97;
+      div.innerHTML = `
+        <div><span class="busho-badge" style="background:#e67e22;color:white">車検・修理</span></div>
+        <div style="font-size:0.8rem;color:#888;">配置のみ</div>
+        <div style="text-align:center;"><input type="number" class="inp-small inp-col" value="1" min="1" max="21" onclick="event.stopPropagation()"></div>
+        <div style="text-align:center;"><input type="number" class="inp-small inp-row" value="1" min="1" max="21" onclick="event.stopPropagation()"></div>
+        <div style="text-align:center;"><input type="number" class="inp-small inp-sp"  value="97" min="0" max="999" onclick="event.stopPropagation()" readonly style="background:#eee"></div>
+        <div></div>`;
+      container.appendChild(div);
+
+      // 追加ボタンは不要になるので消す
+      const btns = container.querySelectorAll('button');
+      btns.forEach(b => { if (b.textContent.includes('車検カードを追加')) b.closest('div').remove(); });
     }
 
     // 行クリックでフォームに読み込む
@@ -514,7 +543,7 @@
         const rowNo = (parseInt(el.querySelector('.inp-row')?.value) || 1) - 1;
         const ncols = parseInt(el.querySelector('.inp-ncols')?.value) || 1;
         records.push({
-          busho_code: spJun === 99 ? 'お休み' : '応援',
+          busho_code: spJun === 99 ? 'お休み' : spJun === 98 ? '応援' : '車検',
           gyomu_code: '特殊',
           row_count: ncols, jyoshu_count: 0, osoban_row: 0,
           hyoji_jun: hyojiJun++, col_no: colNo, row_no: rowNo,

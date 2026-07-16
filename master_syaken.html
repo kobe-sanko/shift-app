@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>車検管理</title>
+  <title>車検・修理管理</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="common.js"></script>
   <style>
@@ -41,12 +41,12 @@
   </style>
 </head>
 <body>
-  <h1>🔧 車検管理</h1>
+  <h1>🔧 車検・修理管理</h1>
   <a class="back" href="index.html">← メニューへ</a>
   <div id="msg" class="msg"></div>
 
   <div class="desc">
-    📋 車検（またはその他の理由）で使えない日を、車両ごとに登録します。登録した日は、盤面でその車を割り当てられなくなります。
+    📋 車検・修理などで使えない日を、車両ごとに登録します。登録した日は、盤面でその車を割り当てられなくなります。
   </div>
 
   <!-- 入力フォーム -->
@@ -60,9 +60,17 @@
         <label>使えない日</label>
         <input type="date" id="f_date">
       </div>
-      <div class="form-cell">
-        <label>メモ（任意）</label>
-        <input type="text" id="f_memo" placeholder="例：車検">
+      <div class="form-cell" style="width:110px">
+        <label>理由</label>
+        <select id="f_reason" onchange="onReasonChange()">
+          <option value="車検">車検</option>
+          <option value="修理">修理</option>
+          <option value="その他">その他（自由入力）</option>
+        </select>
+      </div>
+      <div class="form-cell" id="f_memo_cell" style="display:none">
+        <label>内容</label>
+        <input type="text" id="f_memo" placeholder="例：バッテリー交換">
       </div>
     </div>
     <div class="btn-row">
@@ -77,7 +85,7 @@
       <tr>
         <th style="width:100px">日付</th>
         <th>車両</th>
-        <th>メモ</th>
+        <th>理由</th>
         <th style="width:70px">操作</th>
       </tr>
     </thead>
@@ -102,6 +110,24 @@
         opt.textContent = c.car_no || c.car_code;
         sel.appendChild(opt);
       });
+    }
+
+    // 理由が「その他」のときだけ、自由入力欄を表示する
+    function onReasonChange() {
+      const isOther = document.getElementById('f_reason').value === 'その他';
+      document.getElementById('f_memo_cell').style.display = isOther ? '' : 'none';
+    }
+
+    // 理由の種類ごとの表示色
+    const REASON_COLOR = { '車検': '#fdecea', '修理': '#fff3cd' };
+    const REASON_TEXT_COLOR = { '車検': '#c0392b', '修理': '#8a6d1d' };
+    function reasonBadgeHtml(memo) {
+      // 過去に登録されたメモ（車検/修理以外の自由記述）は「その他」扱いにする
+      const known = memo === '車検' || memo === '修理';
+      const label = memo || '車検';
+      const bg = known ? REASON_COLOR[label] : '#e8e8e8';
+      const col = known ? REASON_TEXT_COLOR[label] : '#555';
+      return `<span class="badge" style="background:${bg};color:${col}">${label}</span>`;
     }
 
     // 日付入力（yyyy-mm-dd）→ 盤面と同じ形式（yyyymmdd）に変換
@@ -139,9 +165,9 @@
         const car = masters.carMap[r.car_code];
         const tr = document.createElement('tr');
         tr.innerHTML = `
-          <td><span class="badge">${formatDateLabel(r.date)}</span></td>
+          <td><span class="badge" style="background:#eee;color:#555">${formatDateLabel(r.date)}</span></td>
           <td>${car ? (car.car_no || car.car_code) : r.car_code}</td>
-          <td>${r.memo || '－'}</td>
+          <td>${reasonBadgeHtml(r.memo)}</td>
           <td><button class="btn-del-row" onclick="deleteRow(${r.id})">削除</button></td>
         `;
         tbody.appendChild(tr);
@@ -151,14 +177,17 @@
     async function addRow() {
       const carCode = document.getElementById('f_car').value;
       const dateStr = toDateStr(document.getElementById('f_date').value);
-      const memo = document.getElementById('f_memo').value.trim();
+      const reason = document.getElementById('f_reason').value;
+      const customMemo = document.getElementById('f_memo').value.trim();
       if (!carCode) { showMsg('車両を選んでください', 'err'); return; }
       if (!dateStr) { showMsg('日付を選んでください', 'err'); return; }
+      if (reason === 'その他' && !customMemo) { showMsg('内容を入力してください', 'err'); return; }
+      const memo = reason === 'その他' ? customMemo : reason;
 
       const exists = rows.find(r => r.car_code === carCode && r.date === dateStr);
       if (exists) { showMsg('その車・その日はすでに登録されています', 'err'); return; }
 
-      const { error } = await sb.from('shift_syaken').insert({ car_code: carCode, date: dateStr, memo: memo || null });
+      const { error } = await sb.from('shift_syaken').insert({ car_code: carCode, date: dateStr, memo });
       if (error) { showMsg('登録に失敗しました: ' + error.message, 'err'); return; }
       showMsg('登録しました', 'ok');
       document.getElementById('f_memo').value = '';
