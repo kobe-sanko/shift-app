@@ -58,6 +58,12 @@
     .list-item.car { border-left: 3px solid #e67e22; background: #fffbf0; }
     .list-item.haken { border-left: 3px solid #e91e9c; background: #fff0f8; }
 
+    /* 左パネル上部：所属で絞り込むプルダウン（社員・車両の両方に反映） */
+    .left-panel-busho-filter { flex-shrink: 0; margin-bottom: 4px; }
+    .left-panel-busho-filter select {
+      width: 100%; font-size: 0.68rem; padding: 3px 2px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box;
+    }
+
     /* ===== メインエリア ===== */
     .main-area { flex: 1; overflow: auto; padding: 8px; }
     .board-grid {
@@ -218,14 +224,19 @@
   <div class="dialog-overlay" id="dialog">
     <div class="dialog-box">
       <p id="dialog-msg"></p>
-      <div class="dialog-btns">
-        <button class="btn-ok" onclick="dialogOk()">入力する</button>
-        <button class="btn-cancel" onclick="dialogCancel()">キャンセル</button>
+      <div class="dialog-btns" id="dialog-btns">
+        <button class="btn-ok" id="dialog-ok-btn" onclick="dialogOk()">入力する</button>
+        <button class="btn-cancel" id="dialog-cancel-btn" onclick="dialogCancel()">キャンセル</button>
       </div>
     </div>
   </div>
     <!-- 左パネル -->
     <div class="left-panel" id="left-panel">
+      <div class="left-panel-busho-filter">
+        <select id="left-panel-busho-select" onchange="onLeftPanelBushoChange()">
+          <option value="">所属で絞り込み：全部</option>
+        </select>
+      </div>
       <div class="list-section staff-section">
         <div class="list-section-title" id="staff-list-title" onclick="toggleStaffFilter()" style="cursor:pointer;" title="クリックで全員表示と切り替え">👤 社員</div>
         <div class="list-scroll"><div id="staff-list"></div></div>
@@ -262,6 +273,8 @@
     let boardBushoCodes = new Set(); // 今の盤面に表示されている所属コード
     let staffFilterMode = 'relevant'; // 'relevant'=関連のみ / 'all'=全員
     let carFilterMode = 'relevant';   // 'relevant'=関連のみ / 'all'=全車両
+    let leftPanelBushoFilter = '';    // 左パネル上部の所属プルダウン（空欄なら絞り込みなし。社員・車両の両方に反映）
+    let leftPanelBushoSelectBuilt = false;
     let syakenCarCodes = new Map();  // この日、車検・修理などで使えない車のcar_code→理由（車検/修理/その他の自由記述）
     let dialogResolve = null;
     let gyomuReverseMap = {}; // bushoCode|gyomuName → gyomu_code（業務シフト同期用）
@@ -270,7 +283,27 @@
     // ===== 初期化 =====
     async function init() {
       masters = await loadMasters();
+      buildLeftPanelBushoSelect();
       await loadData();
+    }
+
+    // 左パネル上部の所属プルダウンに、全所属を追加する（初回だけ）
+    function buildLeftPanelBushoSelect() {
+      if (leftPanelBushoSelectBuilt) return;
+      const sel = document.getElementById('left-panel-busho-select');
+      masters.bushos.filter(b => !b.busho_code.startsWith('9')).forEach(b => {
+        const opt = document.createElement('option');
+        opt.value = b.busho_code;
+        opt.textContent = b.busho_name;
+        sel.appendChild(opt);
+      });
+      leftPanelBushoSelectBuilt = true;
+    }
+
+    // 所属プルダウンが変更されたとき：社員・車両の両方のリストに反映する
+    function onLeftPanelBushoChange() {
+      leftPanelBushoFilter = document.getElementById('left-panel-busho-select').value;
+      buildLeftPanel();
     }
 
     function getDateStr(d) {
@@ -462,6 +495,8 @@
         return car;
       }
 
+      const conflicts = []; // 同じ枠（例：運転1）に複数人が割り当たっていた記録
+
       toInsert.forEach(({ bushoCode, gyomuName, rowNo, field, staff_code }) => {
         const existingRow = banmenData.find(
           r => r.busho_code === bushoCode && r.gyomu_code === '配送' && r.row_no === rowNo
@@ -479,6 +514,9 @@
                 carsAssignedToday.add(linkedCar);
               }
             }
+          } else if (existingRow[field] !== staff_code) {
+            // すでに別の人がこの枠に入っている → 重複として記録し、この人は自動配置しない
+            conflicts.push({ bushoCode, rowNo, field, staffCodes: [existingRow[field], staff_code] });
           }
           return;
         }
@@ -486,6 +524,11 @@
         // 既存行がない → 新規insert
         const key = bushoCode + '|' + rowNo;
         if (!driverInserts[key]) driverInserts[key] = { busho_code: bushoCode, gyomu_code: '配送', row_no: rowNo };
+        if (driverInserts[key][field] && driverInserts[key][field] !== staff_code) {
+          // このバッチ内で、すでに別の人が同じ枠に入っている → 重複として記録し、後から来た人は上書きしない
+          conflicts.push({ bushoCode, rowNo, field, staffCodes: [driverInserts[key][field], staff_code] });
+          return;
+        }
         driverInserts[key][field] = staff_code;
         // 運転者を新規に配置する場合、車番も一緒にセットする
         if (field === 'driver' && !driverInserts[key].car_code) {
@@ -531,6 +574,21 @@
           banmenData.push(...(data || []));
         }
       }
+
+      // 同じ枠に複数人が割り当たっていた場合、まとめてお知らせする
+      if (conflicts.length > 0) {
+        const lines = conflicts.map(c => {
+          const bushoName = masters.bushoMap[c.bushoCode]?.busho_name || c.bushoCode;
+          const posLabel = (c.field === 'driver' ? '運転' : '助手') + c.rowNo;
+          const names = c.staffCodes.map(code => masters.staffMap[code]?.name || code);
+          return `・${bushoName} ${posLabel}：${names[0]}／${names[1]}`;
+        });
+        await showAlertDialog(
+          `業務シフトで、同じ枠に複数の人が割り当てられています。\n` +
+          `先に処理した人だけを盤面に自動配置し、もう一方は配置していません。\n` +
+          `左側の社員リストに残っているので、手動で空いている枠に配置してください。\n\n${lines.join('\n')}`
+        );
+      }
     }
 
     // ===== 左パネル構築 =====
@@ -548,6 +606,13 @@
     // 車両が今の盤面に「関連あり」かどうか（車の所属が盤面の所属に含まれていれば関連あり）
     function isCarRelevant(c) {
       return boardBushoCodes.has(c.busho_code);
+    }
+
+    // 社員が、指定した所属に「所属している、または所属適性がある」かどうか（左パネル上部のプルダウン用）
+    function isStaffInBusho(s, bushoCode) {
+      if (s.busho_code === bushoCode) return true;
+      const tekisei = bushoTekiseiMap[s.staff_code];
+      return tekisei ? tekisei.has(bushoCode) : false;
     }
 
     function toggleStaffFilter() {
@@ -575,12 +640,17 @@
       const usedHaken = new Set();
       hakenData.forEach(r => { if (r.haken_name) usedHaken.add(r.haken_name + '_' + r.renban); });
 
-      // 社員リスト（「関連のみ」の場合、盤面に出ている所属の適性がある人だけに絞る）
+      // 社員リスト（上部の所属プルダウンで絞り込み中はそれを優先。
+      // 未選択（全部）のときは、これまで通り「関連のみ／全員」の切り替えに従う）
       const staffList = document.getElementById('staff-list');
       staffList.innerHTML = '';
       staffRows.forEach(s => {
         if (usedStaff.has(s.staff_code)) return; // 配置済みは非表示
-        if (staffFilterMode === 'relevant' && !isStaffRelevant(s)) return;
+        if (leftPanelBushoFilter) {
+          if (!isStaffInBusho(s, leftPanelBushoFilter)) return;
+        } else if (staffFilterMode === 'relevant' && !isStaffRelevant(s)) {
+          return;
+        }
         const el = document.createElement('div');
         el.className = 'list-item staff';
         el.textContent = s.name || s.staff_code;
@@ -591,16 +661,21 @@
         el.addEventListener('dragstart', onDragStart);
         staffList.appendChild(el);
       });
-      document.getElementById('staff-list-title').textContent =
-        staffFilterMode === 'relevant' ? '👤 社員（盤面）' : '👤 社員（全員）';
+      document.getElementById('staff-list-title').textContent = leftPanelBushoFilter
+        ? `👤 社員（${masters.bushoMap[leftPanelBushoFilter]?.busho_name || leftPanelBushoFilter}）`
+        : (staffFilterMode === 'relevant' ? '👤 社員（盤面）' : '👤 社員（全員）');
 
-      // 車両リスト（「関連のみ」の場合、盤面に出ている所属の車だけに絞る）
+      // 車両リスト（同じく、上部の所属プルダウンを優先）
       const carList = document.getElementById('car-list');
       carList.innerHTML = '';
       carRows.forEach(c => {
         if (usedCars.has(c.car_code)) return;
-        if (syakenCarCodes.has(c.car_code)) return; // 車検などで使えない車は出さない
-        if (carFilterMode === 'relevant' && !isCarRelevant(c)) return;
+        if (syakenCarCodes.has(c.car_code)) return; // 車検・修理などで使えない車は出さない
+        if (leftPanelBushoFilter) {
+          if (c.busho_code !== leftPanelBushoFilter) return;
+        } else if (carFilterMode === 'relevant' && !isCarRelevant(c)) {
+          return;
+        }
         const el = document.createElement('div');
         el.className = 'list-item car';
         el.textContent = c.car_code;
@@ -611,8 +686,9 @@
         el.addEventListener('dragstart', onDragStart);
         carList.appendChild(el);
       });
-      document.getElementById('car-list-title').textContent =
-        carFilterMode === 'relevant' ? '🚛 車両（盤面）' : '🚛 車両（全車両）';
+      document.getElementById('car-list-title').textContent = leftPanelBushoFilter
+        ? `🚛 車両（${masters.bushoMap[leftPanelBushoFilter]?.busho_name || leftPanelBushoFilter}）`
+        : (carFilterMode === 'relevant' ? '🚛 車両（盤面）' : '🚛 車両（全車両）');
 
       // 派遣リスト
       const hakenList = document.getElementById('haken-list');
@@ -1089,6 +1165,21 @@
     }
     function dialogOk() { document.getElementById('dialog').classList.remove('show'); if (dialogResolve) dialogResolve(true); }
     function dialogCancel() { document.getElementById('dialog').classList.remove('show'); if (dialogResolve) dialogResolve(false); }
+
+    // 確認は不要で、ただ知らせて閉じるだけのお知らせ（キャンセルボタンは隠し、OKボタンは「閉じる」にする）
+    function showAlertDialog(msg) {
+      return new Promise(resolve => {
+        document.getElementById('dialog-msg').textContent = msg;
+        document.getElementById('dialog-cancel-btn').style.display = 'none';
+        document.getElementById('dialog-ok-btn').textContent = '閉じる';
+        document.getElementById('dialog').classList.add('show');
+        dialogResolve = () => {
+          document.getElementById('dialog-cancel-btn').style.display = '';
+          document.getElementById('dialog-ok-btn').textContent = '入力する';
+          resolve(true);
+        };
+      });
+    }
 
     function onDragStart(e) {
       dragInfo = {
