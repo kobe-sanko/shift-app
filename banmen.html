@@ -142,6 +142,8 @@
     .person-box span { text-align: center; }
     .person-box.filled { background: #fff8e0; border: 1px solid #ccc; }
     .person-box.drop-over { background: #fffacd !important; border: 2px dashed #f39c12 !important; }
+    /* 社員リストが「盤面」のときに隠す枠（他所属の人が入っている枠。ドロップは受け付けない） */
+    .person-box.hidden-by-filter { background: #f4f4f4; border-style: dotted; cursor: not-allowed; }
 
     /* ===== お休みカード ===== */
     .yasumi-card {
@@ -192,6 +194,45 @@
     .dialog-btns button { padding:8px 20px; border:none; border-radius:4px; cursor:pointer; font-size:0.85rem; font-weight:bold; }
     .btn-ok { background:#e67e22; color:white; }
     .btn-cancel { background:#95a5a6; color:white; }
+    .conflict-slot-btn {
+      background:#3498db; color:white; border:none; border-radius:4px;
+      padding:6px 12px; font-size:0.85rem; font-weight:bold; cursor:pointer;
+    }
+
+    /* 業務シフト重複の通知：画面をふさがない浮き出しパネル（盤面を見ながら操作できる。重複が複数あれば全部並べて出す） */
+    .conflict-toast {
+      display: none; position: fixed; bottom: 16px; right: 16px; z-index: 500;
+      background: white; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.25);
+      padding: 10px; width: 260px; max-height: 70vh; overflow-y: auto;
+    }
+    .conflict-toast.show { display: block; }
+    .conflict-toast-header {
+      display: flex; align-items: center; justify-content: space-between;
+      font-size: 0.8rem; font-weight: bold; color: #c0392b; margin-bottom: 6px;
+      padding-bottom: 6px; border-bottom: 1px solid #eee;
+    }
+    .conflict-toast-closeall {
+      background: none; border: none; color: #888; font-size: 0.72rem; cursor: pointer; text-decoration: underline;
+    }
+    .conflict-group { border-bottom: 1px solid #eee; padding: 8px 0; }
+    .conflict-group:last-child { border-bottom: none; padding-bottom: 0; }
+    .conflict-group p { margin: 0 0 8px; font-size: 0.8rem; line-height: 1.5; white-space: pre-line; }
+    .conflict-group-slots { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+    .conflict-group-skip {
+      background: none; border: none; color: #888; font-size: 0.72rem; cursor: pointer; text-decoration: underline; padding: 0;
+    }
+    /* 配置待ちの人を表す、ドラッグできるカード */
+    .conflict-drag-chip {
+      display: inline-block; padding: 6px 10px; border-radius: 4px;
+      font-size: 0.8rem; font-weight: bold; cursor: grab; user-select: none;
+      background: white; border: 2px solid #4a90e2; color: #2c3e50;
+    }
+    .conflict-drag-chip:active { cursor: grabbing; opacity: 0.6; }
+
+    /* 重複していて空けてある枠を、盤面上でその所属の色で目立たせる */
+    .cell-box.conflict-empty {
+      outline: 2px solid; outline-offset: -2px;
+    }
 
     /* 削除ボタン（セル内） */
     .del-btn {
@@ -219,8 +260,7 @@
   <div id="msg" class="msg"></div>
   <div id="loading" class="loading">読み込み中...</div>
 
-  <div class="main-layout" id="main-layout" style="display:none">
-
+  <!-- main-layoutの外に置く：main-layoutが非表示（読み込み中）の間もダイアログが見えるように -->
   <div class="dialog-overlay" id="dialog">
     <div class="dialog-box">
       <p id="dialog-msg"></p>
@@ -230,6 +270,17 @@
       </div>
     </div>
   </div>
+
+  <!-- 業務シフトの重複を、盤面を見ながらその場で直せる通知（画面をふさがない浮き出しパネル） -->
+  <div class="conflict-toast" id="conflict-toast">
+    <div class="conflict-toast-header">
+      <span>⚠ 業務シフトの重複</span>
+      <button class="conflict-toast-closeall" onclick="dismissAllConflicts()">すべて閉じる</button>
+    </div>
+    <div id="conflict-toast-list"></div>
+  </div>
+
+  <div class="main-layout" id="main-layout" style="display:none">
     <!-- 左パネル -->
     <div class="left-panel" id="left-panel">
       <div class="left-panel-busho-filter">
@@ -274,11 +325,14 @@
     let staffFilterMode = 'relevant'; // 'relevant'=関連のみ / 'all'=全員
     let carFilterMode = 'relevant';   // 'relevant'=関連のみ / 'all'=全車両
     let leftPanelBushoFilter = '';    // 左パネル上部の所属プルダウン（空欄なら絞り込みなし。社員・車両の両方に反映）
+    let todayShiftStaffCodes = new Set(); // 今日の業務シフトに何らかの登録がある社員コード（盤面に自動配置されない種類の登録も含む）
     let leftPanelBushoSelectBuilt = false;
     let syakenCarCodes = new Map();  // この日、車検・修理などで使えない車のcar_code→理由（車検/修理/その他の自由記述）
+    let senzokuBushoCode = null; // 「専属」所属のコード（浮いた人を一時的に置く所属。車両の関連判定や車検カードから除外する）
     let dialogResolve = null;
     let gyomuReverseMap = {}; // bushoCode|gyomuName → gyomu_code（業務シフト同期用）
     let currentDayCol = '';   // その日のd列名（d01〜d31）
+    let currentLoadId = 0;    // 日付を素早く切り替えたときに、古い読み込みの結果を無視するための番号
 
     // ===== 初期化 =====
     async function init() {
@@ -336,6 +390,9 @@
 
     // ===== データ読み込み =====
     async function loadData() {
+      // 日付をすぐ切り替えたときに、後から来た（新しい）読み込みだけを反映するための番号
+      const loadId = ++currentLoadId;
+
       document.getElementById('loading').style.display = 'block';
       document.getElementById('main-layout').style.display = 'none';
 
@@ -359,6 +416,9 @@
         sb.from('shift_busho_tekisei').select('staff_code, busho_code'),
         sb.from('shift_syaken').select('car_code, memo').eq('date', dateStr),
       ]);
+
+      // この間に別の日付に切り替えられていたら、この結果はもう使わない
+      if (loadId !== currentLoadId) return;
 
       // この日、車検・修理などで使えない車 → 理由のマップ
       syakenCarCodes = new Map((syakenRes.data || []).map(r => [r.car_code, r.memo || '車検']));
@@ -390,6 +450,12 @@
         configData.filter(c => c.sp_jun !== 99 && c.sp_jun !== 98).map(c => c.busho_code)
       );
 
+      // 「専属」は各所属に浮いた人を一時的に置くための所属なので、
+      // 車両の「関連あり（盤面）」判定や車検・修理カードからは除外する
+      const senzokuBusho = Object.values(masters.bushoMap || {}).find(b => b.busho_name === '専属');
+      senzokuBushoCode = senzokuBusho ? senzokuBusho.busho_code : null;
+      if (senzokuBushoCode) boardBushoCodes.delete(senzokuBushoCode);
+
       // 業務コード→業務マスタのマップ
       const gyomuMap = {};
       (gyomuRes.data || []).forEach(g => { gyomuMap[g.gyomu_code] = g; });
@@ -407,14 +473,26 @@
         .map(r => ({ staff_code: r.staff_code, gyomu_code: r[dayCol] }))
         .filter(r => r.gyomu_code && r.gyomu_code !== 'EMPTY');
 
+      // 今日の業務シフトに何か登録がある人（盤面に自動配置されない種類のコードも含めて全部）
+      // → 左パネルの社員リストで「未登録の人」だけを出すために使う
+      todayShiftStaffCodes = new Set(dayShiftList.map(r => r.staff_code));
+
       // shift_banmenにまだないデータを業務シフトから自動組み立てして保存
-      await autoFillBanmen(dateStr, dayShiftList, gyomuMap);
+      const conflicts = await autoFillBanmen(dateStr, dayShiftList, gyomuMap, loadId);
+
+      // オートフィル中に別の日付に切り替えられていたら、盤面の描画はしない（古い日付で上書きしないため）
+      if (loadId !== currentLoadId) return;
 
       buildLeftPanel();
       buildBoard();
 
       document.getElementById('loading').style.display = 'none';
       document.getElementById('main-layout').style.display = 'flex';
+
+      // 盤面が表示されたあとで、重複していた枠があればその場で配置先を選べる通知を出す
+      if (conflicts && conflicts.length > 0) {
+        showConflictResolver(conflicts, loadId);
+      }
     }
 
     // ===== 年月文字列（yearmonth列用）=====
@@ -430,7 +508,7 @@
     }
 
     // ===== 業務シフトから盤面を自動組み立て（既存データがない分のみ）=====
-    async function autoFillBanmen(dateStr, dayShiftList, gyomuMap) {
+    async function autoFillBanmen(dateStr, dayShiftList, gyomuMap, loadId) {
       // busho_code + gyomu_code(配送/倉庫/事務) ごとに「既存データがあるか」を見る
       function hasExisting(bushoCode, gyomuName) {
         return banmenData.some(r => r.busho_code === bushoCode && r.gyomu_code === gyomuName);
@@ -495,18 +573,46 @@
         return car;
       }
 
-      const conflicts = []; // 同じ枠（例：運転1）に複数人が割り当たっていた記録
+      // 同じ枠（busho+番号+運転／助手）に割り当てられている人を、全員まとめて集めておく
+      // （2人だけでなく3人以上重複していても、まとめて1つの重複として扱うため）
+      const slotCandidates = {}; // key: bushoCode|rowNo|field → 社員コードの配列（重複なし）
+      toInsert.forEach(({ bushoCode, rowNo, field, staff_code }) => {
+        const skey = `${bushoCode}|${rowNo}|${field}`;
+        if (!slotCandidates[skey]) slotCandidates[skey] = [];
+        if (!slotCandidates[skey].includes(staff_code)) slotCandidates[skey].push(staff_code);
+      });
 
-      toInsert.forEach(({ bushoCode, gyomuName, rowNo, field, staff_code }) => {
+      const conflicts = []; // 同じ枠（例：運転1）に複数人が割り当たっていた記録
+      const clearsNeeded = []; // 重複のため、いったん空にする必要がある既存の配置 { id, field }
+
+      Object.entries(slotCandidates).forEach(([skey, codes]) => {
+        const [bushoCode, rowNoStr, field] = skey.split('|');
+        const rowNo = parseInt(rowNoStr, 10);
         const existingRow = banmenData.find(
           r => r.busho_code === bushoCode && r.gyomu_code === '配送' && r.row_no === rowNo
         );
 
+        // すでにその枠に入っている人がいれば、それも候補に加える（別人ならそれも重複扱いにするため）
+        const existingOccupant = existingRow ? existingRow[field] : null;
+        const allCandidates = codes.slice();
+        if (existingOccupant && !allCandidates.includes(existingOccupant)) {
+          allCandidates.unshift(existingOccupant);
+        }
+
+        if (allCandidates.length > 1) {
+          // 重複：誰も自動配置しない。すでに入っていた人がいれば、いったん空けて配置し直してもらう
+          if (existingOccupant) {
+            clearsNeeded.push({ id: existingRow.id, field });
+          }
+          conflicts.push({ bushoCode, rowNo, field, staffCodes: allCandidates });
+          return;
+        }
+
+        // 重複なし：これまで通り自動配置する
+        const staff_code = allCandidates[0];
         if (existingRow) {
-          // 既存行がある場合：そのフィールドが空なら補完update
           if (!existingRow[field]) {
             fieldUpdates.push({ id: existingRow.id, field, staff_code });
-            // 運転者を新しく入れる時、車番欄がまだ空なら車番も一緒に補完する
             if (field === 'driver' && !existingRow.car_code) {
               const linkedCar = getLinkedCar(staff_code);
               if (linkedCar) {
@@ -514,31 +620,31 @@
                 carsAssignedToday.add(linkedCar);
               }
             }
-          } else if (existingRow[field] !== staff_code) {
-            // すでに別の人がこの枠に入っている → 重複として記録し、この人は自動配置しない
-            conflicts.push({ bushoCode, rowNo, field, staffCodes: [existingRow[field], staff_code] });
           }
-          return;
-        }
-
-        // 既存行がない → 新規insert
-        const key = bushoCode + '|' + rowNo;
-        if (!driverInserts[key]) driverInserts[key] = { busho_code: bushoCode, gyomu_code: '配送', row_no: rowNo };
-        if (driverInserts[key][field] && driverInserts[key][field] !== staff_code) {
-          // このバッチ内で、すでに別の人が同じ枠に入っている → 重複として記録し、後から来た人は上書きしない
-          conflicts.push({ bushoCode, rowNo, field, staffCodes: [driverInserts[key][field], staff_code] });
-          return;
-        }
-        driverInserts[key][field] = staff_code;
-        // 運転者を新規に配置する場合、車番も一緒にセットする
-        if (field === 'driver' && !driverInserts[key].car_code) {
-          const linkedCar = getLinkedCar(staff_code);
-          if (linkedCar) {
-            driverInserts[key].car_code = linkedCar;
-            carsAssignedToday.add(linkedCar);
+        } else {
+          const key = bushoCode + '|' + rowNo;
+          if (!driverInserts[key]) driverInserts[key] = { busho_code: bushoCode, gyomu_code: '配送', row_no: rowNo };
+          driverInserts[key][field] = staff_code;
+          if (field === 'driver' && !driverInserts[key].car_code) {
+            const linkedCar = getLinkedCar(staff_code);
+            if (linkedCar) {
+              driverInserts[key].car_code = linkedCar;
+              carsAssignedToday.add(linkedCar);
+            }
           }
         }
       });
+
+      // 重複のため空にする必要がある枠を、実際に空にする
+      for (const { id, field } of clearsNeeded) {
+        const { error: clrErr } = await sb.from('shift_banmen').update({ [field]: null }).eq('id', id);
+        if (clrErr) {
+          console.error('重複の解消（空欄化）に失敗しました', clrErr);
+        } else {
+          const idx = banmenData.findIndex(r => r.id === id);
+          if (idx !== -1) banmenData[idx][field] = null;
+        }
+      }
 
       // 既存行への補完update（空フィールドに人を追加）
       for (const { id, field, staff_code } of fieldUpdates) {
@@ -575,20 +681,9 @@
         }
       }
 
-      // 同じ枠に複数人が割り当たっていた場合、まとめてお知らせする
-      if (conflicts.length > 0) {
-        const lines = conflicts.map(c => {
-          const bushoName = masters.bushoMap[c.bushoCode]?.busho_name || c.bushoCode;
-          const posLabel = (c.field === 'driver' ? '運転' : '助手') + c.rowNo;
-          const names = c.staffCodes.map(code => masters.staffMap[code]?.name || code);
-          return `・${bushoName} ${posLabel}：${names[0]}／${names[1]}`;
-        });
-        await showAlertDialog(
-          `業務シフトで、同じ枠に複数の人が割り当てられています。\n` +
-          `先に処理した人だけを盤面に自動配置し、もう一方は配置していません。\n` +
-          `左側の社員リストに残っているので、手動で空いている枠に配置してください。\n\n${lines.join('\n')}`
-        );
-      }
+      // 同じ枠に複数人が割り当たっていた場合、呼び出し元（loadData）に伝える
+      // （盤面が表示されたあとで、その場で配置先を選べる通知を出すため）
+      return conflicts;
     }
 
     // ===== 左パネル構築 =====
@@ -618,11 +713,13 @@
     function toggleStaffFilter() {
       staffFilterMode = staffFilterMode === 'relevant' ? 'all' : 'relevant';
       buildLeftPanel();
+      buildBoard(); // お休みカードの表示もあわせて切り替える
     }
 
     function toggleCarFilter() {
       carFilterMode = carFilterMode === 'relevant' ? 'all' : 'relevant';
       buildLeftPanel();
+      buildBoard(); // 車検・修理カードの表示もあわせて切り替える
     }
 
     function buildLeftPanel() {
@@ -646,6 +743,7 @@
       staffList.innerHTML = '';
       staffRows.forEach(s => {
         if (usedStaff.has(s.staff_code)) return; // 配置済みは非表示
+        if (todayShiftStaffCodes.has(s.staff_code)) return; // 今日の業務シフトに登録済みの人は非表示
         if (leftPanelBushoFilter) {
           if (!isStaffInBusho(s, leftPanelBushoFilter)) return;
         } else if (staffFilterMode === 'relevant' && !isStaffRelevant(s)) {
@@ -671,9 +769,12 @@
       carRows.forEach(c => {
         if (usedCars.has(c.car_code)) return;
         if (syakenCarCodes.has(c.car_code)) return; // 車検・修理などで使えない車は出さない
-        if (leftPanelBushoFilter) {
+        // 「全車両」を選んでいるときは、上の所属プルダウンより優先してすべての車を出す
+        if (carFilterMode === 'all') {
+          // 絞り込みなし
+        } else if (leftPanelBushoFilter) {
           if (c.busho_code !== leftPanelBushoFilter) return;
-        } else if (carFilterMode === 'relevant' && !isCarRelevant(c)) {
+        } else if (!isCarRelevant(c)) {
           return;
         }
         const el = document.createElement('div');
@@ -686,9 +787,11 @@
         el.addEventListener('dragstart', onDragStart);
         carList.appendChild(el);
       });
-      document.getElementById('car-list-title').textContent = leftPanelBushoFilter
-        ? `🚛 車両（${masters.bushoMap[leftPanelBushoFilter]?.busho_name || leftPanelBushoFilter}）`
-        : (carFilterMode === 'relevant' ? '🚛 車両（盤面）' : '🚛 車両（全車両）');
+      document.getElementById('car-list-title').textContent = carFilterMode === 'all'
+        ? '🚛 車両（全車両）'
+        : (leftPanelBushoFilter
+          ? `🚛 車両（${masters.bushoMap[leftPanelBushoFilter]?.busho_name || leftPanelBushoFilter}）`
+          : '🚛 車両（盤面）');
 
       // 派遣リスト
       const hakenList = document.getElementById('haken-list');
@@ -834,6 +937,8 @@
         });
         grid.appendChild(colDiv);
       }
+
+      highlightConflictCells();
     }
 
     // ===== 所属カード =====
@@ -1024,9 +1129,26 @@
           const rowData = banmenData.find(r =>
             r.busho_code === 'お休み' && r.gyomu_code === type && r.row_no === col
           );
-          const box = makeCell('staff', 'お休み', type, col, 'driver', rowData?.driver, false);
-          box.className = 'person-box' + (rowData?.driver ? ' filled' : '');
-          grid.appendChild(box);
+
+          // お休み欄は、左の社員リストの「盤面／全員」切り替えとは関係なく、
+          // 常に「今の盤面に表示されている所属」の社員マスタ上の所属の人だけを出す
+          // （データ自体は消さず、その枠へのドロップだけ受け付けないようにする）
+          let hideByFilter = false;
+          if (rowData?.driver) {
+            const staffObj = masters.staffMap[rowData.driver];
+            if (!staffObj || !boardBushoCodes.has(staffObj.busho_code)) hideByFilter = true;
+          }
+
+          if (hideByFilter) {
+            const box = document.createElement('div');
+            box.className = 'person-box hidden-by-filter';
+            box.title = '別の所属の人が入っています（「全員」に切り替えると表示されます）';
+            grid.appendChild(box);
+          } else {
+            const box = makeCell('staff', 'お休み', type, col, 'driver', rowData?.driver, false);
+            box.className = 'person-box' + (rowData?.driver ? ' filled' : '');
+            grid.appendChild(box);
+          }
         }
         typeDiv.appendChild(grid);
         body.appendChild(typeDiv);
@@ -1092,7 +1214,15 @@
       const body = document.createElement('div');
       body.className = 'yasumi-body';
 
-      if (syakenCarCodes.size === 0) {
+      // 「専属」の車は一時的な所属のため、車検・修理カードには出さない。
+      // ただし左の車両リストが「全車両」のときは、そちらに合わせてすべて出す
+      const syakenEntries = [...syakenCarCodes.entries()].filter(([carCode]) => {
+        if (carFilterMode === 'all') return true;
+        const car = masters.carMap[carCode];
+        return !(senzokuBushoCode && car && car.busho_code === senzokuBushoCode);
+      });
+
+      if (syakenEntries.length === 0) {
         body.innerHTML = `<div style="text-align:center;color:#aaa;font-size:0.8rem;padding:8px 0;">本日はありません</div>`;
       } else {
         const list = document.createElement('div');
@@ -1102,7 +1232,7 @@
           '車検': { bg: '#fdecea', col: '#c0392b' },
           '修理': { bg: '#fff3cd', col: '#8a6d1d' },
         };
-        [...syakenCarCodes.entries()].forEach(([carCode, reason]) => {
+        syakenEntries.forEach(([carCode, reason]) => {
           const car = masters.carMap[carCode];
           const carLabel = car ? (car.car_no || car.car_code) : carCode;
           const style = REASON_STYLE[reason] || { bg: '#e8e8e8', col: '#555' };
@@ -1179,6 +1309,117 @@
           resolve(true);
         };
       });
+    }
+
+    // ===== 業務シフトの重複を、盤面を見ながらその場で配置し直せる通知 =====
+    let conflictQueue = [];
+
+    // 通知に表示する内容を組み立てる：枠は空けたままにしてあるので、
+    // 重複が複数あってもすべて並べて出し、盤面の好きな場所へドラッグ＆ドロップして配置してもらう
+    function renderConflictDialog() {
+      const listEl = document.getElementById('conflict-toast-list');
+      if (conflictQueue.length === 0) {
+        document.getElementById('conflict-toast').classList.remove('show');
+        listEl.innerHTML = '';
+        highlightConflictCells();
+        return;
+      }
+
+      listEl.innerHTML = '';
+      conflictQueue.forEach(c => {
+        const bushoName = masters.bushoMap[c.bushoCode]?.busho_name || c.bushoCode;
+        const posLabel = (c.field === 'driver' ? '運転' : '助手') + c.rowNo;
+        const bushoColor = masters.bushoMap[c.bushoCode]?.color_h || '#f39c12';
+
+        const groupEl = document.createElement('div');
+        groupEl.className = 'conflict-group';
+
+        const msg = document.createElement('p');
+        msg.textContent =
+          `${bushoName}の${posLabel}に${c.staffCodes.length}人割り当てられていたため、空けてあります。\n` +
+          `盤面の空いている場所へドラッグして配置してください。`;
+        groupEl.appendChild(msg);
+
+        const slotsEl = document.createElement('div');
+        slotsEl.className = 'conflict-group-slots';
+        c.staffCodes.forEach(code => {
+          const name = masters.staffMap[code]?.name || code;
+          const chip = document.createElement('div');
+          chip.className = 'conflict-drag-chip';
+          chip.textContent = name;
+          chip.style.borderColor = bushoColor;
+          chip.style.background = lightenColor(bushoColor, 0.7);
+          chip.draggable = true;
+          chip.dataset.type = 'staff';
+          chip.dataset.code = code;
+          chip.dataset.name = name;
+          chip.addEventListener('dragstart', onDragStart);
+          slotsEl.appendChild(chip);
+        });
+        groupEl.appendChild(slotsEl);
+
+        const skipBtn = document.createElement('button');
+        skipBtn.className = 'conflict-group-skip';
+        skipBtn.textContent = 'あとで自分で配置する';
+        skipBtn.onclick = () => skipConflictGroup(c);
+        groupEl.appendChild(skipBtn);
+
+        listEl.appendChild(groupEl);
+      });
+
+      document.getElementById('conflict-toast').classList.add('show');
+      highlightConflictCells();
+    }
+
+    // 重複していて空けてある枠を、盤面上でその所属の色で目立たせる
+    function highlightConflictCells() {
+      document.querySelectorAll('.cell-box.conflict-empty').forEach(el => {
+        el.classList.remove('conflict-empty');
+        el.style.background = '';
+        el.style.outlineColor = '';
+      });
+      conflictQueue.forEach(c => {
+        const el = document.querySelector(
+          `.cell-box[data-busho="${c.bushoCode}"][data-gyomu="配送"][data-row="${c.rowNo}"][data-field="${c.field}"]`
+        );
+        if (!el) return;
+        const color = masters.bushoMap[c.bushoCode]?.color_h || '#f39c12';
+        el.classList.add('conflict-empty');
+        el.style.background = lightenColor(color, 0.7);
+        el.style.outlineColor = color;
+      });
+    }
+
+    // ドラッグで配置が完了したときに、そのカードを通知から取り除く（handleDropの最後から呼ばれる）
+    function advanceConflictIfMatches(staffType, staffCode) {
+      if (staffType !== 'staff' || conflictQueue.length === 0) return;
+      let changed = false;
+      conflictQueue.forEach(c => {
+        const idx = c.staffCodes.indexOf(staffCode);
+        if (idx !== -1) { c.staffCodes.splice(idx, 1); changed = true; }
+      });
+      if (!changed) return;
+      conflictQueue = conflictQueue.filter(c => c.staffCodes.length > 0);
+      renderConflictDialog();
+    }
+
+    // このグループは今回は配置せず、「あとで自分で配置する」を押したとき
+    function skipConflictGroup(group) {
+      conflictQueue = conflictQueue.filter(c => c !== group);
+      renderConflictDialog();
+    }
+
+    // 「すべて閉じる」を押したとき：通知だけ閉じる（盤面上の枠は空いたまま）
+    function dismissAllConflicts() {
+      conflictQueue = [];
+      renderConflictDialog();
+    }
+
+    // 盤面が表示されたあとに呼ばれる：重複一覧をまとめて通知する
+    function showConflictResolver(conflicts, loadId) {
+      if (loadId !== currentLoadId) return; // その間に別の日付に切り替えられていたら出さない
+      conflictQueue = conflicts.slice();
+      renderConflictDialog();
     }
 
     function onDragStart(e) {
@@ -1353,6 +1594,9 @@
 
       buildLeftPanel();
       buildBoard();
+
+      // 業務シフトの重複通知で「配置待ち」だった人が、今のドラッグで配置されたら通知を1件進める
+      advanceConflictIfMatches(dragInfo.type, dragInfo.code);
     }
 
     async function clearCell(e, btn) {

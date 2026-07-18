@@ -14,6 +14,7 @@
     .month-select { font-size: 0.9rem; padding: 4px 8px; border: 1px solid #ccc; border-radius: 4px; }
     .btn { font-size: 0.82rem; padding: 5px 12px; border: none; border-radius: 4px; cursor: pointer; color: white; }
     .btn-create { background: #e67e22; }
+    .btn-create:disabled { background: #ccc !important; color: #888 !important; cursor: not-allowed; }
     .btn-save   { background: #27ae60; }
     .filter-row { display: flex; flex-wrap: wrap; gap: 5px; justify-content: center; margin-bottom: 8px; }
     .filter-btn { padding: 3px 10px; border: none; border-radius: 4px; cursor: pointer; font-size: 0.82rem; }
@@ -115,7 +116,7 @@
 
   <div class="top-bar">
     <select class="month-select" id="month-sel" onchange="onMonthChange()"></select>
-    <button class="btn btn-create pc-only-btn" id="btn-create-shift" onclick="createShift()">業務シフト作成</button>
+    <button class="btn btn-create pc-only-btn" id="btn-create-shift" onclick="createShift()" disabled>業務シフト作成（所属を選んでください）</button>
     <button class="btn btn-save pc-only-btn" onclick="saveAll()" id="btn-save" style="display:none">💾 保存</button>
     <button class="btn pc-only-btn" style="background:#1d6f42;" onclick="exportExcel(false)">📊 Excel出力</button>
     <button class="btn pc-only-btn" style="background:#1a5276;" onclick="exportExcel(true)">📊 Excel出力2</button>
@@ -460,7 +461,7 @@
         chibanCodes.add(`${r.busho_code}-2${row}`);
       });
 
-      // 車検・修理（使えない車）：日付(yyyymmdd) → その日使えない車番＋理由の配列
+      // 車検・修理（使えない車）：日付(yyyymmdd) → その日使えない車のリスト（表示名＋所属コード）
       syakenByDay = {};
       (syakenRes.data || []).forEach(r => {
         const day = parseInt(r.date.slice(6, 8));
@@ -470,7 +471,8 @@
         const carLabel = car ? (car.car_no || car.car_code) : r.car_code;
         const reason = r.memo || '車検';
         // 車検はこれまで通り車番だけ、それ以外の理由は区別できるようカッコで添える
-        syakenByDay[key].push(reason === '車検' ? carLabel : `${carLabel}(${reason})`);
+        const label = reason === '車検' ? carLabel : `${carLabel}(${reason})`;
+        syakenByDay[key].push({ label, bushoCode: car ? car.busho_code : null });
       });
 
       buildHeader();
@@ -509,7 +511,11 @@
       const g = masters.gyomuMap[code];
       if (g) {
         const color = g.color_h || '#ccc';
-        return `<span class="badge" style="background:${color};color:${getTextColor(color)};${chibanStyle}">${g.gyomu_name}</span>`;
+        // 盤面の配送表に使われる「運転1」「助手1」のような番号付きの業務は、
+        // 色だけだと所属の判別がしにくいため、業務名の代わりに所属名を表示する
+        const isBanmenGyomu = /^(運転|助手)\d+$/.test(g.gyomu_name);
+        const label = isBanmenGyomu ? (masters.bushoMap[g.busho_code]?.busho_name || g.gyomu_name) : g.gyomu_name;
+        return `<span class="badge" style="background:${color};color:${getTextColor(color)};${chibanStyle}">${label}</span>`;
       }
       // 所属コード
       const b = masters.bushoMap[code];
@@ -605,8 +611,9 @@
       for (let d = 1; d <= daysInMonth; d++) {
         const key = `d${String(d).padStart(2,'0')}`;
         const cls = getDayClass(d);
-        const cars = syakenByDay[key];
-        const label = cars && cars.length ? cars.join('・') : '';
+        // 所属で絞り込み中は、その所属の車両だけ表示する
+        const cars = (syakenByDay[key] || []).filter(c => !currentFilter || c.bushoCode === currentFilter);
+        const label = cars.length ? cars.map(c => c.label).join('・') : '';
         syakenHtml += `<td class="${cls}" style="color:#c0392b;font-weight:bold;font-size:0.7rem">${label}</td>`;
       }
       syakenTr.innerHTML = syakenHtml;
@@ -669,8 +676,24 @@
       if (btn) btn.classList.add('active');
       document.getElementById('page-title').textContent =
         bushoCode ? `⚙️ 業務シフト - ${bushoName}` : '⚙️ 業務シフト';
-      document.getElementById('btn-create-shift').textContent =
-        bushoCode ? `業務シフト作成（${bushoName}のみ）` : '業務シフト作成（全員）';
+
+      // 全員表示中は誤って1か月分を作り直してしまわないよう、作成ボタンを押せなくする。
+      // 所属で絞り込んでいるときだけ押せるようにし、ボタンの色もその所属の色に合わせる
+      const createBtn = document.getElementById('btn-create-shift');
+      if (bushoCode) {
+        const busho = masters.bushoMap[bushoCode];
+        const color = busho?.color_h || '#e67e22';
+        createBtn.textContent = `業務シフト作成（${bushoName}のみ）`;
+        createBtn.disabled = false;
+        createBtn.style.background = color;
+        createBtn.style.color = getTextColor(color);
+      } else {
+        createBtn.textContent = '業務シフト作成（所属を選んでください）';
+        createBtn.disabled = true;
+        createBtn.style.background = '';
+        createBtn.style.color = '';
+      }
+
       renderTable();
       buildSmahoTable();
     }
@@ -797,6 +820,8 @@
 
     // ===== 一括作成 =====
     async function createShift() {
+      // 全員表示中は誤操作防止のためボタンを押せなくしているが、念のためここでも防ぐ
+      if (!currentFilter) { showMsg('全員が表示されているときは作成できません。所属で絞り込んでください', 'err'); return; }
       const scopeLabel = currentFilter ? (masters.bushoMap[currentFilter]?.busho_name || currentFilter) : '全員';
       if (!confirm(`${currentYM.slice(0,4)}年${currentYM.slice(4)}月のシフトを、「${scopeLabel}」の分だけベース業務から作成しますか？\n※すでにデータがある社員は上書きされます`)) return;
       document.getElementById('loading').style.display = 'block';
