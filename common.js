@@ -37,6 +37,54 @@
 })();
 
 // ============================================================
+// PC権限（作成・修正ができるかどうか）関連
+// ============================================================
+
+// 今ログインしている人の情報を取得する
+function getAuth() {
+  try { return JSON.parse(localStorage.getItem('shiftAppAuth')); } catch (e) { return null; }
+}
+
+// PC権限（作成・修正ができるか）があるかどうか
+function isAdmin() {
+  const auth = getAuth();
+  return !!(auth && auth.isAdmin);
+}
+
+// 実際に「作成・修正できるか」の最終判定。
+// PC権限があること、かつ、パソコンサイズの画面で見ていることの両方が必要。
+// スマホ（画面幅768px以下）では、PC権限がある人でも操作できないようにする。
+function canEdit() {
+  return isAdmin() && window.innerWidth > 768;
+}
+
+// 操作できない人には、画面の一番上に「閲覧のみ」の帯を出す
+function showReadOnlyBannerIfNeeded() {
+  if (canEdit()) return;
+  window.addEventListener('DOMContentLoaded', () => {
+    const bar = document.createElement('div');
+    bar.textContent = isAdmin()
+      ? '👀 閲覧のみモード（スマホでは操作できません。作成・修正はパソコンでお願いします）'
+      : '👀 閲覧のみモード（作成・修正にはPC権限が必要です）';
+    bar.style.cssText = 'background:#f39c12;color:white;text-align:center;font-size:0.8rem;font-weight:bold;padding:5px;';
+    document.body.prepend(bar);
+  });
+}
+
+// マスタ画面など、共通の部品（フォームや追加・更新・削除ボタン）を使っている画面向け：
+// 操作できない人（PC権限がない、またはスマホで見ている）は、書き込み系のボタンや入力欄をまとめて無効にする
+function lockMasterFormIfNeeded() {
+  if (canEdit()) return;
+  showReadOnlyBannerIfNeeded();
+  window.addEventListener('DOMContentLoaded', () => {
+    document.querySelectorAll(
+      '.btn-add, .btn-update, .btn-delete, .btn-del-row, .btn-save, .btn-del, .btn-move, .btn-clear, .btn-add-slot, .btn-del-slot, .btn-copy'
+    ).forEach(el => { el.disabled = true; });
+    document.querySelectorAll('.form-box input, .form-box select, .form-box textarea').forEach(el => { el.disabled = true; });
+  });
+}
+
+// ============================================================
 // 本番／テスト 切り替えの仕組み
 // ============================================================
 

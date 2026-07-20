@@ -114,6 +114,12 @@
       padding: 1px 3px; text-align: center; border-bottom: 1px solid #eee;
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
+    /* スマホ欄の見出しボタン：押すと運転の人をまとめてスマホ欄にコピーする */
+    .smaho-fill-btn {
+      font-size: 0.65rem; color: #4a90e2; background: #eaf3fd; border: 1px solid #4a90e2;
+      border-radius: 3px; padding: 1px 4px; cursor: pointer; white-space: nowrap;
+    }
+    .smaho-fill-btn:hover { background: #d8ebfd; }
 
     .haiso-table td {
       padding: 1px 2px; text-align: center; vertical-align: middle;
@@ -129,6 +135,11 @@
     .cell-box.filled { background: #fff8e0; border: 1px solid #ccc; }
     .cell-box.osoban { border: 2px solid #e67e22 !important; background: #fff3e0; }
     .cell-box.car-cell { background: #fff8f0; }
+    /* 必要台数マスタで設定した台数に届いていない枠を目立たせる */
+    .cell-box.quota-missing { outline: 2px solid #e74c3c; outline-offset: -2px; }
+    /* スマホ欄は運転・助手欄より控えめに（同じ名前が並んでも目立ちすぎないように） */
+    .cell-box[data-field="smaho"] { font-size: 0.65rem; color: #999; background: #fdeef2; min-height: 20px; }
+    .cell-box[data-field="smaho"].filled { background: #fce4ec; border-style: solid; border-color: #f3c6d3; color: #999; }
 
     /* 倉庫・事務の人員表 */
     .person-grid { display: flex; flex-wrap: wrap; gap: 3px; padding: 2px; }
@@ -315,6 +326,7 @@
     let hakenData = [];     // shift_banmen_haken
     let oenData = [];       // shift_banmen_oen
     let configData = [];    // shift_banmen_config
+    let carQuotaMap = {};   // busho_code → その日の必要台数・助手あり必要台数（shift_car_quota）
     let staffRows = [];
     let carRows = [];
     let hakenRows = [];
@@ -338,7 +350,16 @@
     async function init() {
       masters = await loadMasters();
       buildLeftPanelBushoSelect();
+      applyReadOnlyIfNeeded();
       await loadData();
+    }
+
+    // PC権限がない人は、盤面の変更（ドラッグ・削除・再作成など）ができないようにする（閲覧のみ）
+    function applyReadOnlyIfNeeded() {
+      if (canEdit()) return;
+      showReadOnlyBannerIfNeeded();
+      const recreateBtn = document.querySelector('.btn-recreate');
+      if (recreateBtn) recreateBtn.disabled = true;
     }
 
     // 左パネル上部の所属プルダウンに、全所属を追加する（初回だけ）
@@ -402,7 +423,7 @@
       const yearMonth = getYearMonth(currentDate);
       const dayCol = getDayCol(currentDate);
 
-      const [staffRes, carRes, hakenRes, configRes, banmenRes, banmenHakenRes, oenRes, tekiseiRes, gyomuRes, gyomuShiftRes, bushoTekiseiRes, syakenRes] = await Promise.all([
+      const [staffRes, carRes, hakenRes, configRes, banmenRes, banmenHakenRes, oenRes, tekiseiRes, gyomuRes, gyomuShiftRes, bushoTekiseiRes, syakenRes, carQuotaRes] = await Promise.all([
         sb.from('shift_staff').select('*').order('staff_code'),
         sb.from('shift_car').select('*').order('car_code'),
         sb.from('shift_haken').select('*').order('haken_name'),
@@ -415,10 +436,14 @@
         sb.from('shift_gyomu_shift').select(`staff_code, ${dayCol}`).eq('yearmonth', yearMonth),
         sb.from('shift_busho_tekisei').select('staff_code, busho_code'),
         sb.from('shift_syaken').select('car_code, memo').eq('date', dateStr),
+        sb.from('shift_car_quota').select('busho_code, need_car, need_jyoshu').eq('date', dateStr),
       ]);
 
       // この間に別の日付に切り替えられていたら、この結果はもう使わない
       if (loadId !== currentLoadId) return;
+
+      // その日の所属ごとの必要台数（テーブルがまだ無い場合はエラーになるので、その時は空扱いにする）
+      carQuotaMap = Object.fromEntries((carQuotaRes.data || []).map(q => [q.busho_code, q]));
 
       // この日、車検・修理などで使えない車 → 理由のマップ
       syakenCarCodes = new Map((syakenRes.data || []).map(r => [r.car_code, r.memo || '車検']));
@@ -473,14 +498,27 @@
         .map(r => ({ staff_code: r.staff_code, gyomu_code: r[dayCol] }))
         .filter(r => r.gyomu_code && r.gyomu_code !== 'EMPTY');
 
-      // 今日の業務シフトに何か登録がある人（盤面に自動配置されない種類のコードも含めて全部）
-      // → 左パネルの社員リストで「未登録の人」だけを出すために使う
-      todayShiftStaffCodes = new Set(dayShiftList.map(r => r.staff_code));
+      // 今日の業務シフトに何か登録がある人 → 左パネルの社員リストで「未登録の人」だけを出すために使う。
+      // ただし、番号のない「運転」「助手」（今日は働けるが、どこに配置するかまだ決まっていない人）は
+      // 登録済み扱いにせず、引き続きリストに残して手動で配置できるようにする
+      todayShiftStaffCodes = new Set(
+        dayShiftList
+          .filter(r => {
+            const g = gyomuMap[r.gyomu_code];
+            const isPlainUnten = g && (g.gyomu_name === '運転' || g.gyomu_name === '助手');
+            return !isPlainUnten;
+          })
+          .map(r => r.staff_code)
+      );
 
       // shift_banmenにまだないデータを業務シフトから自動組み立てして保存
       const conflicts = await autoFillBanmen(dateStr, dayShiftList, gyomuMap, loadId);
 
       // オートフィル中に別の日付に切り替えられていたら、盤面の描画はしない（古い日付で上書きしないため）
+      if (loadId !== currentLoadId) return;
+
+      // スマホ欄も、運転→助手の順でスマホを持っている人を自動で入れる（空欄の所だけ）
+      await autoFillSmaho();
       if (loadId !== currentLoadId) return;
 
       buildLeftPanel();
@@ -545,7 +583,9 @@
 
         // 運転1〜・助手1〜のような「数字で終わる」業務名のみ配送テーブルへ
         const m = gyomuName.match(/^(運転|助手)(\d+)$/);
-        if (!m) return; // 番号なしの「運転」「助手」、所属名そのものなどは対象外
+        // 番号なしの「運転」「助手」は、今日は働けるがどこに配置するか決まっていない人。
+        // 盤面には自動配置せず、左の社員リストに残して手動でドラッグしてもらう（所属名そのものなども同様に対象外）
+        if (!m) return;
 
         const kindWord = m[1];
         const rowNo = parseInt(m[2], 10);
@@ -752,7 +792,7 @@
         const el = document.createElement('div');
         el.className = 'list-item staff';
         el.textContent = s.name || s.staff_code;
-        el.draggable = true;
+        el.draggable = canEdit();
         el.dataset.type = 'staff';
         el.dataset.code = s.staff_code;
         el.dataset.name = s.name || s.staff_code;
@@ -780,7 +820,7 @@
         const el = document.createElement('div');
         el.className = 'list-item car';
         el.textContent = c.car_code;
-        el.draggable = true;
+        el.draggable = canEdit();
         el.dataset.type = 'car';
         el.dataset.code = c.car_code;
         el.dataset.name = c.car_code;
@@ -800,7 +840,7 @@
         const el = document.createElement('div');
         el.className = 'list-item haken';
         el.textContent = h.haken_name;
-        el.draggable = true;
+        el.draggable = canEdit();
         el.dataset.type = 'haken';
         el.dataset.code = h.haken_name;
         el.dataset.name = h.haken_name;
@@ -993,9 +1033,14 @@
       // ヘッダー
       let hdrHtml = '<tr><th>車番</th><th>運転</th>';
       for (let j = 0; j < jyoshuCount; j++) hdrHtml += '<th>助手</th>';
-      if (showSmaho) hdrHtml += '<th>📱</th>';
+      if (showSmaho) hdrHtml += `<th><button type="button" class="smaho-fill-btn" onclick="fillSmahoFromDriver('${bushoCode}')">スマホ</button></th>`;
       hdrHtml += '</tr>';
       table.innerHTML = hdrHtml;
+
+      // 必要台数マスタの設定：先頭からneed_car行は車（運転）が必要、先頭からneed_jyoshu行は助手も必要
+      const quota = carQuotaMap[bushoCode];
+      const needCar = quota?.need_car || 0;
+      const needJyoshu = quota?.need_jyoshu || 0;
 
       for (let row = 1; row <= rowCount; row++) {
         const rowData = banmenData.find(r =>
@@ -1009,19 +1054,24 @@
         const carTd = document.createElement('td');
         const carBox = makeCell('car', bushoCode, '配送', row, 'car_code', rowData?.car_code, isOsoban);
         carBox.classList.add('car-cell');
+        if (row <= needCar && !rowData?.car_code) carBox.classList.add('quota-missing');
         carTd.appendChild(carBox);
         tr.appendChild(carTd);
 
         // 運転手セル
         const driverTd = document.createElement('td');
-        driverTd.appendChild(makeCell('staff', bushoCode, '配送', row, 'driver', rowData?.driver, isOsoban));
+        const driverBox = makeCell('staff', bushoCode, '配送', row, 'driver', rowData?.driver, isOsoban);
+        if (row <= needCar && !rowData?.driver) driverBox.classList.add('quota-missing');
+        driverTd.appendChild(driverBox);
         tr.appendChild(driverTd);
 
         // 助手セル
         for (let j = 1; j <= jyoshuCount; j++) {
           const jTd = document.createElement('td');
           const jField = j === 1 ? 'jyoshu1' : 'jyoshu2';
-          jTd.appendChild(makeCell('staff', bushoCode, '配送', row, jField, rowData?.[jField], isOsoban));
+          const jBox = makeCell('staff', bushoCode, '配送', row, jField, rowData?.[jField], isOsoban);
+          if (j === 1 && row <= needJyoshu && !rowData?.jyoshu1) jBox.classList.add('quota-missing');
+          jTd.appendChild(jBox);
           tr.appendChild(jTd);
         }
 
@@ -1036,6 +1086,51 @@
       }
 
       return table;
+    }
+
+    // ===== スマホ欄の自動判定 =====
+    // ルール：運転の人がスマホを持っていればその人。持っていなければ助手の人がスマホを持っていればその人。
+    // どちらも持っていなければ空欄のまま（あとで手動でドラッグして、別の人から借りたことにする）
+    function resolveSmahoStaff(r) {
+      const driverStaff = r.driver ? masters.staffMap[r.driver] : null;
+      if (driverStaff?.has_smaho) return r.driver;
+      const jyoshuStaff = r.jyoshu1 ? masters.staffMap[r.jyoshu1] : null;
+      if (jyoshuStaff?.has_smaho) return r.jyoshu1;
+      return null;
+    }
+
+    // スマホ欄が空いている行に、上のルールで自動的に人を入れる（すでに入っている欄は上書きしない）。
+    // bushoCodeを指定すればその所属だけ、省略すれば全所属が対象
+    async function autoFillSmaho(bushoCode) {
+      const targets = [];
+      banmenData.forEach(r => {
+        if (r.gyomu_code !== '配送' || r.smaho) return;
+        if (bushoCode && r.busho_code !== bushoCode) return;
+        const showSmaho = configData.some(c =>
+          c.busho_code === r.busho_code && c.gyomu_code === '配送' && c.smaho_flg === true
+        );
+        if (!showSmaho) return;
+        const smahoStaff = resolveSmahoStaff(r);
+        if (smahoStaff) targets.push({ row: r, smahoStaff });
+      });
+      for (const { row, smahoStaff } of targets) {
+        const { error } = await sb.from('shift_banmen').update({ smaho: smahoStaff }).eq('id', row.id);
+        if (!error) row.smaho = smahoStaff;
+      }
+      return targets.length;
+    }
+
+    // 「スマホ」ボタンから手動で呼ぶ場合（ドライバーを後から入れ替えた時などの再実行用）
+    async function fillSmahoFromDriver(bushoCode) {
+      if (!canEdit()) { showMsg('閲覧のみモードのため実行できません', 'err'); return; }
+      const count = await autoFillSmaho(bushoCode);
+      if (count === 0) {
+        showMsg('スマホを自動で入れられる行はありません（運転・助手ともスマホの登録がないか、すでに入力済みです）', 'err');
+        return;
+      }
+      showMsg(`スマホ欄を${count}件、自動で埋めました`, 'ok');
+      buildLeftPanel();
+      buildBoard();
     }
 
     // ===== 倉庫・事務グリッド（列数対応）=====
@@ -1078,7 +1173,7 @@
         const span = document.createElement('span');
         span.style.flex = '1';
         span.textContent = displayName;
-        span.draggable = true;
+        span.draggable = canEdit();
         span.addEventListener('dragstart', e => {
           e.stopPropagation();
           const hakenMatch = acceptType !== 'car' ? isHakenValue(value) : null;
@@ -1098,6 +1193,7 @@
         delBtn.className = 'del-btn';
         delBtn.textContent = '✕';
         delBtn.onclick = (e) => clearCell(e, delBtn);
+        if (!canEdit()) delBtn.disabled = true;
         box.appendChild(span);
         box.appendChild(delBtn);
       }
@@ -1105,7 +1201,7 @@
       // ドロップイベント
       box.addEventListener('dragover', e => { e.preventDefault(); box.classList.add('drop-over'); });
       box.addEventListener('dragleave', () => box.classList.remove('drop-over'));
-      box.addEventListener('drop', e => { e.preventDefault(); box.classList.remove('drop-over'); handleDrop(box); });
+      box.addEventListener('drop', e => { e.preventDefault(); box.classList.remove('drop-over'); if (!canEdit()) return; handleDrop(box); });
 
       return box;
     }
@@ -1118,38 +1214,50 @@
       const body = document.createElement('div');
       body.className = 'yasumi-body';
 
-      const colCount = cfg.row_count || 4;
+      // 設定の「列数」は1行に並べる列の数。実際にお休みの人がそれより多い日は、
+      // 人を隠さずに自動で下へ折り返して行を増やす（設定を変えなくても全員表示されるようにする）
+      const colWidth = cfg.row_count || 4;
+
+      // お休み欄に表示する所属の絞り込み。盤面設定で選ばれていればそれを使い、
+      // 何も選ばれていなければ、これまで通り「今の盤面に表示されている所属」を使う
+      const yasumiBushoList = (cfg.yasumi_bushos || '').split(',').filter(Boolean);
+      const yasumiAllowed = yasumiBushoList.length > 0 ? new Set(yasumiBushoList) : boardBushoCodes;
+
       ['休日', '有休', '健診'].forEach((type, idx) => {
         const typeDiv = document.createElement('div');
         typeDiv.innerHTML = `<div class="yasumi-type">${type}</div>`;
         const grid = document.createElement('div');
-        grid.style.cssText = `display:grid;grid-template-columns:repeat(${colCount},1fr);gap:3px;padding:2px;`;
+        grid.style.cssText = `display:grid;grid-template-columns:repeat(${colWidth},1fr);gap:3px;padding:2px;`;
 
-        for (let col = 1; col <= colCount; col++) {
-          const rowData = banmenData.find(r =>
-            r.busho_code === 'お休み' && r.gyomu_code === type && r.row_no === col
-          );
+        const allRows = banmenData.filter(r => r.busho_code === 'お休み' && r.gyomu_code === type);
 
-          // お休み欄は、左の社員リストの「盤面／全員」切り替えとは関係なく、
-          // 常に「今の盤面に表示されている所属」の社員マスタ上の所属の人だけを出す
-          // （データ自体は消さず、その枠へのドロップだけ受け付けないようにする）
-          let hideByFilter = false;
-          if (rowData?.driver) {
-            const staffObj = masters.staffMap[rowData.driver];
-            if (!staffObj || !boardBushoCodes.has(staffObj.busho_code)) hideByFilter = true;
-          }
+        // 表示対象（絞り込みに入っている所属の人）だけを、隙間なく前から詰めて表示する
+        const visibleRows = allRows.filter(r => {
+          const staffObj = r.driver ? masters.staffMap[r.driver] : null;
+          return staffObj && yasumiAllowed.has(staffObj.busho_code);
+        }).sort((a, b) => a.row_no - b.row_no);
 
-          if (hideByFilter) {
-            const box = document.createElement('div');
-            box.className = 'person-box hidden-by-filter';
-            box.title = '別の所属の人が入っています（「全員」に切り替えると表示されます）';
-            grid.appendChild(box);
-          } else {
-            const box = makeCell('staff', 'お休み', type, col, 'driver', rowData?.driver, false);
-            box.className = 'person-box' + (rowData?.driver ? ' filled' : '');
-            grid.appendChild(box);
-          }
+        // 絞り込みで表示していない人も含めて、すでに使われている行番号は
+        // 新しい空き枠の番号として使わない（ドロップで別の人の記録を上書きしないため）
+        const usedRowNos = new Set(allRows.map(r => r.row_no));
+        const emptySlotsNeeded = Math.max(colWidth, visibleRows.length + 1) - visibleRows.length;
+        const emptyRowNos = [];
+        let candidate = 1;
+        while (emptyRowNos.length < emptySlotsNeeded) {
+          if (!usedRowNos.has(candidate)) emptyRowNos.push(candidate);
+          candidate++;
         }
+
+        visibleRows.forEach(r => {
+          const box = makeCell('staff', 'お休み', type, r.row_no, 'driver', r.driver, false);
+          box.className = 'person-box filled';
+          grid.appendChild(box);
+        });
+        emptyRowNos.forEach(rowNo => {
+          const box = makeCell('staff', 'お休み', type, rowNo, 'driver', null, false);
+          box.className = 'person-box';
+          grid.appendChild(box);
+        });
         typeDiv.appendChild(grid);
         body.appendChild(typeDiv);
       });
@@ -1227,15 +1335,15 @@
       } else {
         const list = document.createElement('div');
         list.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px;padding:2px;';
-        // 理由ごとに色を変える（車検＝赤系、修理＝黄系、それ以外＝グレー）
+        // 理由ごとに色を変える（車検＝赤、修理＝青、それ以外＝黄）
         const REASON_STYLE = {
           '車検': { bg: '#fdecea', col: '#c0392b' },
-          '修理': { bg: '#fff3cd', col: '#8a6d1d' },
+          '修理': { bg: '#d6eaf8', col: '#1a5276' },
         };
         syakenEntries.forEach(([carCode, reason]) => {
           const car = masters.carMap[carCode];
           const carLabel = car ? (car.car_no || car.car_code) : carCode;
-          const style = REASON_STYLE[reason] || { bg: '#e8e8e8', col: '#555' };
+          const style = REASON_STYLE[reason] || { bg: '#fff3cd', col: '#8a6d1d' };
           const chip = document.createElement('span');
           chip.style.cssText = `background:${style.bg};color:${style.col};font-size:0.75rem;font-weight:bold;padding:3px 8px;border-radius:3px;`;
           chip.textContent = `${carLabel}（${reason}）`;
@@ -1263,6 +1371,7 @@
     }
 
     async function registerOen() {
+      if (!canEdit()) { showMsg('閲覧のみモードのため登録できません', 'err'); return; }
       const staffCode = document.getElementById('oen-staff-sel').value;
       const bushoCode = document.getElementById('oen-busho-sel').value;
       if (!staffCode || !bushoCode) { showMsg('社員と所属を選択してください', 'err'); return; }
@@ -1278,6 +1387,7 @@
     }
 
     async function deleteOen(id) {
+      if (!canEdit()) { showMsg('閲覧のみモードのため削除できません', 'err'); return; }
       const { error } = await sb.from('shift_banmen_oen').delete().eq('id', id);
       if (error) { showMsg('削除に失敗しました', 'err'); return; }
       oenData = oenData.filter(o => o.id !== id);
@@ -1349,7 +1459,7 @@
           chip.textContent = name;
           chip.style.borderColor = bushoColor;
           chip.style.background = lightenColor(bushoColor, 0.7);
-          chip.draggable = true;
+          chip.draggable = canEdit();
           chip.dataset.type = 'staff';
           chip.dataset.code = code;
           chip.dataset.name = name;
@@ -1432,6 +1542,7 @@
     }
 
     async function handleDrop(box) {
+      if (!canEdit()) return;
       if (!dragInfo) return;
       const bushoCode = box.dataset.busho;
       const gyomuCode = box.dataset.gyomu;
@@ -1592,6 +1703,11 @@
         }
       }
 
+      // 運転・助手が変わったら、スマホ欄も自動判定をやり直す（すでに入っている欄は上書きしない）
+      if (field === 'driver' || field === 'jyoshu1') {
+        await autoFillSmaho(bushoCode);
+      }
+
       buildLeftPanel();
       buildBoard();
 
@@ -1601,6 +1717,7 @@
 
     async function clearCell(e, btn) {
       e.stopPropagation();
+      if (!canEdit()) return;
       const box = btn.parentElement;
       const bushoCode = box.dataset.busho;
       const gyomuCode = box.dataset.gyomu;
@@ -1836,8 +1953,14 @@
 
     // ===== お休みカードをExcelに描画 =====
     function drawYasumiCardExcel(sheet, cfg, col0, row0) {
-      const colCount = cfg.row_count || 4;
-      if (colCount > 1) sheet.mergeCells(row0, col0, row0, col0 + colCount - 1);
+      // 設定の「列数」は1行に並べる列数。実際にお休みの人がそれより多い日は、
+      // 盤面の表示と同じく隠さずに折り返して行を増やす
+      const colWidth = cfg.row_count || 4;
+      // 名前が見切れないよう、他の表と同じ幅を確保する
+      for (let i = 0; i < colWidth; i++) {
+        sheet.getColumn(col0 + i).width = Math.max(sheet.getColumn(col0 + i).width || 0, 12);
+      }
+      if (colWidth > 1) sheet.mergeCells(row0, col0, row0, col0 + colWidth - 1);
       const hdr = sheet.getCell(row0, col0);
       hdr.value = 'お休み';
       hdr.font = { bold: true };
@@ -1846,24 +1969,33 @@
       let row = row0 + 1;
 
       ['休日', '有休', '健診'].forEach(type => {
-        if (colCount > 1) sheet.mergeCells(row, col0, row, col0 + colCount - 1);
+        if (colWidth > 1) sheet.mergeCells(row, col0, row, col0 + colWidth - 1);
         const lbl = sheet.getCell(row, col0);
         lbl.value = type;
         lbl.font = { bold: true, color: { argb: 'FF000000' } };
         lbl.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDDDDDD' } };
         lbl.alignment = { horizontal: 'left', vertical: 'middle', indent: 1 };
         row++;
-        for (let c = 1; c <= colCount; c++) {
-          const rec = banmenData.find(x => x.busho_code === 'お休み' && x.gyomu_code === type && x.row_no === c);
-          const cell = sheet.getCell(row, col0 + c - 1);
-          cell.value = rec?.driver ? getStaffName(rec.driver) : '';
-          cell.alignment = { horizontal: 'center', vertical: 'middle' };
-          cell.border = { top:{style:'thin'}, bottom:{style:'thin'}, left:{style:'thin'}, right:{style:'thin'} };
+
+        const maxRowNo = banmenData.reduce((m, r) =>
+          (r.busho_code === 'お休み' && r.gyomu_code === type && r.row_no > m) ? r.row_no : m, 0);
+        const colCount = Math.max(colWidth, maxRowNo); // 実際にいる人数分は必ず表示する
+        const lineCount = Math.ceil(colCount / colWidth); // 折り返し後の行数
+
+        for (let line = 0; line < lineCount; line++) {
+          for (let cIdx = 1; cIdx <= colWidth; cIdx++) {
+            const c = line * colWidth + cIdx;
+            const rec = banmenData.find(x => x.busho_code === 'お休み' && x.gyomu_code === type && x.row_no === c);
+            const cell = sheet.getCell(row, col0 + cIdx - 1);
+            cell.value = rec?.driver ? getStaffName(rec.driver) : '';
+            cell.alignment = { horizontal: 'center', vertical: 'middle' };
+            cell.border = { top:{style:'thin'}, bottom:{style:'thin'}, left:{style:'thin'}, right:{style:'thin'} };
+          }
+          row++;
         }
-        row++;
       });
       const bottomRow = row - 1;
-      applyOuterBorder(sheet, row0, col0, bottomRow, col0 + colCount - 1);
+      applyOuterBorder(sheet, row0, col0, bottomRow, col0 + colWidth - 1);
       row++; // 空白行
       return row;
     }
@@ -2018,6 +2150,7 @@
       return s?.name || code;
     }
     async function recreate() {
+      if (!canEdit()) { showMsg('閲覧のみモードのため再作成できません', 'err'); return; }
       if (!confirm('この日の盤面データを一度すべて削除して、業務シフトから作り直しますか？\n※現在の盤面データ（テストで入れたものも含む）は消えます')) return;
       showMsg('再作成中...', 'ok');
 

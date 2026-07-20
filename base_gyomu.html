@@ -133,8 +133,15 @@
       buildFilterButtons();
       buildGyomuListModeSelect();
       initTbodyEvents();
+      applyReadOnlyIfNeeded();
       await loadRows();
       buildGyomuList(selectedCode);
+    }
+
+    // PC権限がない人は、ドラッグでの変更や保存ができないようにする（閲覧のみ）
+    function applyReadOnlyIfNeeded() {
+      if (canEdit()) return;
+      showReadOnlyBannerIfNeeded();
     }
 
     // 業務リストの絞り込みプルダウンに、全所属を追加する
@@ -160,7 +167,7 @@
       emptyItem.className = 'gyomu-item';
       emptyItem.style.cssText = 'background:#eee;color:#888';
       emptyItem.textContent = '空白';
-      emptyItem.draggable = true;
+      emptyItem.draggable = canEdit();
       emptyItem.addEventListener('dragstart', e => { dragGyomuCode = ''; e.dataTransfer.effectAllowed = 'copy'; });
       panel.appendChild(emptyItem);
 
@@ -179,7 +186,7 @@
         item.style.color = getTextColor(color);
         item.textContent = g.gyomu_name;
         item.title = hasTekisei ? g.gyomu_name : `${g.gyomu_name}（適性なし）`;
-        item.draggable = true;
+        item.draggable = canEdit();
         item.addEventListener('dragstart', e => { dragGyomuCode = g.gyomu_code; e.dataTransfer.effectAllowed = 'copy'; });
         panel.appendChild(item);
       });
@@ -190,7 +197,7 @@
         item.className = 'gyomu-item';
         item.style.cssText = 'background:#e0e0e0;color:#c0392b';
         item.textContent = label;
-        item.draggable = true;
+        item.draggable = canEdit();
         item.addEventListener('dragstart', e => { dragGyomuCode = code; e.dataTransfer.effectAllowed = 'copy'; });
         panel.appendChild(item);
       });
@@ -215,6 +222,7 @@
         if (!td) return;
         e.preventDefault();
         td.classList.remove('drop-over');
+        if (!canEdit()) return; // 閲覧のみモードでは配置を変更できない
         const staffCode = td.dataset.staff;
         const dayKey = td.dataset.key;
         const gyomuCode = dragGyomuCode;
@@ -434,6 +442,12 @@
             </td>`;
           if (isHidden) btnTr.classList.add('hidden');
           tbody.appendChild(btnTr);
+
+          // 閲覧のみモードでは、編集欄・ボタンを触れないようにする
+          if (!canEdit()) {
+            editTr.querySelectorAll('select').forEach(sel => sel.disabled = true);
+            btnTr.querySelectorAll('button').forEach(btn => btn.disabled = true);
+          }
         }
       });
     }
@@ -472,6 +486,7 @@
     }
 
     async function saveRow(staffCode) {
+      if (!canEdit()) { showMsg('閲覧のみモードのため変更できません', 'err'); return; }
       const data = { staff_code: staffCode };
       DAYS.forEach(d => {
         const sel = document.getElementById(`sel_${d}`);

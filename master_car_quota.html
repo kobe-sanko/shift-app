@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>必要台数マスタ</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="common.js"></script>
+  <style>
+    body { font-family: sans-serif; margin: 0; padding: 10px; background: #f5f5f5; }
+    h1 { font-size: 1.2rem; text-align: center; margin: 6px 0; }
+    .back { display: table; text-align: center; margin: 4px auto 8px; color: #4a90e2; text-decoration: none; }
+    .desc { background: #e8f4fd; border-radius: 6px; padding: 10px 14px; margin: 0 auto 12px; max-width: 900px; font-size: 0.85rem; }
+    .top-bar { display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+    .month-select { font-size: 0.9rem; padding: 4px 8px; border: 1px solid #ccc; border-radius: 4px; }
+    .btn { font-size: 0.82rem; padding: 6px 14px; border: none; border-radius: 4px; cursor: pointer; color: white; }
+    .btn-save { background: #27ae60; }
+    .filter-row { display: flex; flex-wrap: wrap; gap: 5px; justify-content: center; margin-bottom: 12px; }
+    .filter-btn { padding: 4px 12px; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85rem; }
+    .filter-btn.active { outline: 3px solid #333; font-weight: bold; }
+    .msg { text-align: center; font-size: 0.85rem; padding: 6px; border-radius: 4px; margin-bottom: 8px; display: none; }
+    .msg.ok  { background: #d4edda; color: #155724; display: block; }
+    .msg.err { background: #fdecea; color: #c0392b; display: block; }
+    .table-wrap { overflow-x: auto; }
+    table { border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,0.1); font-size: 0.8rem; margin: 0 auto; }
+    th, td { padding: 4px 3px; text-align: center; border: 1px solid #eee; min-width: 34px; }
+    th.day-th { background: #eee; font-weight: bold; }
+    th.sat-col { color: #2980b9; }
+    th.sun-col { color: #c0392b; }
+    td.row-label { background: #f5f5f5; font-weight: bold; text-align: left; padding-left: 8px; white-space: nowrap; position: sticky; left: 0; }
+    input.qty-input { width: 36px; font-size: 0.8rem; text-align: center; border: 1px solid #ccc; border-radius: 3px; padding: 2px; }
+    .loading { text-align: center; padding: 20px; color: #888; }
+    .empty-msg { text-align: center; padding: 20px; color: #aaa; }
+  </style>
+</head>
+<body>
+  <h1>🚚 必要台数マスタ</h1>
+  <a class="back" href="index.html">← メニューへ</a>
+  <div id="msg" class="msg"></div>
+
+  <div class="desc">
+    📋 所属ごとに、1か月分の「必要台数」と「そのうち助手あり台数」を日別に登録します。盤面では、この台数に届いていない行が赤枠で強調されます。
+  </div>
+
+  <div class="top-bar">
+    <select class="month-select" id="month-sel" onchange="onMonthChange()"></select>
+    <button class="btn btn-save" onclick="saveAll()">💾 保存</button>
+  </div>
+
+  <div class="filter-row" id="filter-row"></div>
+
+  <div id="loading" class="loading">読み込み中...</div>
+  <div id="body-area" style="display:none">
+    <div id="no-busho" class="empty-msg" style="display:none">上から所属を選んでください</div>
+    <div class="table-wrap">
+      <table id="main-table" style="display:none">
+        <thead><tr id="header-row"></tr></thead>
+        <tbody>
+          <tr id="car-row"><td class="row-label">必要台数</td></tr>
+          <tr id="jyoshu-row"><td class="row-label">助手あり台数</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    let masters = {};
+    let currentYM = getCurrentYearMonth();
+    let currentBusho = '';
+    let daysInMonth = 0;
+    let quotaRows = []; // 今の所属・月のデータ（DBそのまま）
+
+    async function init() {
+      masters = await loadMasters();
+      buildMonthSelect();
+      buildFilterButtons();
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('body-area').style.display = '';
+      document.getElementById('no-busho').style.display = '';
+    }
+
+    function buildMonthSelect() {
+      const sel = document.getElementById('month-sel');
+      const now = new Date();
+      for (let i = -2; i <= 3; i++) {
+        const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const ym = `${y}${m}`;
+        const opt = document.createElement('option');
+        opt.value = ym;
+        opt.textContent = `${y}年${m}月`;
+        if (ym === currentYM) opt.selected = true;
+        sel.appendChild(opt);
+      }
+    }
+
+    function buildFilterButtons() {
+      const row = document.getElementById('filter-row');
+      masters.bushos.filter(b => !b.busho_code.startsWith('9')).forEach(b => {
+        const btn = document.createElement('button');
+        btn.className = 'filter-btn';
+        btn.style.background = b.color_h;
+        btn.style.color = getTextColor(b.color_h);
+        btn.textContent = b.busho_name;
+        btn.onclick = () => selectBusho(b.busho_code, btn);
+        row.appendChild(btn);
+      });
+    }
+
+    function onMonthChange() {
+      currentYM = document.getElementById('month-sel').value;
+      if (currentBusho) loadQuota();
+    }
+
+    function selectBusho(bushoCode, btn) {
+      currentBusho = bushoCode;
+      document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      document.getElementById('no-busho').style.display = 'none';
+      loadQuota();
+    }
+
+    async function loadQuota() {
+      const { year, month } = parseYearMonth(currentYM);
+      daysInMonth = getDaysInMonth(year, month);
+      const dateFrom = `${currentYM}01`;
+      const dateTo = `${currentYM}${String(daysInMonth).padStart(2,'0')}`;
+
+      const { data, error } = await sb.from('shift_car_quota')
+        .select('*')
+        .eq('busho_code', currentBusho)
+        .gte('date', dateFrom)
+        .lte('date', dateTo);
+      if (error) { showMsg('データの読み込みに失敗しました: ' + error.message, 'err'); return; }
+      quotaRows = data || [];
+      renderTable();
+    }
+
+    function renderTable() {
+      const { year, month } = parseYearMonth(currentYM);
+      const headerRow = document.getElementById('header-row');
+      let hdr = '<th class="row-label">日付</th>';
+      for (let d = 1; d <= daysInMonth; d++) {
+        const wd = new Date(year, month - 1, d).getDay();
+        const cls = wd === 0 ? 'sun-col' : wd === 6 ? 'sat-col' : '';
+        hdr += `<th class="day-th ${cls}">${d}<br>${getWeekdayName(wd)}</th>`;
+      }
+      headerRow.innerHTML = hdr;
+
+      const byDay = {};
+      quotaRows.forEach(r => { byDay[r.date] = r; });
+
+      let carHtml = '<td class="row-label">必要台数</td>';
+      let jyoshuHtml = '<td class="row-label">助手あり台数</td>';
+      for (let d = 1; d <= daysInMonth; d++) {
+        const dateStr = `${currentYM}${String(d).padStart(2,'0')}`;
+        const rec = byDay[dateStr];
+        carHtml += `<td><input type="number" min="0" class="qty-input" id="car_${d}" value="${rec?.need_car ?? ''}"></td>`;
+        jyoshuHtml += `<td><input type="number" min="0" class="qty-input" id="jyoshu_${d}" value="${rec?.need_jyoshu ?? ''}"></td>`;
+      }
+      document.getElementById('car-row').innerHTML = carHtml;
+      document.getElementById('jyoshu-row').innerHTML = jyoshuHtml;
+      document.getElementById('main-table').style.display = '';
+    }
+
+    async function saveAll() {
+      if (!currentBusho) { showMsg('所属を選んでください', 'err'); return; }
+      const byDay = {};
+      quotaRows.forEach(r => { byDay[r.date] = r; });
+
+      const upserts = [];
+      const deletes = [];
+      for (let d = 1; d <= daysInMonth; d++) {
+        const dateStr = `${currentYM}${String(d).padStart(2,'0')}`;
+        const carVal = document.getElementById(`car_${d}`).value;
+        const jyoshuVal = document.getElementById(`jyoshu_${d}`).value;
+        const existing = byDay[dateStr];
+
+        if (carVal === '' && jyoshuVal === '') {
+          if (existing) deletes.push(existing.id);
+          continue;
+        }
+        const need_car = carVal === '' ? 0 : parseInt(carVal);
+        const need_jyoshu = jyoshuVal === '' ? 0 : parseInt(jyoshuVal);
+        if (existing) {
+          upserts.push({ id: existing.id, busho_code: currentBusho, date: dateStr, need_car, need_jyoshu });
+        } else {
+          upserts.push({ busho_code: currentBusho, date: dateStr, need_car, need_jyoshu });
+        }
+      }
+
+      if (deletes.length > 0) {
+        const { error } = await sb.from('shift_car_quota').delete().in('id', deletes);
+        if (error) { showMsg('削除に失敗しました: ' + error.message, 'err'); return; }
+      }
+      if (upserts.length > 0) {
+        const { error } = await sb.from('shift_car_quota').upsert(upserts);
+        if (error) { showMsg('保存に失敗しました: ' + error.message, 'err'); return; }
+      }
+      showMsg('保存しました', 'ok');
+      await loadQuota();
+    }
+
+    function showMsg(text, type) {
+      const el = document.getElementById('msg');
+      el.textContent = text;
+      el.className = `msg ${type}`;
+      setTimeout(() => { el.className = 'msg'; }, 3000);
+    }
+
+    init();
+  </script>
+</body>
+</html>

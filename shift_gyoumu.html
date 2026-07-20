@@ -23,6 +23,18 @@
     .msg.ok  { background: #d4edda; color: #155724; display: block; }
     .msg.err { background: #fdecea; color: #c0392b; display: block; }
 
+    /* 車検・修理の車番をクリックしたときの吹き出し */
+    .syaken-tooltip {
+      display: none; position: fixed; z-index: 2000;
+      background: #333; color: white; font-size: 0.75rem; font-weight: bold;
+      padding: 4px 8px; border-radius: 4px; white-space: nowrap;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+    }
+    .syaken-tooltip::after {
+      content: ''; position: absolute; top: 100%; left: 50%; transform: translateX(-50%);
+      border: 5px solid transparent; border-top-color: #333;
+    }
+
     /* レイアウト */
     .main-layout { display: flex; gap: 8px; align-items: flex-start; }
 
@@ -121,6 +133,7 @@
     <button class="btn pc-only-btn" style="background:#1d6f42;" onclick="exportExcel(false)">📊 Excel出力</button>
     <button class="btn pc-only-btn" style="background:#1a5276;" onclick="exportExcel(true)">📊 Excel出力2</button>
     <button class="btn pc-only-btn" style="background:#8e44ad;" onclick="openHyojiJunDialog()">📋 表示順設定</button>
+    <button class="btn pc-only-btn" style="background:#16a085;" id="btn-badge-mode" onclick="toggleBadgeLabelMode()">🔀 表示：所属名</button>
   </div>
 
   <div class="filter-row" id="filter-row">
@@ -209,6 +222,7 @@
     let smahoData = [];      // shift_banmenのsmaho列データ（月分）
     let smahoConfig = [];    // smaho_flg=trueの配送設定
     let chibanCodes = new Set(); // 遅番行に対応する業務コードのセット
+    let badgeLabelMode = 'busho'; // 'busho'=所属名で表示 / 'gyomu'=業務名（運転1など）で表示
     let hyojiJunMap = {};    // busho_code → { staff_code: jun } の表示順マップ
     let syakenByDay = {};    // d01〜d31 → その日使えない車番の配列
 
@@ -220,7 +234,17 @@
       buildFilterButtons();
       buildGyomuListModeSelect();
       initTbodyEvents(); // tbodyのイベントは1回だけ設定
+      applyReadOnlyIfNeeded();
       await loadData();
+    }
+
+    // PC権限がない人は、作成・保存・ドラッグでの変更ができないようにする（閲覧のみ）
+    function applyReadOnlyIfNeeded() {
+      if (canEdit()) return;
+      showReadOnlyBannerIfNeeded();
+      document.getElementById('btn-create-shift').disabled = true;
+      const saveBtn = document.getElementById('btn-save');
+      if (saveBtn) saveBtn.disabled = true;
     }
 
     // 業務リストの絞り込みプルダウンに、全所属を追加する
@@ -238,9 +262,19 @@
     function initTbodyEvents() {
       const tbody = document.getElementById('tbody');
 
+      // 車検・修理の車番をクリック → 車番のそばに吹き出しで理由を表示
+      tbody.addEventListener('click', e => {
+        const chip = e.target.closest('.syaken-chip');
+        if (chip) {
+          e.stopPropagation();
+          showSyakenTooltip(chip);
+        }
+      });
+
       // 行クリック → 社員選択
       tbody.addEventListener('click', e => {
         if (e.target.closest('button') || e.target.closest('select')) return;
+        if (e.target.closest('.syaken-chip')) return;
         const tr = e.target.closest('tr[data-staff-code]');
         if (!tr) return;
         const code = tr.dataset.staffCode;
@@ -264,6 +298,7 @@
         const td = e.target.closest('td.shift-td');
         if (!td) return;
         e.preventDefault();
+        if (!canEdit()) return; // 閲覧のみモードでは配置を変更できない
         td.classList.remove('drop-over');
         const staffCode = td.dataset.staff;
         const key = td.dataset.key;
@@ -360,7 +395,7 @@
       emptyItem.className = 'gyomu-item';
       emptyItem.style.cssText = 'background:#eee;color:#888';
       emptyItem.textContent = '空白';
-      emptyItem.draggable = true;
+      emptyItem.draggable = canEdit();
       emptyItem.addEventListener('dragstart', e => { dragGyomuCode = ''; e.dataTransfer.effectAllowed = 'copy'; });
       panel.appendChild(emptyItem);
 
@@ -381,7 +416,7 @@
         item.style.color = getTextColor(color);
         item.textContent = g.gyomu_name;
         item.title = hasTekisei ? g.gyomu_name : `${g.gyomu_name}（適性なし）`;
-        item.draggable = true;
+        item.draggable = canEdit();
         item.addEventListener('dragstart', e => { dragGyomuCode = g.gyomu_code; e.dataTransfer.effectAllowed = 'copy'; });
         panel.appendChild(item);
       });
@@ -392,7 +427,7 @@
         item.className = 'gyomu-item';
         item.style.cssText = 'background:#e0e0e0;color:#c0392b';
         item.textContent = label;
-        item.draggable = true;
+        item.draggable = canEdit();
         item.addEventListener('dragstart', e => { dragGyomuCode = code; e.dataTransfer.effectAllowed = 'copy'; });
         panel.appendChild(item);
       });
@@ -461,7 +496,7 @@
         chibanCodes.add(`${r.busho_code}-2${row}`);
       });
 
-      // 車検・修理（使えない車）：日付(yyyymmdd) → その日使えない車のリスト（表示名＋所属コード）
+      // 車検・修理（使えない車）：日付(yyyymmdd) → その日使えない車のリスト（表示名＋所属コード＋理由）
       syakenByDay = {};
       (syakenRes.data || []).forEach(r => {
         const day = parseInt(r.date.slice(6, 8));
@@ -470,9 +505,7 @@
         const car = masters.carMap[r.car_code];
         const carLabel = car ? (car.car_no || car.car_code) : r.car_code;
         const reason = r.memo || '車検';
-        // 車検はこれまで通り車番だけ、それ以外の理由は区別できるようカッコで添える
-        const label = reason === '車検' ? carLabel : `${carLabel}(${reason})`;
-        syakenByDay[key].push({ label, bushoCode: car ? car.busho_code : null });
+        syakenByDay[key].push({ label: carLabel, reason, bushoCode: car ? car.busho_code : null });
       });
 
       buildHeader();
@@ -496,6 +529,52 @@
       thead.innerHTML = html;
     }
 
+    // 車検・修理の理由ごとの色（車検＝赤、修理＝青、それ以外＝黄）
+    const SYAKEN_REASON_COLOR = {
+      '車検': { bg: '#fdecea', col: '#c0392b' },
+      '修理': { bg: '#d6eaf8', col: '#1a5276' },
+    };
+    function syakenReasonStyle(reason) {
+      return SYAKEN_REASON_COLOR[reason] || { bg: '#fff3cd', col: '#8a6d1d' };
+    }
+
+    // 車検・修理の車番のそばに、吹き出しで理由を表示する
+    function showSyakenTooltip(chip) {
+      let tip = document.getElementById('syaken-tooltip');
+      if (!tip) {
+        tip = document.createElement('div');
+        tip.id = 'syaken-tooltip';
+        tip.className = 'syaken-tooltip';
+        document.body.appendChild(tip);
+      }
+      tip.textContent = `${chip.dataset.car}：${chip.dataset.reason}`;
+      const rect = chip.getBoundingClientRect();
+      tip.style.display = 'block';
+      // いったん表示してから幅を測り、車番の少し上・中央に来るよう位置を合わせる
+      const tipWidth = tip.offsetWidth;
+      let left = rect.left + rect.width / 2 - tipWidth / 2;
+      left = Math.max(4, Math.min(left, window.innerWidth - tipWidth - 4));
+      tip.style.left = `${left}px`;
+      tip.style.top = `${rect.top - tip.offsetHeight - 6}px`;
+
+      clearTimeout(tip._hideTimer);
+      tip._hideTimer = setTimeout(() => { tip.style.display = 'none'; }, 2500);
+    }
+    // 吹き出し以外の場所をクリックしたら消す
+    document.addEventListener('click', () => {
+      const tip = document.getElementById('syaken-tooltip');
+      if (tip) tip.style.display = 'none';
+    });
+
+    // 「運転1」などの表示を、業務名のまま出すか所属名で出すか切り替える
+    function toggleBadgeLabelMode() {
+      badgeLabelMode = badgeLabelMode === 'busho' ? 'gyomu' : 'busho';
+      document.getElementById('btn-badge-mode').textContent =
+        badgeLabelMode === 'busho' ? '🔀 表示：所属名' : '🔀 表示：業務名';
+      renderTable();
+      buildSmahoTable();
+    }
+
     // ===== バッジ表示 =====
     function getBadgeHtml(code) {
       if (!code || code === 'EMPTY') return `<span class="badge empty">－</span>`;
@@ -511,10 +590,12 @@
       const g = masters.gyomuMap[code];
       if (g) {
         const color = g.color_h || '#ccc';
-        // 盤面の配送表に使われる「運転1」「助手1」のような番号付きの業務は、
-        // 色だけだと所属の判別がしにくいため、業務名の代わりに所属名を表示する
-        const isBanmenGyomu = /^(運転|助手)\d+$/.test(g.gyomu_name);
-        const label = isBanmenGyomu ? (masters.bushoMap[g.busho_code]?.busho_name || g.gyomu_name) : g.gyomu_name;
+        // 盤面の配送・倉庫・事務表に使われる「運転1」「倉庫2」のような番号付きの業務は、
+        // 色だけだと所属の判別がしにくいため、切り替えボタンで業務名／所属名を選べるようにする
+        const isBanmenGyomu = /^(運転|助手|倉庫|事務)\d+$/.test(g.gyomu_name);
+        const label = (badgeLabelMode === 'busho' && isBanmenGyomu)
+          ? (masters.bushoMap[g.busho_code]?.busho_name || g.gyomu_name)
+          : g.gyomu_name;
         return `<span class="badge" style="background:${color};color:${getTextColor(color)};${chibanStyle}">${label}</span>`;
       }
       // 所属コード
@@ -601,20 +682,33 @@
               <button class="btn btn-save" onclick="saveStaff('${s.staff_code}')" style="margin-left:8px">この社員を保存</button>
             </td>`;
           tbody.appendChild(btnTr);
+
+          // 閲覧のみモードでは、編集欄・ボタンを触れないようにする
+          if (!canEdit()) {
+            editTr.querySelectorAll('select').forEach(sel => sel.disabled = true);
+            btnTr.querySelectorAll('button').forEach(btn => btn.disabled = true);
+          }
         }
       });
 
       // 車検（使えない車）行：全社員共通で1行、一番下に表示
       const syakenTr = document.createElement('tr');
       syakenTr.id = 'syaken-row';
-      let syakenHtml = `<td class="name-td" style="font-weight:bold;color:#c0392b">🔧 車検・修理</td><td></td>`;
+      let syakenHtml = `<td class="name-td" style="font-weight:bold">🔧 <span style="color:#c0392b">車検</span>・<span style="color:#1a5276">修理</span></td><td></td>`;
       for (let d = 1; d <= daysInMonth; d++) {
         const key = `d${String(d).padStart(2,'0')}`;
         const cls = getDayClass(d);
         // 所属で絞り込み中は、その所属の車両だけ表示する
         const cars = (syakenByDay[key] || []).filter(c => !currentFilter || c.bushoCode === currentFilter);
-        const label = cars.length ? cars.map(c => c.label).join('・') : '';
-        syakenHtml += `<td class="${cls}" style="color:#c0392b;font-weight:bold;font-size:0.7rem">${label}</td>`;
+        // 理由は文字で書かず色分けだけにして、横幅を取りすぎないようにする（クリックすると理由が出る）。
+        // 同じ日に複数台あるときは、横に並べず改行して縦に積む
+        const label = cars.map(c => {
+          const style = syakenReasonStyle(c.reason);
+          const reasonAttr = String(c.reason).replace(/"/g, '&quot;');
+          const carAttr = String(c.label).replace(/"/g, '&quot;');
+          return `<span class="syaken-chip" data-car="${carAttr}" data-reason="${reasonAttr}" style="background:${style.bg};color:${style.col};border-radius:3px;padding:0 3px;display:inline-block;cursor:pointer;">${c.label}</span>`;
+        }).join('<br>');
+        syakenHtml += `<td class="${cls}" style="font-weight:bold;font-size:0.7rem">${label}</td>`;
       }
       syakenTr.innerHTML = syakenHtml;
       tbody.appendChild(syakenTr);
@@ -684,7 +778,7 @@
         const busho = masters.bushoMap[bushoCode];
         const color = busho?.color_h || '#e67e22';
         createBtn.textContent = `業務シフト作成（${bushoName}のみ）`;
-        createBtn.disabled = false;
+        createBtn.disabled = !canEdit();
         createBtn.style.background = color;
         createBtn.style.color = getTextColor(color);
       } else {
@@ -751,6 +845,7 @@
 
     // ===== ベース業務からコピー =====
     async function copyFromBase(staffCode) {
+      if (!canEdit()) { showMsg('閲覧のみモードのため変更できません', 'err'); return; }
       const { data } = await sb.from('shift_base_gyomu').select('*').eq('staff_code', staffCode).single();
       if (!data) { showMsg('ベース業務が登録されていません', 'err'); return; }
 
@@ -774,6 +869,7 @@
 
     // ===== 保存 =====
     async function saveStaff(staffCode) {
+      if (!canEdit()) { showMsg('閲覧のみモードのため変更できません', 'err'); return; }
       const current = shiftMap[staffCode] || {};
       const cellChanged = changedCells[staffCode] || {};
       const data = { yearmonth: currentYM, staff_code: staffCode };
@@ -820,6 +916,7 @@
 
     // ===== 一括作成 =====
     async function createShift() {
+      if (!canEdit()) { showMsg('閲覧のみモードのため作成できません', 'err'); return; }
       // 全員表示中は誤操作防止のためボタンを押せなくしているが、念のためここでも防ぐ
       if (!currentFilter) { showMsg('全員が表示されているときは作成できません。所属で絞り込んでください', 'err'); return; }
       const scopeLabel = currentFilter ? (masters.bushoMap[currentFilter]?.busho_name || currentFilter) : '全員';
@@ -985,7 +1082,7 @@
           recs.sort((a,b) => a.row_no - b.row_no);
 
           if (recs.length > 0) {
-            const labels = recs.map(r => `<span style="background:#e91e63;color:white;border-radius:3px;padding:1px 4px;font-size:0.72rem;display:inline-block;">${r.row_no}便</span>`).join('<br>');
+            const labels = recs.map(r => `<span style="background:#e91e63;color:white;border-radius:3px;padding:1px 3px;font-size:0.72rem;display:inline-block;min-width:14px;">${r.row_no}</span>`).join('<br>');
             tdHtml += `<td class="${cls}" style="text-align:center;${borderStyle}${bgStyle}">${labels}</td>`;
           } else {
             tdHtml += `<td class="${cls}" style="text-align:center;${borderStyle}${bgStyle}"><span style="color:#ccc;">－</span></td>`;
@@ -1224,6 +1321,7 @@
     }
 
     async function saveHyojiJun() {
+      if (!canEdit()) { showMsg('閲覧のみモードのため変更できません', 'err'); return; }
       if (!currentFilter) return;
       const records = hyojiJunDialogList.map((staff_code, idx) => ({
         busho_code: currentFilter, staff_code, hyoji_jun: idx,

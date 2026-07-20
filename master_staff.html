@@ -96,6 +96,13 @@
           <option value="true">あり</option>
         </select>
       </div>
+      <div class="form-cell" style="width:80px">
+        <label>スマホ</label>
+        <select id="f_has_smaho">
+          <option value="false">なし</option>
+          <option value="true">あり</option>
+        </select>
+      </div>
     </div>
     <div class="btn-row">
       <button class="btn-add"    onclick="saveRow('add')">新規登録</button>
@@ -116,6 +123,7 @@
         <th style="width:90px">退職済み</th>
         <th style="width:80px">残業上限</th>
         <th style="width:80px">PC権限</th>
+        <th style="width:80px">スマホ</th>
       </tr>
     </thead>
     <tbody id="tbody"></tbody>
@@ -206,6 +214,9 @@
         const adminHtml = r.is_admin
           ? `<span class="badge" style="background:#d4edda;color:#155724">あり</span>`
           : `<span class="badge" style="background:#eee;color:#999">なし</span>`;
+        const smahoHtml = r.has_smaho
+          ? `<span class="badge" style="background:#d4edda;color:#155724">あり</span>`
+          : `<span class="badge" style="background:#eee;color:#999">なし</span>`;
         tr.innerHTML = `
           <td>${r.staff_code}</td>
           <td class="${r.retired ? 'retired-text' : ''}">${r.name || ''}</td>
@@ -214,6 +225,7 @@
           <td>${r.retired ? '退職' : '在籍'}</td>
           <td>${otHtml}</td>
           <td>${adminHtml}</td>
+          <td>${smahoHtml}</td>
         `;
         tbody.appendChild(tr);
       });
@@ -229,6 +241,7 @@
       document.getElementById('f_retired').value  = r.retired ? 'true' : 'false';
       document.getElementById('f_overtime').value = r.overtime_limit || 80;
       document.getElementById('f_is_admin').value = r.is_admin ? 'true' : 'false';
+      document.getElementById('f_has_smaho').value = r.has_smaho ? 'true' : 'false';
       renderTable();
     }
 
@@ -252,6 +265,7 @@
         retired:        document.getElementById('f_retired').value === 'true',
         overtime_limit: parseInt(document.getElementById('f_overtime').value) || 80,
         is_admin:       document.getElementById('f_is_admin').value === 'true',
+        has_smaho:      document.getElementById('f_has_smaho').value === 'true',
       };
       // 同じ車両が別の在籍社員にすでに登録されていないかチェック
       if (data.car_code) {

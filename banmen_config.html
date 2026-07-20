@@ -126,6 +126,16 @@
     </div>
   </div>
 
+  <!-- お休み欄に表示する所属の絞り込み -->
+  <div class="add-box">
+    <h3>😴 お休み欄（休日・有休・健診）に表示する所属</h3>
+    <div class="desc" style="margin-bottom:8px;">
+      チェックした所属の人だけが、盤面のお休み欄に表示されます。日曜日など人数が多くなりすぎる時に、絞り込みで使えます。
+      何もチェックしなければ、これまで通り「盤面に表示されている所属」の人が対象になります。
+    </div>
+    <div id="yasumi-busho-checks" style="display:flex;flex-wrap:wrap;gap:8px;"></div>
+  </div>
+
   <!-- 設定リスト -->
   <div id="loading" class="loading">読み込み中...</div>
   <div class="config-list" id="config-list" style="display:none;">
@@ -151,6 +161,7 @@
     async function init() {
       masters = await loadMasters();
       buildBushoSelect();
+      buildYasumiBushoChecks();
       await loadConfig();
     }
 
@@ -166,11 +177,32 @@
       });
     }
 
+    // お休み欄に表示する所属の絞り込みチェックボックスを作る
+    function buildYasumiBushoChecks() {
+      const wrap = document.getElementById('yasumi-busho-checks');
+      wrap.innerHTML = '';
+      masters.bushos.filter(b => !b.busho_code.startsWith('9')).forEach(b => {
+        const label = document.createElement('label');
+        label.style.cssText = `display:flex;align-items:center;gap:4px;background:${b.color_h};color:${getTextColor(b.color_h)};padding:3px 8px;border-radius:4px;font-size:0.82rem;cursor:pointer;`;
+        label.innerHTML = `<input type="checkbox" class="yasumi-busho-check" value="${b.busho_code}"> ${b.busho_name}`;
+        wrap.appendChild(label);
+      });
+    }
+
+    // 保存済みの選択状態をチェックボックスに反映する
+    function applyYasumiBushoChecks(yasumiRow) {
+      const selected = (yasumiRow?.yasumi_bushos || '').split(',').filter(Boolean);
+      document.querySelectorAll('.yasumi-busho-check').forEach(chk => {
+        chk.checked = selected.includes(chk.value);
+      });
+    }
+
     async function loadConfig() {
       const { data, error } = await sb.from('shift_banmen_config').select('*').order('hyoji_jun');
       if (error) { showMsg('読み込みに失敗しました: ' + error.message, 'err'); return; }
       configData = data || [];
       renderList();
+      applyYasumiBushoChecks(configData.find(r => r.sp_jun === 99));
       document.getElementById('loading').style.display = 'none';
       document.getElementById('config-list').style.display = '';
     }
@@ -536,6 +568,9 @@
         });
       });
 
+      // お休み欄に表示する所属の絞り込み（チェックなしなら空欄＝これまで通りの動きにする）
+      const yasumiBushos = [...document.querySelectorAll('.yasumi-busho-check:checked')].map(c => c.value).join(',');
+
       // 特殊ブロック（お休み・応援）
       specialItems.forEach(el => {
         const spJun = parseInt(el.dataset.spJun);
@@ -548,6 +583,7 @@
           row_count: ncols, jyoshu_count: 0, osoban_row: 0,
           hyoji_jun: hyojiJun++, col_no: colNo, row_no: rowNo,
           busho_hyoji_jun: 999, col_width: ncols, sp_jun: spJun,
+          yasumi_bushos: spJun === 99 ? yasumiBushos : null,
         });
       });
 

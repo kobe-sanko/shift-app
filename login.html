@@ -48,15 +48,8 @@
         return;
       }
 
-      // パソコン幅（スマホではない）の場合は、PC権限がある社員のみログインできる
-      const isPc = window.innerWidth > 768;
-      if (isPc && !data.is_admin) {
-        err.textContent = 'このパソコンからは、PC権限のある社員のみログインできます';
-        err.style.display = 'block';
-        return;
-      }
-
-      localStorage.setItem('shiftAppAuth', JSON.stringify({ code: data.staff_code, name: data.name }));
+      // 誰でもログインできる。PC権限（is_admin）は、各画面での「作成・修正できるかどうか」の判定に使う
+      localStorage.setItem('shiftAppAuth', JSON.stringify({ code: data.staff_code, name: data.name, isAdmin: !!data.is_admin }));
       location.href = 'index.html';
     }
   </script>

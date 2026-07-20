@@ -118,15 +118,15 @@
       document.getElementById('f_memo_cell').style.display = isOther ? '' : 'none';
     }
 
-    // 理由の種類ごとの表示色
-    const REASON_COLOR = { '車検': '#fdecea', '修理': '#fff3cd' };
-    const REASON_TEXT_COLOR = { '車検': '#c0392b', '修理': '#8a6d1d' };
+    // 理由の種類ごとの表示色（車検＝赤、修理＝青、それ以外＝黄）
+    const REASON_COLOR = { '車検': '#fdecea', '修理': '#d6eaf8' };
+    const REASON_TEXT_COLOR = { '車検': '#c0392b', '修理': '#1a5276' };
     function reasonBadgeHtml(memo) {
       // 過去に登録されたメモ（車検/修理以外の自由記述）は「その他」扱いにする
       const known = memo === '車検' || memo === '修理';
       const label = memo || '車検';
-      const bg = known ? REASON_COLOR[label] : '#e8e8e8';
-      const col = known ? REASON_TEXT_COLOR[label] : '#555';
+      const bg = known ? REASON_COLOR[label] : '#fff3cd';
+      const col = known ? REASON_TEXT_COLOR[label] : '#8a6d1d';
       return `<span class="badge" style="background:${bg};color:${col}">${label}</span>`;
     }
 
