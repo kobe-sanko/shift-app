@@ -73,14 +73,16 @@ function showReadOnlyBannerIfNeeded() {
 
 // マスタ画面など、共通の部品（フォームや追加・更新・削除ボタン）を使っている画面向け：
 // 操作できない人（PC権限がない、またはスマホで見ている）は、書き込み系のボタンや入力欄をまとめて無効にする
-function lockMasterFormIfNeeded() {
+// extraSelector：そのページ特有のボタン・入力欄のクラス名などを追加で指定できる（例：'.qty-input, .btn-import'）
+function lockMasterFormIfNeeded(extraSelector) {
   if (canEdit()) return;
   showReadOnlyBannerIfNeeded();
   window.addEventListener('DOMContentLoaded', () => {
-    document.querySelectorAll(
-      '.btn-add, .btn-update, .btn-delete, .btn-del-row, .btn-save, .btn-del, .btn-move, .btn-clear, .btn-add-slot, .btn-del-slot, .btn-copy'
-    ).forEach(el => { el.disabled = true; });
-    document.querySelectorAll('.form-box input, .form-box select, .form-box textarea').forEach(el => { el.disabled = true; });
+    let selector =
+      '.btn-add, .btn-update, .btn-delete, .btn-del-row, .btn-save, .btn-del, .btn-move, .btn-clear, .btn-add-slot, .btn-del-slot, .btn-copy, ' +
+      '.form-box input, .form-box select, .form-box textarea';
+    if (extraSelector) selector += ', ' + extraSelector;
+    document.querySelectorAll(selector).forEach(el => { el.disabled = true; });
   });
 }
 

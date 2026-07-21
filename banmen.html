@@ -24,6 +24,9 @@
     .btn-recreate { background: #e67e22; color: white; }
     .btn-excel { background: #27ae60; color: white; }
     .btn-config { background: #666; color: white; }
+    .btn-complete { background: #95a5a6; color: white; }
+    .btn-complete.complete { background: #27ae60; }
+    .btn-complete:disabled { cursor: default; opacity: 0.85; }
 
     /* ===== レイアウト ===== */
     .main-layout { display: flex; height: calc(100vh - 38px - var(--shift-auth-bar-h, 0px)); }
@@ -263,6 +266,7 @@
       <button onclick="document.getElementById('date-picker').showPicker()" style="background:#444;font-size:0.75rem">📅</button>
       <input type="date" id="date-picker" style="position:absolute;opacity:0;width:0;height:0;" onchange="onDatePicked(this.value)">
     </div>
+    <button class="btn-top btn-complete" id="btn-complete" onclick="toggleComplete()">確認中…</button>
     <button class="btn-top btn-recreate" onclick="recreate()">🔄 再作成</button>
     <button class="btn-top btn-excel" onclick="exportExcel()">📊 Excel出力</button>
     <button class="btn-top btn-config" onclick="location.href='banmen_config.html'">⚙ 設定</button>
@@ -270,6 +274,9 @@
 
   <div id="msg" class="msg"></div>
   <div id="loading" class="loading">読み込み中...</div>
+  <div id="not-complete-notice" style="display:none;text-align:center;padding:60px 16px;color:#888;font-size:0.95rem;line-height:1.8;">
+    📱 この日のシフトは、まだ確定していません。<br>確定すると、ここに表示されます。
+  </div>
 
   <!-- main-layoutの外に置く：main-layoutが非表示（読み込み中）の間もダイアログが見えるように -->
   <div class="dialog-overlay" id="dialog">
@@ -351,6 +358,7 @@
       masters = await loadMasters();
       buildLeftPanelBushoSelect();
       applyReadOnlyIfNeeded();
+      window.addEventListener('resize', () => { updateCompleteBtn(); applyMobileLockIfNeeded(); });
       await loadData();
     }
 
@@ -423,7 +431,7 @@
       const yearMonth = getYearMonth(currentDate);
       const dayCol = getDayCol(currentDate);
 
-      const [staffRes, carRes, hakenRes, configRes, banmenRes, banmenHakenRes, oenRes, tekiseiRes, gyomuRes, gyomuShiftRes, bushoTekiseiRes, syakenRes, carQuotaRes] = await Promise.all([
+      const [staffRes, carRes, hakenRes, configRes, banmenRes, banmenHakenRes, oenRes, tekiseiRes, gyomuRes, gyomuShiftRes, bushoTekiseiRes, syakenRes, carQuotaRes, dayStatusRes] = await Promise.all([
         sb.from('shift_staff').select('*').order('staff_code'),
         sb.from('shift_car').select('*').order('car_code'),
         sb.from('shift_haken').select('*').order('haken_name'),
@@ -437,10 +445,15 @@
         sb.from('shift_busho_tekisei').select('staff_code, busho_code'),
         sb.from('shift_syaken').select('car_code, memo').eq('date', dateStr),
         sb.from('shift_car_quota').select('busho_code, need_car, need_jyoshu').eq('date', dateStr),
+        sb.from('shift_day_status').select('is_complete').eq('date', dateStr).maybeSingle(),
       ]);
 
       // この間に別の日付に切り替えられていたら、この結果はもう使わない
       if (loadId !== currentLoadId) return;
+
+      // この日が「確定」されているかどうか
+      dayIsComplete = !!(dayStatusRes.data && dayStatusRes.data.is_complete);
+      updateCompleteBtn();
 
       // その日の所属ごとの必要台数（テーブルがまだ無い場合はエラーになるので、その時は空扱いにする）
       carQuotaMap = Object.fromEntries((carQuotaRes.data || []).map(q => [q.busho_code, q]));
@@ -525,12 +538,61 @@
       buildBoard();
 
       document.getElementById('loading').style.display = 'none';
-      document.getElementById('main-layout').style.display = 'flex';
+      applyMobileLockIfNeeded();
 
       // 盤面が表示されたあとで、重複していた枠があればその場で配置先を選べる通知を出す
-      if (conflicts && conflicts.length > 0) {
+      // （スマホでまだ確定していない日を隠しているときは、通知も出さない）
+      if (conflicts && conflicts.length > 0 && !(isMobileWidth() && !dayIsComplete)) {
         showConflictResolver(conflicts, loadId);
       }
+    }
+
+    // ===== 「完成」フラグ（確定した日だけスマホで見られるようにする） =====
+    let dayIsComplete = false;
+
+    function isMobileWidth() {
+      return window.innerWidth <= 768;
+    }
+
+    // 確定ボタンの見た目を、今の状態に合わせて更新する
+    function updateCompleteBtn() {
+      const btn = document.getElementById('btn-complete');
+      if (!btn) return;
+      btn.textContent = dayIsComplete ? '✅ 確定済み' : '🔓 未確定';
+      btn.classList.toggle('complete', dayIsComplete);
+      btn.disabled = !canEdit();
+    }
+
+    // スマホで、まだ確定していない日を見ようとしたときは、盤面を隠してお知らせだけ出す
+    function applyMobileLockIfNeeded() {
+      const notice = document.getElementById('not-complete-notice');
+      const mainLayout = document.getElementById('main-layout');
+      if (isMobileWidth() && !dayIsComplete) {
+        notice.style.display = 'block';
+        mainLayout.style.display = 'none';
+      } else {
+        notice.style.display = 'none';
+        mainLayout.style.display = 'flex';
+      }
+    }
+
+    // 確定ボタンを押したときの処理（PC権限がある人が、パソコンで押したときだけ有効）
+    async function toggleComplete() {
+      if (!canEdit()) { showMsg('閲覧のみモードのため変更できません', 'err'); return; }
+      const dateStr = getDateStr(currentDate);
+      const newValue = !dayIsComplete;
+      // すでにその日の行があれば更新、なければ新しく作る
+      const { data: existing } = await sb.from('shift_day_status').select('id').eq('date', dateStr).maybeSingle();
+      let error;
+      if (existing) {
+        ({ error } = await sb.from('shift_day_status').update({ is_complete: newValue }).eq('id', existing.id));
+      } else {
+        ({ error } = await sb.from('shift_day_status').insert({ date: dateStr, is_complete: newValue }));
+      }
+      if (error) { showMsg('更新に失敗しました: ' + error.message, 'err'); return; }
+      dayIsComplete = newValue;
+      updateCompleteBtn();
+      showMsg(newValue ? 'この日を確定にしました' : '確定を解除しました', 'ok');
     }
 
     // ===== 年月文字列（yearmonth列用）=====
