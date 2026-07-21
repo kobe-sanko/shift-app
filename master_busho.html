@@ -20,6 +20,10 @@
     .form-table { width: 100%; table-layout: fixed; border-collapse: separate; border-spacing: 4px 0; display: table; }
     .form-cell { display: table-cell; vertical-align: bottom; }
     .form-cell label { display: block; font-size: 0.75rem; color: #666; text-align: center; margin-bottom: 3px; }
+    .form-cell label.wd-check-label {
+      display: inline-flex; align-items: center; gap: 2px;
+      width: auto; margin-bottom: 0; font-size: 0.72rem; color: #333;
+    }
     .form-cell input, .form-cell select {
       width: 100%; font-size: 0.85rem; padding: 4px 2px;
       border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; text-align: center;
@@ -72,10 +76,22 @@
         </select>
       </div>
     </div>
-    <div class="btn-row">
+    <div class="btn-row" style="align-items:center;flex-wrap:wrap;">
       <button class="btn-add"    onclick="saveRow('add')">新規登録</button>
       <button class="btn-update" onclick="saveRow('update')">更新</button>
       <button class="btn-delete" onclick="deleteRow()">削除</button>
+      <div style="display:flex;align-items:center;gap:8px;margin-left:14px;">
+        <label style="font-size:0.75rem;color:#666;white-space:nowrap;">定休日（基本の曜日）</label>
+        <div id="f_off_weekdays" style="display:flex;gap:8px;">
+          <label class="wd-check-label"><input type="checkbox" class="off-wd-check" value="0">日</label>
+          <label class="wd-check-label"><input type="checkbox" class="off-wd-check" value="1">月</label>
+          <label class="wd-check-label"><input type="checkbox" class="off-wd-check" value="2">火</label>
+          <label class="wd-check-label"><input type="checkbox" class="off-wd-check" value="3">水</label>
+          <label class="wd-check-label"><input type="checkbox" class="off-wd-check" value="4">木</label>
+          <label class="wd-check-label"><input type="checkbox" class="off-wd-check" value="5">金</label>
+          <label class="wd-check-label"><input type="checkbox" class="off-wd-check" value="6">土</label>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -88,6 +104,7 @@
         <th style="width:160px">所属名</th>
         <th style="width:170px">色</th>
         <th style="width:80px">有効</th>
+        <th style="width:120px">定休日</th>
       </tr>
     </thead>
     <tbody id="tbody"></tbody>
@@ -109,6 +126,7 @@
     });
 
     async function init() {
+      lockMasterFormIfNeeded();
       await loadRows();
     }
 
@@ -133,11 +151,14 @@
         const isRest = r.busho_code.startsWith('9');
         const nameStyle = isRest ? 'color:#e74c3c;background:#f5f5f5;border:1px solid #ddd' : `background:${color};color:${textColor}`;
         const colorStyle = isRest ? 'color:#e74c3c;background:#f5f5f5;border:1px solid #ddd' : `background:${color};color:${textColor}`;
+        const wdLabels = ['日','月','火','水','木','金','土'];
+        const offText = (r.off_weekdays || '').split(',').filter(v => v !== '').map(v => wdLabels[parseInt(v)]).join('・') || '－';
         tr.innerHTML = `
           <td>${r.busho_code}</td>
           <td><span class="badge" style="${nameStyle}">${r.busho_name || ''}</span></td>
           <td><span class="badge" style="${colorStyle}">${color}</span></td>
           <td>${r.is_active ? '有効' : '無効'}</td>
+          <td>${offText}</td>
         `;
         tbody.appendChild(tr);
       });
@@ -151,10 +172,13 @@
       document.getElementById('f_color').value      = color;
       document.getElementById('f_color_text').value = color.toUpperCase();
       document.getElementById('f_active').value     = r.is_active ? 'true' : 'false';
+      const offSet = new Set((r.off_weekdays || '').split(',').filter(v => v !== ''));
+      document.querySelectorAll('.off-wd-check').forEach(chk => { chk.checked = offSet.has(chk.value); });
       renderTable();
     }
 
     async function saveRow(mode) {
+      if (!canEdit()) { showMsg('閲覧のみモードのため変更できません', 'err'); return; }
       const code  = document.getElementById('f_code').value.trim();
       const name  = document.getElementById('f_name').value.trim();
       const colorText = document.getElementById('f_color_text').value.trim().toUpperCase();
@@ -162,11 +186,13 @@
       if (!code) { showMsg('所属コードを入力してください', 'err'); return; }
       if (!name) { showMsg('所属名を入力してください', 'err'); return; }
 
+      const offWeekdays = [...document.querySelectorAll('.off-wd-check:checked')].map(c => c.value).join(',');
       const data = {
         busho_code: code,
         busho_name: name,
         color_h:    color,
         is_active:  document.getElementById('f_active').value === 'true',
+        off_weekdays: offWeekdays,
       };
 
       if (mode === 'add') {
@@ -185,6 +211,7 @@
     }
 
     async function deleteRow() {
+      if (!canEdit()) { showMsg('閲覧のみモードのため削除できません', 'err'); return; }
       const code = document.getElementById('f_code').value.trim();
       if (!code) { showMsg('削除する所属を選択してください', 'err'); return; }
       if (!confirm(`「${code}」を削除しますか？`)) return;
@@ -195,6 +222,7 @@
       document.getElementById('f_code').value       = '';
       document.getElementById('f_name').value       = '';
       document.getElementById('f_color_text').value = '';
+      document.querySelectorAll('.off-wd-check').forEach(chk => { chk.checked = false; });
       await loadRows();
     }
 

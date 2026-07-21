@@ -91,8 +91,16 @@
 
     /* ===== 所属カード ===== */
     .busho-card {
-      background: white; border-radius: 6px;
+      background: white; border-radius: 6px; position: relative;
       box-shadow: 0 1px 4px rgba(0,0,0,0.15); overflow: hidden;
+    }
+    /* 定休日（曜日）で、かつ誰も配置されていないときに出す「お休み」リボン */
+    .yasumi-ribbon {
+      position: absolute; top: 11px; right: -30px; width: 116px;
+      transform: rotate(45deg); background: #e74c3c; color: white;
+      text-align: center; font-size: 0.7rem; font-weight: bold;
+      padding: 3px 0; box-shadow: 0 1px 3px rgba(0,0,0,0.3); z-index: 5;
+      letter-spacing: 3px; pointer-events: none;
     }
     .busho-header {
       padding: 5px 10px; text-align: center; font-weight: bold;
@@ -579,8 +587,21 @@
     // 確定ボタンを押したときの処理（PC権限がある人が、パソコンで押したときだけ有効）
     async function toggleComplete() {
       if (!canEdit()) { showMsg('閲覧のみモードのため変更できません', 'err'); return; }
-      const dateStr = getDateStr(currentDate);
       const newValue = !dayIsComplete;
+
+      // 確定にしようとしているときだけ、問題がないかチェックする（解除するときはチェックしない）
+      if (newValue) {
+        if (conflictQueue.length > 0) {
+          showMsg('まだ配置先が決まっていない人がいます（業務シフトの重複）。先にすべて配置してから確定してください', 'err');
+          return;
+        }
+        if (document.querySelectorAll('.quota-missing').length > 0) {
+          showMsg('必要台数が足りていない枠があります。先に埋めてから確定してください', 'err');
+          return;
+        }
+      }
+
+      const dateStr = getDateStr(currentDate);
       // すでにその日の行があれば更新、なければ新しく作る
       const { data: existing } = await sb.from('shift_day_status').select('id').eq('date', dateStr).maybeSingle();
       let error;
@@ -1061,6 +1082,22 @@
       });
 
       card.appendChild(body);
+
+      // 今日がこの所属の「定休日（基本の曜日）」で、かつ誰も配置されていなければ「お休み」リボンを出す
+      // （たまに定休日でも出勤することがあるので、誰かいれば表示しない＝登録自体は止めない）
+      const offWeekdays = (busho?.off_weekdays || '').split(',').filter(v => v !== '');
+      const todayWd = String(currentDate.getDay());
+      const isRegularOffToday = offWeekdays.includes(todayWd);
+      const isEmptyToday = !banmenData.some(r =>
+        r.busho_code === bushoCode && (r.driver || r.jyoshu1 || r.jyoshu2 || r.car_code)
+      );
+      if (isRegularOffToday && isEmptyToday) {
+        const ribbon = document.createElement('div');
+        ribbon.className = 'yasumi-ribbon';
+        ribbon.textContent = 'お休み';
+        card.appendChild(ribbon);
+      }
+
       return card;
     }
 
