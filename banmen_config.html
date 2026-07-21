@@ -162,6 +162,7 @@
       masters = await loadMasters();
       buildBushoSelect();
       buildYasumiBushoChecks();
+      lockMasterFormIfNeeded('.add-box input, .add-box select, .add-box button');
       await loadConfig();
     }
 
@@ -299,13 +300,15 @@
         const bgColor = isOyasumi ? '#888' : r.sp_jun === 98 ? '#27ae60' : '#e67e22';
         const colNo = (r.col_no ?? 0) + 1;
         const rowNo = (r.row_no ?? 0) + 1;
-        const spJun = r.sp_jun;
+        // sp_jun（99/98/97）は「どの特殊カードか」を表す印なので固定のまま。
+        // 一覧の「SP順」欄は、並び順を表すbusho_hyoji_junを使う（編集できるようにする）
+        const displayOrder = r.busho_hyoji_jun ?? 999;
         const ncols = r.row_count || r.col_width || 1;
 
         const div = document.createElement('div');
         div.className = 'config-item special-item';
         div.dataset.busho = r.busho_code;
-        div.dataset.spJun = spJun;
+        div.dataset.spJun = r.sp_jun;
         div.innerHTML = `
           <div><span class="busho-badge" style="background:${bgColor};color:white">${label}</span></div>
           <div style="font-size:0.8rem;color:#888;">
@@ -313,7 +316,7 @@
           </div>
           <div style="text-align:center;"><input type="number" class="inp-small inp-col" value="${colNo}" min="1" max="21" onclick="event.stopPropagation()"></div>
           <div style="text-align:center;"><input type="number" class="inp-small inp-row" value="${rowNo}" min="1" max="21" onclick="event.stopPropagation()"></div>
-          <div style="text-align:center;"><input type="number" class="inp-small inp-sp"  value="${spJun}" min="0" max="999" onclick="event.stopPropagation()"></div>
+          <div style="text-align:center;"><input type="number" class="inp-small inp-sp"  value="${displayOrder}" min="0" max="999" onclick="event.stopPropagation()"></div>
           <div></div>`;
         container.appendChild(div);
       });
@@ -324,6 +327,11 @@
         addDiv.style.cssText = 'text-align:center;padding:10px;';
         addDiv.innerHTML = `<button class="btn" style="background:#e67e22;color:white;" onclick="addSyakenCard()">＋ 車検・修理カードを追加</button>`;
         container.appendChild(addDiv);
+      }
+
+      // 閲覧のみモードでは、今作った一覧の入力欄・ボタンもあわせて無効にする
+      if (!canEdit()) {
+        container.querySelectorAll('input, button').forEach(el => { el.disabled = true; });
       }
     }
 
@@ -339,7 +347,7 @@
         <div style="font-size:0.8rem;color:#888;">配置のみ</div>
         <div style="text-align:center;"><input type="number" class="inp-small inp-col" value="1" min="1" max="21" onclick="event.stopPropagation()"></div>
         <div style="text-align:center;"><input type="number" class="inp-small inp-row" value="1" min="1" max="21" onclick="event.stopPropagation()"></div>
-        <div style="text-align:center;"><input type="number" class="inp-small inp-sp"  value="97" min="0" max="999" onclick="event.stopPropagation()" readonly style="background:#eee"></div>
+        <div style="text-align:center;"><input type="number" class="inp-small inp-sp"  value="999" min="0" max="999" onclick="event.stopPropagation()"></div>
         <div></div>`;
       container.appendChild(div);
 
@@ -523,6 +531,7 @@
     }
 
     async function saveAll() {
+      if (!canEdit()) { showMsg('閲覧のみモードのため保存できません', 'err'); return; }
       const normalItems = [...document.querySelectorAll('#config-items .config-item:not(.special-item)')];
       const specialItems = [...document.querySelectorAll('#config-items .special-item')];
 
@@ -573,16 +582,18 @@
 
       // 特殊ブロック（お休み・応援）
       specialItems.forEach(el => {
-        const spJun = parseInt(el.dataset.spJun);
+        const spJun = parseInt(el.dataset.spJun); // 99/98/97固定：どの特殊カードかを表す印
         const colNo = (parseInt(el.querySelector('.inp-col')?.value) || 1) - 1;
         const rowNo = (parseInt(el.querySelector('.inp-row')?.value) || 1) - 1;
         const ncols = parseInt(el.querySelector('.inp-ncols')?.value) || 1;
+        const displayOrderVal = parseInt(el.querySelector('.inp-sp')?.value);
+        const displayOrder = Number.isFinite(displayOrderVal) ? displayOrderVal : 999;
         records.push({
           busho_code: spJun === 99 ? 'お休み' : spJun === 98 ? '応援' : '車検',
           gyomu_code: '特殊',
           row_count: ncols, jyoshu_count: 0, osoban_row: 0,
           hyoji_jun: hyojiJun++, col_no: colNo, row_no: rowNo,
-          busho_hyoji_jun: 999, col_width: ncols, sp_jun: spJun,
+          busho_hyoji_jun: displayOrder, col_width: ncols, sp_jun: spJun,
           yasumi_bushos: spJun === 99 ? yasumiBushos : null,
         });
       });
