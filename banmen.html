@@ -78,11 +78,12 @@
     @media (max-width: 768px) {
       .left-panel { display: none; }
       .btn-recreate, .btn-excel, .btn-config { display: none !important; }
-      .top-bar { gap: 4px; padding: 6px 6px; }
+      .top-bar { gap: 4px; padding: 6px 6px; flex-wrap: nowrap; }
       .top-bar a { white-space: nowrap; flex-shrink: 0; font-size: 0.78rem; }
-      .date-nav { gap: 3px; }
-      .date-label { min-width: 92px; font-size: 0.88rem; white-space: nowrap; }
-      .date-nav button { padding: 4px 7px; }
+      .date-nav { gap: 3px; flex-shrink: 0; }
+      .date-label { min-width: 78px; font-size: 0.8rem; white-space: nowrap; }
+      .date-nav button { padding: 4px 6px; }
+      .btn-complete { white-space: nowrap; flex-shrink: 0; font-size: 0.68rem; padding: 4px 6px; }
       /* スマホは実機によって画面の高さの扱いが変わりやすいため、
          高さを固定計算せず、ページ全体が普通にスクロールする形にする */
       .main-layout { height: auto; }
