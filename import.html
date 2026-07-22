@@ -248,6 +248,7 @@
 
   // ===== インポート =====
   async function doImport(table, label, deleteKey, skipCols) {
+    if (!canEdit()) { alert('閲覧のみモードのため、インポートはできません'); return; }
     const fileInput = document.getElementById(`row-${table}-file`);
     const file = fileInput.files[0];
     if (!file) return;
@@ -314,6 +315,7 @@
   }
 
   buildUI();
+  lockMasterFormIfNeeded('.btn-import, input[type=file], .mode-sel');
 </script>
 </body>
 </html>

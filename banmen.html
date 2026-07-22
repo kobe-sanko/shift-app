@@ -190,16 +190,35 @@
       display: flex; align-items: center; justify-content: center; gap: 4px;
     }
     .oen-body { padding: 8px; background: white; }
-    .oen-select { width: 100%; font-size: 0.8rem; padding: 4px; border: 1px solid #ccc; border-radius: 4px; margin-bottom: 6px; }
-    .oen-btn { width: 100%; background: #27ae60; color: white; border: none; border-radius: 4px; padding: 6px; font-size: 0.82rem; font-weight: bold; cursor: pointer; }
+    .oen-select { flex: 1; min-width: 0; font-size: 0.8rem; padding: 4px; border: 1px solid #ccc; border-radius: 4px; }
+    .oen-btn { width: 100%; background: #27ae60; color: white; border: none; border-radius: 4px; padding: 6px; font-size: 0.82rem; font-weight: bold; cursor: pointer; margin-top: 2px; }
     .oen-btn:hover { background: #1e8449; }
+    .oen-field-row { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+    .oen-field-label { width: 32px; flex-shrink: 0; font-size: 0.72rem; color: #555; }
     .oen-list { margin-top: 6px; }
     .oen-item {
-      font-size: 0.75rem; padding: 2px 4px; background: #e8f8ee;
-      border-radius: 3px; margin-bottom: 2px; display: flex;
-      justify-content: space-between; align-items: center;
+      font-size: 0.75rem; padding: 3px 4px; background: #e8f8ee;
+      border-radius: 3px; margin-bottom: 3px; display: flex;
+      gap: 4px; align-items: center; flex-wrap: wrap;
     }
+    .oen-chip { padding: 2px 7px; border-radius: 10px; font-weight: bold; white-space: nowrap; }
+    .oen-chip-time { background: #f0d9fc; color: #8e44ad; }
+    .oen-chip-staff { background: #eee; color: #333; }
+    .oen-chip-busho { }
+    .oen-chip-gyomu { background: #d6eaf8; color: #1a5276; }
+    .oen-del { margin-left: auto; }
     .oen-del { background: none; border: none; color: #c0392b; cursor: pointer; font-size: 0.8rem; }
+
+    /* 業務ブロック内に表示する応援（午後からの応援）の追加行 */
+    .gyomu-oen-row {
+      display: flex; align-items: center; gap: 4px; padding: 3px 4px;
+      background: #f6ebfb; border: 1px dashed #c79fdb; border-radius: 3px; margin: 2px;
+      font-size: 0.72rem; color: #6c3483;
+    }
+    .gyomu-oen-badge {
+      background: #8e44ad; color: white; border-radius: 8px; padding: 1px 6px;
+      font-size: 0.65rem; font-weight: bold; flex-shrink: 0;
+    }
 
     .loading { text-align: center; padding: 40px; color: #888; font-size: 1rem; }
     .msg { position: fixed; top: 50px; left: 50%; transform: translateX(-50%);
@@ -1117,6 +1136,15 @@
         block.appendChild(buildPersonGrid(bushoCode, cfg));
       }
 
+      // この所属・この業務に応援登録されている人を、枠の下に追加で表示する（午後からの応援）
+      oenData.filter(o => o.busho_code === bushoCode && o.gyomu_code === gyomuName).forEach(o => {
+        const s = staffRows.find(s => s.staff_code === o.staff_code) || masters.staffMap[o.staff_code];
+        const row = document.createElement('div');
+        row.className = 'gyomu-oen-row';
+        row.innerHTML = `<span class="gyomu-oen-badge">${o.time_slot || '午後から'}</span><span>💛 ${s?.name || o.staff_code}（応援）</span>`;
+        block.appendChild(row);
+      });
+
       return block;
     }
 
@@ -1375,17 +1403,35 @@
       const body = document.createElement('div');
       body.className = 'oen-body';
 
+      // 所属で絞り込み（社員のプルダウンを絞り込むためだけの選択肢。登録内容には使わない）
+      const filterRow = document.createElement('div');
+      filterRow.className = 'oen-field-row';
+      filterRow.innerHTML = '<label class="oen-field-label">絞込</label>';
+      const filterSel = document.createElement('select');
+      filterSel.className = 'oen-select';
+      filterSel.id = 'oen-staff-filter';
+      filterSel.innerHTML = '<option value="">－ 全所属 －</option>';
+      masters.bushos.filter(b => parseInt(b.busho_code) < 900).forEach(b => {
+        filterSel.innerHTML += `<option value="${b.busho_code}">${b.busho_name}</option>`;
+      });
+      filterSel.onchange = () => populateOenStaffSelect(staffSel, filterSel.value);
+      filterRow.appendChild(filterSel);
+      body.appendChild(filterRow);
+
       // セレクト：社員
+      const staffRow = document.createElement('div');
+      staffRow.className = 'oen-field-row';
+      staffRow.innerHTML = '<label class="oen-field-label">社員</label>';
       const staffSel = document.createElement('select');
       staffSel.className = 'oen-select';
       staffSel.id = 'oen-staff-sel';
-      staffSel.innerHTML = '<option value="">－ 社員 －</option>';
-      staffRows.forEach(s => {
-        staffSel.innerHTML += `<option value="${s.staff_code}">${s.name || s.staff_code}</option>`;
-      });
-      body.appendChild(staffSel);
+      staffRow.appendChild(staffSel);
+      body.appendChild(staffRow);
 
       // セレクト：所属
+      const bushoRow = document.createElement('div');
+      bushoRow.className = 'oen-field-row';
+      bushoRow.innerHTML = '<label class="oen-field-label">所属</label>';
       const bushoSel = document.createElement('select');
       bushoSel.className = 'oen-select';
       bushoSel.id = 'oen-busho-sel';
@@ -1393,7 +1439,25 @@
       masters.bushos.filter(b => parseInt(b.busho_code) < 900).forEach(b => {
         bushoSel.innerHTML += `<option value="${b.busho_code}">${b.busho_name}</option>`;
       });
-      body.appendChild(bushoSel);
+      bushoRow.appendChild(bushoSel);
+      body.appendChild(bushoRow);
+
+      // セレクト：業務（運転／倉庫／事務）
+      const gyomuRow = document.createElement('div');
+      gyomuRow.className = 'oen-field-row';
+      gyomuRow.innerHTML = '<label class="oen-field-label">業務</label>';
+      const gyomuSel = document.createElement('select');
+      gyomuSel.className = 'oen-select';
+      gyomuSel.id = 'oen-gyomu-sel';
+      gyomuSel.innerHTML = `
+        <option value="">－ 業務 －</option>
+        <option value="配送">運転</option>
+        <option value="倉庫">倉庫</option>
+        <option value="事務">事務</option>`;
+      gyomuRow.appendChild(gyomuSel);
+      body.appendChild(gyomuRow);
+
+      populateOenStaffSelect(staffSel, '');
 
       // 登録ボタン
       const btn = document.createElement('button');
@@ -1411,6 +1475,16 @@
 
       card.appendChild(body);
       return card;
+    }
+
+    // 応援：社員プルダウンの中身を、選ばれた所属（社員マスタの所属）だけに絞り込んで作り直す
+    function populateOenStaffSelect(sel, bushoFilter) {
+      if (!sel) return;
+      const prevValue = sel.value;
+      const filtered = bushoFilter ? staffRows.filter(s => s.busho_code === bushoFilter) : staffRows;
+      sel.innerHTML = '<option value="">－ 社員 －</option>' +
+        filtered.map(s => `<option value="${s.staff_code}">${s.name || s.staff_code}</option>`).join('');
+      if (filtered.some(s => s.staff_code === prevValue)) sel.value = prevValue;
     }
 
     // ===== 車検カード（この日、車検などで使えない車の一覧。表示のみ）=====
@@ -1456,15 +1530,25 @@
       return card;
     }
 
+    // 業務コード → 応援欄で使う表示名（配送＝運転として扱う）
+    function oenGyomuLabel(gyomuCode) {
+      return gyomuCode === '配送' ? '運転' : (gyomuCode || '');
+    }
+
     function renderOenList(container) {
       container.innerHTML = '';
       oenData.forEach((o, idx) => {
         const s = staffRows.find(s => s.staff_code === o.staff_code);
         const b = masters.bushoMap[o.busho_code];
+        const bColor = b?.color_h || '#888';
+        const timeLabel = o.time_slot || '午後から';
         const item = document.createElement('div');
         item.className = 'oen-item';
         item.innerHTML = `
-          <span>${s?.name || o.staff_code} → ${b?.busho_name || o.busho_code}</span>
+          <span class="oen-chip oen-chip-time">${timeLabel}</span>
+          <span class="oen-chip oen-chip-staff">${s?.name || o.staff_code}</span>
+          <span class="oen-chip oen-chip-busho" style="background:${bColor};color:${getTextColor(bColor)}">${b?.busho_name || o.busho_code}</span>
+          <span class="oen-chip oen-chip-gyomu">${oenGyomuLabel(o.gyomu_code)}</span>
           <button class="oen-del" onclick="deleteOen(${o.id})">✕</button>`;
         container.appendChild(item);
       });
@@ -1474,15 +1558,18 @@
       if (!canEdit()) { showMsg('閲覧のみモードのため登録できません', 'err'); return; }
       const staffCode = document.getElementById('oen-staff-sel').value;
       const bushoCode = document.getElementById('oen-busho-sel').value;
-      if (!staffCode || !bushoCode) { showMsg('社員と所属を選択してください', 'err'); return; }
+      const gyomuCode = document.getElementById('oen-gyomu-sel').value;
+      if (!staffCode || !bushoCode || !gyomuCode) { showMsg('社員・所属・業務を選択してください', 'err'); return; }
+      // すでに同じ内容が登録されていないか確認（うっかり二重登録の防止）
+      const dup = oenData.some(o => o.staff_code === staffCode && o.busho_code === bushoCode && o.gyomu_code === gyomuCode);
+      if (dup) { showMsg('同じ内容がすでに登録されています', 'err'); return; }
       const dateStr = getDateStr(currentDate);
       const { data, error } = await sb.from('shift_banmen_oen')
-        .insert({ date: dateStr, staff_code: staffCode, busho_code: bushoCode })
+        .insert({ date: dateStr, staff_code: staffCode, busho_code: bushoCode, gyomu_code: gyomuCode, time_slot: '午後から' })
         .select().single();
       if (error) { showMsg('登録に失敗しました', 'err'); return; }
       oenData.push(data);
-      const list = document.getElementById('oen-list');
-      if (list) renderOenList(list);
+      buildBoard();
       showMsg('登録しました', 'ok');
     }
 
@@ -1491,8 +1578,7 @@
       const { error } = await sb.from('shift_banmen_oen').delete().eq('id', id);
       if (error) { showMsg('削除に失敗しました', 'err'); return; }
       oenData = oenData.filter(o => o.id !== id);
-      const list = document.getElementById('oen-list');
-      if (list) renderOenList(list);
+      buildBoard();
     }
 
     // ===== ドラッグ＆ドロップ =====

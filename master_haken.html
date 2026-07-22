@@ -80,6 +80,7 @@
     let selectedName = null;
 
     async function init() {
+      lockMasterFormIfNeeded();
       await loadRows();
     }
 
@@ -115,6 +116,7 @@
     }
 
     async function saveRow(mode) {
+      if (!canEdit()) { showMsg('閲覧のみモードのため変更できません', 'err'); return; }
       const name = document.getElementById('f_name').value.trim();
       if (!name) { showMsg('派遣会社名を入力してください', 'err'); return; }
       const data = {
@@ -138,6 +140,7 @@
     }
 
     async function deleteRow() {
+      if (!canEdit()) { showMsg('閲覧のみモードのため削除できません', 'err'); return; }
       if (!selectedName) { showMsg('削除する行を選択してください', 'err'); return; }
       if (!confirm(`「${selectedName}」を削除しますか？`)) return;
       const { error } = await sb.from('shift_haken').delete().eq('haken_name', selectedName);

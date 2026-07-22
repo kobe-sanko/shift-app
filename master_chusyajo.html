@@ -92,6 +92,7 @@
     async function init() {
       masters = await loadMasters();
       buildSelects();
+      lockMasterFormIfNeeded();
       await loadRows();
     }
 
@@ -142,6 +143,7 @@
     }
 
     async function saveRow() {
+      if (!canEdit()) { showMsg('閲覧のみモードのため変更できません', 'err'); return; }
       const slot = document.getElementById('f_slot').value;
       if (!slot) { showMsg('枠を選択してください（一覧をクリック）', 'err'); return; }
       const staffCode = document.getElementById('f_staff').value || null;
@@ -152,6 +154,7 @@
     }
 
     async function clearRow() {
+      if (!canEdit()) { showMsg('閲覧のみモードのため変更できません', 'err'); return; }
       const slot = document.getElementById('f_slot').value;
       if (!slot) { showMsg('枠を選択してください（一覧をクリック）', 'err'); return; }
       if (!confirm(`${slot}番を空きにしますか？`)) return;
@@ -163,6 +166,7 @@
     }
 
     async function addSlot() {
+      if (!canEdit()) { showMsg('閲覧のみモードのため追加できません', 'err'); return; }
       // 現在の最大番号の次の番号で追加
       const maxNo = rows.length > 0 ? Math.max(...rows.map(r => r.slot_no)) : 0;
       const newNo = maxNo + 1;
@@ -174,6 +178,7 @@
     }
 
     async function deleteLastSlot() {
+      if (!canEdit()) { showMsg('閲覧のみモードのため削除できません', 'err'); return; }
       if (rows.length === 0) { showMsg('削除できる枠がありません', 'err'); return; }
       const lastRow = rows[rows.length - 1];
       if (lastRow.staff_code) {

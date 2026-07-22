@@ -74,6 +74,7 @@
       masters = await loadMasters();
       buildMonthSelect();
       buildFilterButtons();
+      lockMasterFormIfNeeded('.qty-input');
       document.getElementById('loading').style.display = 'none';
       document.getElementById('body-area').style.display = '';
       document.getElementById('no-busho').style.display = '';
@@ -162,9 +163,14 @@
       document.getElementById('car-row').innerHTML = carHtml;
       document.getElementById('jyoshu-row').innerHTML = jyoshuHtml;
       document.getElementById('main-table').style.display = '';
+      // 閲覧のみモードでは、新しく作られた入力欄もあわせて無効にする
+      if (!canEdit()) {
+        document.querySelectorAll('.qty-input').forEach(el => { el.disabled = true; });
+      }
     }
 
     async function saveAll() {
+      if (!canEdit()) { showMsg('閲覧のみモードのため保存できません', 'err'); return; }
       if (!currentBusho) { showMsg('所属を選んでください', 'err'); return; }
       const byDay = {};
       quotaRows.forEach(r => { byDay[r.date] = r; });

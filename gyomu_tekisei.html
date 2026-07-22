@@ -112,6 +112,7 @@
       allBushoTekisei = data || [];
       buildFilterButtons();
       buildSelects();
+      lockMasterFormIfNeeded();
     }
 
     function buildFilterButtons() {
@@ -269,6 +270,7 @@
     }
 
     async function addRow() {
+      if (!canEdit()) { showMsg('閲覧のみモードのため追加できません', 'err'); return; }
       if (!currentStaffCode) { showMsg('社員を選択してください', 'err'); return; }
       const bushoCode = document.getElementById('f_busho').value;
       const gyomuCode = document.getElementById('f_gyomu').value;
@@ -285,6 +287,7 @@
     }
 
     async function deleteRow() {
+      if (!canEdit()) { showMsg('閲覧のみモードのため削除できません', 'err'); return; }
       if (!selectedId) { showMsg('削除する行を選択してください', 'err'); return; }
       const row = tekiseiRows.find(r => r.id === selectedId);
       const gyomu = masters.gyomuMap[row?.gyomu_code];

@@ -103,6 +103,7 @@
       allBushoTekisei = data || [];
       buildFilterButtons();
       buildSelects();
+      lockMasterFormIfNeeded();
     }
 
     function buildFilterButtons() {
@@ -225,6 +226,7 @@
     }
 
     async function addRow() {
+      if (!canEdit()) { showMsg('閲覧のみモードのため追加できません', 'err'); return; }
       if (!currentStaffCode) { showMsg('社員を選択してください', 'err'); return; }
       const bushoCode = document.getElementById('f_busho').value;
       if (!bushoCode) { showMsg('所属を選択してください', 'err'); return; }
@@ -239,6 +241,7 @@
     }
 
     async function deleteRow() {
+      if (!canEdit()) { showMsg('閲覧のみモードのため削除できません', 'err'); return; }
       if (!selectedId) { showMsg('削除する行を選択してください', 'err'); return; }
       const row = tekiseiRows.find(r => r.id === selectedId);
       const busho = masters.bushoMap[row?.busho_code];

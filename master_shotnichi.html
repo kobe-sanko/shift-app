@@ -86,6 +86,7 @@
 
     async function init() {
       updateLabel();
+      lockMasterFormIfNeeded();
       await loadRows();
     }
 
@@ -151,6 +152,7 @@
     }
 
     async function saveRow(mode) {
+      if (!canEdit()) { showMsg('閲覧のみモードのため変更できません', 'err'); return; }
       const days = document.getElementById('f_days').value;
       if (days === '') { showMsg('所定日数を入力してください', 'err'); return; }
       const data = { yearmonth: currentYM, shotei_days: parseInt(days) };
@@ -170,6 +172,7 @@
     }
 
     async function deleteRow() {
+      if (!canEdit()) { showMsg('閲覧のみモードのため削除できません', 'err'); return; }
       if (!currentRow) { showMsg('この月のデータがありません', 'err'); return; }
       const { year, month } = parseYearMonth(currentYM);
       if (!confirm(`${year}年${month}月の所定日数を削除しますか？`)) return;

@@ -152,6 +152,7 @@
       masters = await loadMasters();
       buildFilterButtons();
       buildSelects();
+      lockMasterFormIfNeeded();
       await loadRows();
     }
 
@@ -236,6 +237,7 @@
     }
 
     async function saveRow(mode) {
+      if (!canEdit()) { showMsg('閲覧のみモードのため変更できません', 'err'); return; }
       const code = document.getElementById('f_code').value.trim();
       const name = document.getElementById('f_name').value.trim();
       if (!code) { showMsg('業務コードを入力してください', 'err'); return; }
@@ -268,6 +270,7 @@
     }
 
     async function deleteRow() {
+      if (!canEdit()) { showMsg('閲覧のみモードのため削除できません', 'err'); return; }
       const code = document.getElementById('f_code').value.trim();
       if (!code) { showMsg('削除する業務を選択してください', 'err'); return; }
       if (!confirm(`「${code}」を削除しますか？`)) return;

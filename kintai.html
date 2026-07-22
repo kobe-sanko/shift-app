@@ -102,6 +102,7 @@
       currentYM = getCurrentYearMonth();
       buildYmSelect();
       buildFilterButtons();
+      lockMasterFormIfNeeded('.upload-box input[type=file], .upload-box button');
       await loadData();
     }
 
@@ -203,6 +204,7 @@
 
     // ===== Excel取り込み =====
     async function doUpload() {
+      if (!canEdit()) { showUploadMsg('閲覧のみモードのため、取り込みはできません', 'err'); return; }
       const file = document.getElementById('kintai-file').files[0];
       if (!file) { showUploadMsg('ファイルを選んでください', 'err'); return; }
 

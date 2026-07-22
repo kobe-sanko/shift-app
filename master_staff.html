@@ -139,6 +139,7 @@
       masters = await loadMasters();
       buildFilterButtons();
       buildSelects();
+      lockMasterFormIfNeeded();
       await loadRows();
     }
 
@@ -255,6 +256,7 @@
     }
 
     async function saveRow(mode) {
+      if (!canEdit()) { showMsg('閲覧のみモードのため変更できません', 'err'); return; }
       const code = document.getElementById('f_code').value.trim();
       if (!code) { showMsg('社員コードを入力してください', 'err'); return; }
       const data = {
@@ -303,6 +305,7 @@
     }
 
     async function deleteRow() {
+      if (!canEdit()) { showMsg('閲覧のみモードのため削除できません', 'err'); return; }
       const code = document.getElementById('f_code').value.trim();
       if (!code) { showMsg('削除する社員を選択してください', 'err'); return; }
       if (!confirm(`「${code}」を削除しますか？`)) return;

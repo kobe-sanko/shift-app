@@ -99,6 +99,7 @@
     async function init() {
       masters = await loadMasters();
       buildCarSelect();
+      lockMasterFormIfNeeded();
       await loadRows();
     }
 
@@ -175,6 +176,7 @@
     }
 
     async function addRow() {
+      if (!canEdit()) { showMsg('閲覧のみモードのため登録できません', 'err'); return; }
       const carCode = document.getElementById('f_car').value;
       const dateStr = toDateStr(document.getElementById('f_date').value);
       const reason = document.getElementById('f_reason').value;
@@ -195,6 +197,7 @@
     }
 
     async function deleteRow(id) {
+      if (!canEdit()) { showMsg('閲覧のみモードのため削除できません', 'err'); return; }
       if (!confirm('この登録を削除しますか？')) return;
       const { error } = await sb.from('shift_syaken').delete().eq('id', id);
       if (error) { showMsg('削除に失敗しました: ' + error.message, 'err'); return; }
