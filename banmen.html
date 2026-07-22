@@ -567,7 +567,7 @@
     function updateCompleteBtn() {
       const btn = document.getElementById('btn-complete');
       if (!btn) return;
-      btn.textContent = dayIsComplete ? '✅ 確定済み' : '🔓 未確定';
+      btn.textContent = dayIsComplete ? '✅ 確定' : '🔓 未確定';
       btn.classList.toggle('complete', dayIsComplete);
       btn.disabled = !canEdit();
     }
