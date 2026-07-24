@@ -1370,6 +1370,7 @@
         const span = document.createElement('span');
         span.style.flex = '1';
         span.textContent = displayName;
+        if (showOsobanMark) { span.style.textAlign = 'left'; box.style.justifyContent = 'flex-start'; }
         span.draggable = canEdit();
         span.addEventListener('dragstart', e => {
           e.stopPropagation();
@@ -1399,7 +1400,9 @@
         span.style.flex = '1';
         span.style.color = '#1b4f72';
         span.style.fontWeight = 'bold';
+        span.style.textAlign = 'left';
         span.textContent = '遅';
+        box.style.justifyContent = 'flex-start';
         box.appendChild(span);
       }
 
@@ -2240,7 +2243,7 @@
             vals.forEach((v, i) => {
               const cell = sheet.getCell(row, col0 + i);
               cell.value = v;
-              cell.alignment = { horizontal: 'center', vertical: 'middle' };
+              cell.alignment = { horizontal: (i === 0 && isOsoban) ? 'left' : 'center', vertical: 'middle' };
               cell.border = isOsoban
                 ? { top: osobanBorder, bottom: osobanBorder, left: osobanBorder, right: osobanBorder }
                 : { top:{style:'thin'}, bottom:{style:'thin'}, left:{style:'thin'}, right:{style:'thin'} };
