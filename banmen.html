@@ -195,29 +195,28 @@
     .oen-btn:hover { background: #1e8449; }
     .oen-field-row { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
     .oen-field-label { width: 32px; flex-shrink: 0; font-size: 0.72rem; color: #555; }
-    .oen-list { margin-top: 6px; }
-    .oen-item {
-      font-size: 0.75rem; padding: 3px 4px; background: #e8f8ee;
-      border-radius: 3px; margin-bottom: 3px; display: flex;
-      gap: 4px; align-items: center; flex-wrap: wrap;
+    .oen-list {
+      margin-top: 6px; font-size: 0.75rem;
+      display: grid; grid-template-columns: auto 1fr auto auto auto;
+      gap: 3px 5px; align-items: center;
     }
-    .oen-chip { padding: 2px 7px; border-radius: 10px; font-weight: bold; white-space: nowrap; }
+    .oen-chip {
+      padding: 2px 7px; border-radius: 10px; font-weight: bold;
+      white-space: nowrap; text-align: center; background: #e8f8ee;
+    }
     .oen-chip-time { background: #f0d9fc; color: #8e44ad; }
     .oen-chip-staff { background: #eee; color: #333; }
     .oen-chip-busho { }
     .oen-chip-gyomu { background: #d6eaf8; color: #1a5276; }
-    .oen-del { margin-left: auto; }
     .oen-del { background: none; border: none; color: #c0392b; cursor: pointer; font-size: 0.8rem; }
 
-    /* 業務ブロック内に表示する応援（午後からの応援）の追加行 */
-    .gyomu-oen-row {
-      display: flex; align-items: center; gap: 4px; padding: 3px 4px;
-      background: #f6ebfb; border: 1px dashed #c79fdb; border-radius: 3px; margin: 2px;
-      font-size: 0.72rem; color: #6c3483;
+    /* 配送テーブル・人数枠の中に表示する応援（午後からの応援）の枠・追加行 */
+    .cell-box.oen-extra-td {
+      background: #f6ebfb; border-color: #c79fdb; color: #6c3483; font-weight: bold; cursor: default;
     }
-    .gyomu-oen-badge {
-      background: #8e44ad; color: white; border-radius: 8px; padding: 1px 6px;
-      font-size: 0.65rem; font-weight: bold; flex-shrink: 0;
+    .person-box.oen-extra-box {
+      background: #f6ebfb; border: 1px dashed #c79fdb; color: #6c3483;
+      font-size: 0.72rem; font-weight: bold; display: flex; align-items: center; justify-content: center; gap: 2px;
     }
 
     .loading { text-align: center; padding: 40px; color: #888; font-size: 1rem; }
@@ -1136,15 +1135,6 @@
         block.appendChild(buildPersonGrid(bushoCode, cfg));
       }
 
-      // この所属・この業務に応援登録されている人を、枠の下に追加で表示する（午後からの応援）
-      oenData.filter(o => o.busho_code === bushoCode && o.gyomu_code === gyomuName).forEach(o => {
-        const s = staffRows.find(s => s.staff_code === o.staff_code) || masters.staffMap[o.staff_code];
-        const row = document.createElement('div');
-        row.className = 'gyomu-oen-row';
-        row.innerHTML = `<span class="gyomu-oen-badge">${o.time_slot || '午後から'}</span><span>💛 ${s?.name || o.staff_code}（応援）</span>`;
-        block.appendChild(row);
-      });
-
       return block;
     }
 
@@ -1170,12 +1160,49 @@
       const needCar = quota?.need_car || 0;
       const needJyoshu = quota?.need_jyoshu || 0;
 
+      // 応援登録されている人（午後から）：まず空いている枠に入れて、入りきらない分だけ下に追加する
+      const oenQueue = oenData.filter(o => o.busho_code === bushoCode && o.gyomu_code === '配送').slice();
+
+      const extraCols = jyoshuCount + (showSmaho ? 1 : 0);
+      function appendOenRow(o) {
+        const s = staffRows.find(s => s.staff_code === o.staff_code) || masters.staffMap[o.staff_code];
+        const tr = document.createElement('tr');
+        tr.className = 'oen-extra-tr';
+        const carTd = document.createElement('td');
+        const carBox = document.createElement('div');
+        carBox.className = 'cell-box oen-extra-td';
+        carTd.appendChild(carBox);
+        tr.appendChild(carTd);
+        const driverTd = document.createElement('td');
+        const driverBox = document.createElement('div');
+        driverBox.className = 'cell-box oen-extra-td';
+        driverBox.textContent = `💛 ${s?.name || o.staff_code}`;
+        driverTd.appendChild(driverBox);
+        tr.appendChild(driverTd);
+        for (let i = 0; i < extraCols; i++) {
+          const td = document.createElement('td');
+          const box = document.createElement('div');
+          box.className = 'cell-box oen-extra-td';
+          td.appendChild(box);
+          tr.appendChild(td);
+        }
+        return tr;
+      }
+
       for (let row = 1; row <= rowCount; row++) {
         const rowData = banmenData.find(r =>
           r.busho_code === bushoCode && r.gyomu_code === '配送' && r.row_no === row
         );
 
         const isOsoban = osobanRow > 0 && row === osobanRow;
+
+        // この枠がまったく使われておらず、応援待ちの人がいれば、その枠に応援の人を表示する
+        const isRowEmpty = !rowData || (!rowData.driver && !rowData.car_code);
+        if (isRowEmpty && oenQueue.length > 0) {
+          table.appendChild(appendOenRow(oenQueue.shift()));
+          continue;
+        }
+
         const tr = document.createElement('tr');
 
         // 車番セル
@@ -1212,6 +1239,9 @@
 
         table.appendChild(tr);
       }
+
+      // 枠に入りきらなかった応援の人は、表の下に追加行として表示する
+      oenQueue.forEach(o => table.appendChild(appendOenRow(o)));
 
       return table;
     }
@@ -1268,14 +1298,31 @@
       const wrap = document.createElement('div');
       wrap.style.cssText = `display:grid;grid-template-columns:repeat(${colCount},1fr);gap:2px;padding:2px;`;
 
+      // 応援登録されている人（午後から）：まず空いている枠に入れて、入りきらない分だけ下に追加する
+      const oenQueue = oenData.filter(o => o.busho_code === bushoCode && o.gyomu_code === cfg.gyomu_code).slice();
+      function makeOenBox(o) {
+        const s = staffRows.find(s => s.staff_code === o.staff_code) || masters.staffMap[o.staff_code];
+        const box = document.createElement('div');
+        box.className = 'person-box oen-extra-box';
+        box.textContent = `💛 ${s?.name || o.staff_code}`;
+        return box;
+      }
+
       for (let row = 1; row <= rowCount; row++) {
         const rowData = banmenData.find(r =>
           r.busho_code === bushoCode && r.gyomu_code === cfg.gyomu_code && r.row_no === row
         );
+        if (!rowData?.driver && oenQueue.length > 0) {
+          wrap.appendChild(makeOenBox(oenQueue.shift()));
+          continue;
+        }
         const box = makeCell('staff', bushoCode, cfg.gyomu_code, row, 'driver', rowData?.driver, false);
         box.className = 'person-box' + (rowData?.driver ? ' filled' : '');
         wrap.appendChild(box);
       }
+
+      // 枠に入りきらなかった応援の人は、枠の下に追加で表示する
+      oenQueue.forEach(o => wrap.appendChild(makeOenBox(o)));
 
       return wrap;
     }
@@ -1542,15 +1589,34 @@
         const b = masters.bushoMap[o.busho_code];
         const bColor = b?.color_h || '#888';
         const timeLabel = o.time_slot || '午後から';
-        const item = document.createElement('div');
-        item.className = 'oen-item';
-        item.innerHTML = `
-          <span class="oen-chip oen-chip-time">${timeLabel}</span>
-          <span class="oen-chip oen-chip-staff">${s?.name || o.staff_code}</span>
-          <span class="oen-chip oen-chip-busho" style="background:${bColor};color:${getTextColor(bColor)}">${b?.busho_name || o.busho_code}</span>
-          <span class="oen-chip oen-chip-gyomu">${oenGyomuLabel(o.gyomu_code)}</span>
-          <button class="oen-del" onclick="deleteOen(${o.id})">✕</button>`;
-        container.appendChild(item);
+
+        const timeChip = document.createElement('span');
+        timeChip.className = 'oen-chip oen-chip-time';
+        timeChip.textContent = timeLabel;
+        container.appendChild(timeChip);
+
+        const staffChip = document.createElement('span');
+        staffChip.className = 'oen-chip oen-chip-staff';
+        staffChip.textContent = s?.name || o.staff_code;
+        container.appendChild(staffChip);
+
+        const bushoChip = document.createElement('span');
+        bushoChip.className = 'oen-chip oen-chip-busho';
+        bushoChip.style.background = bColor;
+        bushoChip.style.color = getTextColor(bColor);
+        bushoChip.textContent = b?.busho_name || o.busho_code;
+        container.appendChild(bushoChip);
+
+        const gyomuChip = document.createElement('span');
+        gyomuChip.className = 'oen-chip oen-chip-gyomu';
+        gyomuChip.textContent = oenGyomuLabel(o.gyomu_code);
+        container.appendChild(gyomuChip);
+
+        const delBtn = document.createElement('button');
+        delBtn.className = 'oen-del';
+        delBtn.textContent = '✕';
+        delBtn.onclick = () => deleteOen(o.id);
+        container.appendChild(delBtn);
       });
     }
 
@@ -2089,12 +2155,36 @@
             cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEEEEEE' } };
             cell.alignment = { horizontal: 'center', vertical: 'middle' };
             cell.border = { top:{style:'thin'}, bottom:{style:'thin'}, left:{style:'thin'}, right:{style:'thin'} };
-            sheet.getColumn(col0 + i).width = Math.max(sheet.getColumn(col0 + i).width || 0, h === '車番' ? 9 : (h === '遅' ? 5 : 12));
+            sheet.getColumn(col0 + i).width = Math.max(sheet.getColumn(col0 + i).width || 0, h === '車番' ? 9 : (h === '遅' ? 5 : (h === '運転' ? 15 : 12)));
           });
           row++;
 
+          // 応援登録されている人（午後から）：まず空いている枠に入れて、入りきらない分だけ下に追加する
+          const oenQueue = oenData.filter(o => o.busho_code === bushoCode && o.gyomu_code === '配送').slice();
+          function writeOenRow(o) {
+            const s = staffRows.find(x => x.staff_code === o.staff_code) || masters.staffMap[o.staff_code];
+            const vals = ['', `💛 ${s?.name || o.staff_code}`];
+            for (let j = 1; j <= jyoshuCount; j++) vals.push('');
+            if (showSmaho) vals.push('');
+            if (hasOsobanCol) vals.push('');
+            vals.forEach((v, i) => {
+              const cell = sheet.getCell(row, col0 + i);
+              cell.value = v;
+              cell.alignment = { horizontal: 'center', vertical: 'middle' };
+              cell.border = { top:{style:'thin'}, bottom:{style:'thin'}, left:{style:'thin'}, right:{style:'thin'} };
+              cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF3E5F9' } };
+              if (i === 1) cell.font = { bold: true, color: { argb: 'FF6C3483' } };
+            });
+            row++;
+          }
+
           for (let r = 1; r <= rowCount; r++) {
             const rec = banmenData.find(x => x.busho_code === bushoCode && x.gyomu_code === '配送' && x.row_no === r);
+            const isRowEmpty = !rec || (!rec.driver && !rec.car_code);
+            if (isRowEmpty && oenQueue.length > 0) {
+              writeOenRow(oenQueue.shift());
+              continue;
+            }
             const isOsoban = hasOsobanCol && r === osobanRow;
             const vals = [rec?.car_code || '', getStaffName(rec?.driver)];
             for (let j = 1; j <= jyoshuCount; j++) vals.push(getStaffName(rec?.[j === 1 ? 'jyoshu1' : 'jyoshu2']));
@@ -2112,21 +2202,48 @@
             });
             row++;
           }
+          // 枠に入りきらなかった応援の人は、表の下に追加行として書き出す
+          oenQueue.forEach(o => writeOenRow(o));
         } else {
           // 倉庫・事務：colCount列のグリッド（rowCountスロット分）
           const colCount = jyoshuCount || 1;
+          // 応援登録されている人（午後から）：まず空いている枠に入れて、入りきらない分だけグリッドの続きに追加する
+          const oenQueue = oenData.filter(o => o.busho_code === bushoCode && o.gyomu_code === gyomuName).slice();
+          const oenCount = oenQueue.length;
           for (let i = 0; i < rowCount; i++) {
             const rNo = i + 1;
             const rec = banmenData.find(x => x.busho_code === bushoCode && x.gyomu_code === gyomuName && x.row_no === rNo);
             const rr = row + Math.floor(i / colCount);
             const cc = col0 + (i % colCount);
             const cell = sheet.getCell(rr, cc);
-            cell.value = getStaffName(rec?.driver);
+            if (!rec?.driver && oenQueue.length > 0) {
+              const o = oenQueue.shift();
+              const s = staffRows.find(x => x.staff_code === o.staff_code) || masters.staffMap[o.staff_code];
+              cell.value = `💛 ${s?.name || o.staff_code}`;
+              cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF3E5F9' } };
+              cell.font = { bold: true, color: { argb: 'FF6C3483' } };
+            } else {
+              cell.value = getStaffName(rec?.driver);
+            }
             cell.alignment = { horizontal: 'center', vertical: 'middle' };
             cell.border = { top:{style:'thin'}, bottom:{style:'thin'}, left:{style:'thin'}, right:{style:'thin'} };
-            sheet.getColumn(cc).width = Math.max(sheet.getColumn(cc).width || 0, 12);
+            sheet.getColumn(cc).width = Math.max(sheet.getColumn(cc).width || 0, 15);
           }
-          row += Math.ceil(rowCount / colCount) || 1;
+          // 枠に入りきらなかった応援の人は、グリッドの続きに追加する
+          oenQueue.forEach((o, idx) => {
+            const i = rowCount + idx;
+            const rr = row + Math.floor(i / colCount);
+            const cc = col0 + (i % colCount);
+            const s = staffRows.find(x => x.staff_code === o.staff_code) || masters.staffMap[o.staff_code];
+            const cell = sheet.getCell(rr, cc);
+            cell.value = `💛 ${s?.name || o.staff_code}`;
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF3E5F9' } };
+            cell.font = { bold: true, color: { argb: 'FF6C3483' } };
+            cell.alignment = { horizontal: 'center', vertical: 'middle' };
+            cell.border = { top:{style:'thin'}, bottom:{style:'thin'}, left:{style:'thin'}, right:{style:'thin'} };
+            sheet.getColumn(cc).width = Math.max(sheet.getColumn(cc).width || 0, 15);
+          });
+          row += Math.ceil((rowCount + oenCount) / colCount) || 1;
         }
       });
 
@@ -2199,17 +2316,22 @@
       oenData.forEach(o => {
         const s = staffRows.find(x => x.staff_code === o.staff_code);
         const b = masters.bushoMap[o.busho_code];
-        const nameColSpan = 1;
-        const deptColSpan = 1;
-        const deptColStart = col0 + nameColSpan;
+        const timeColStart = col0;
+        const nameColStart = col0 + 1;
+        const deptColStart = col0 + 2;
 
-        if (nameColSpan > 1) sheet.mergeCells(row, col0, row, col0 + nameColSpan - 1);
-        const nameCell = sheet.getCell(row, col0);
+        const timeCell = sheet.getCell(row, timeColStart);
+        timeCell.value = o.time_slot || '午後から';
+        timeCell.font = { bold: true, color: { argb: 'FF8E44AD' } };
+        timeCell.alignment = { horizontal: 'center', vertical: 'middle' };
+        timeCell.border = { top:{style:'thin'}, bottom:{style:'thin'}, left:{style:'thin'}, right:{style:'thin'} };
+        sheet.getColumn(timeColStart).width = Math.max(sheet.getColumn(timeColStart).width || 0, 10);
+
+        const nameCell = sheet.getCell(row, nameColStart);
         nameCell.value = s?.name || o.staff_code;
         nameCell.alignment = { horizontal: 'center', vertical: 'middle' };
         nameCell.border = { top:{style:'thin'}, bottom:{style:'thin'}, left:{style:'thin'}, right:{style:'thin'} };
 
-        if (deptColSpan > 1) sheet.mergeCells(row, deptColStart, row, deptColStart + deptColSpan - 1);
         const deptCell = sheet.getCell(row, deptColStart);
         deptCell.value = b?.busho_name || o.busho_code;
         deptCell.font = { bold: true };
@@ -2259,7 +2381,7 @@
       function cardOwnWidth(c) {
         if (c.type === 'busho') return Math.max(...c.items.map(blockWidth), 1);
         if (c.type === 'yasumi') return c.cfg.row_count || 4;
-        return 2; // oen
+        return 3; // oen（時間・社員・所属の3列）
       }
       const groupWidths = {};
       for (let col = 1; col <= maxCol; col++) {
