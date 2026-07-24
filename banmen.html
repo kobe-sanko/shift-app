@@ -1355,8 +1355,8 @@
       box.dataset.field = field;
       box.dataset.accept = acceptType;
 
-      // 遅番の行の車番欄には「遅」の文字を入れる（エクセルと同じ見せ方）。
-      // 「遅」の文字だけを左端に固定し、車番自体は今まで通り中央に表示する。
+      // 遅番の行の車番欄には「遅」の文字を入れる。
+      // 「遅」はセルの左端に固定し、車番自体は今まで通り中央に表示する。
       const showOsobanMark = field === 'car_code' && isOsoban;
       if (showOsobanMark) box.style.position = 'relative';
 
@@ -2248,7 +2248,7 @@
             vals.forEach((v, i) => {
               const cell = sheet.getCell(row, col0 + i);
               cell.value = v;
-              cell.alignment = { horizontal: (i === 0 && isOsoban) ? 'left' : 'center', vertical: 'middle' };
+              cell.alignment = { horizontal: 'center', vertical: 'middle' };
               cell.border = isOsoban
                 ? { top: osobanBorder, bottom: osobanBorder, left: osobanBorder, right: osobanBorder }
                 : { top:{style:'thin'}, bottom:{style:'thin'}, left:{style:'thin'}, right:{style:'thin'} };
