@@ -1355,6 +1355,9 @@
       box.dataset.field = field;
       box.dataset.accept = acceptType;
 
+      // 遅番の行の車番欄には「遅」の文字を入れる（エクセルと同じ見せ方）
+      const showOsobanMark = field === 'car_code' && isOsoban;
+
       if (value && value !== 'EMPTY') {
         // 表示名を解決
         let displayName = value;
@@ -1362,6 +1365,7 @@
           const s = staffRows.find(s => s.staff_code === value);
           displayName = s?.name || value;
         }
+        if (showOsobanMark) displayName = `遅 ${displayName}`;
         // spanをdraggableにして盤面内ドラッグを可能にする
         const span = document.createElement('span');
         span.style.flex = '1';
@@ -1389,6 +1393,14 @@
         if (!canEdit()) delBtn.disabled = true;
         box.appendChild(span);
         box.appendChild(delBtn);
+      } else if (showOsobanMark) {
+        // 車番が未入力でも、遅番の行だとわかるように「遅」の文字だけ表示する
+        const span = document.createElement('span');
+        span.style.flex = '1';
+        span.style.color = '#1b4f72';
+        span.style.fontWeight = 'bold';
+        span.textContent = '遅';
+        box.appendChild(span);
       }
 
       // ドロップイベント
