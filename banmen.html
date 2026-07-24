@@ -2440,8 +2440,9 @@
       if (totalWidth > 1) sheet.mergeCells(1, 1, 1, totalWidth);
       const titleCell = sheet.getCell(1, 1);
       titleCell.value = dateLabel;
-      titleCell.font = { bold: true, size: 13 };
+      titleCell.font = { bold: true, size: 20 };
       titleCell.alignment = { horizontal: 'center' };
+      sheet.getRow(1).height = 30;
 
       // 各グループを描画
       for (let col = 1; col <= maxCol; col++) {
@@ -2470,7 +2471,7 @@
           const v = sheet.getCell(r, c).value;
           if (v !== null && v !== undefined && v !== '') { hasValue = true; break; }
         }
-        if (!hasValue) sheet.getColumn(c).width = 3;
+        if (!hasValue) sheet.getColumn(c).width = 1.5; // カード間の間隔（今までの半分）
       }
 
       // 印刷したときに、用紙1枚にちょうど収まるように設定する
