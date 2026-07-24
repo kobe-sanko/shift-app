@@ -145,10 +145,15 @@
     .cell-box:hover { background: #f0f8ff; border-color: #4a90e2; }
     .cell-box.drop-over { background: #fffacd !important; border: 2px dashed #f39c12 !important; }
     .cell-box.filled { background: #fff8e0; border: 1px solid #ccc; }
-    .cell-box.osoban { border: 2px solid #e67e22 !important; background: #fff3e0; }
+    .cell-box.osoban { border: 2px solid #1b4f72 !important; background: #eaf4fc; }
     .cell-box.car-cell { background: #fff8f0; }
-    /* 必要台数マスタで設定した台数に届いていない枠を目立たせる */
+    /* 必要台数マスタで設定した範囲の枠は、埋まっていても常に赤枠をつける */
+    .cell-box.quota-required { border: 2px solid #e74c3c; }
+    /* 必要台数マスタで設定した台数に届いていない枠を目立たせる（未入力の問題箇所） */
     .cell-box.quota-missing { outline: 2px solid #e74c3c; outline-offset: -2px; }
+    /* 必要台数を超えた枠に配置されている場合（研修などの目的）に、区別できるよう色を付ける */
+    .cell-box.over-quota { background: #eaf2fb; border-color: #7fa8d9; }
+    .cell-box.over-quota.filled { background: #d9e8fb; }
     /* スマホ欄は運転・助手欄より控えめに（同じ名前が並んでも目立ちすぎないように） */
     .cell-box[data-field="smaho"] { font-size: 0.65rem; color: #999; background: #fdeef2; min-height: 20px; }
     .cell-box[data-field="smaho"].filled { background: #fce4ec; border-style: solid; border-color: #f3c6d3; color: #999; }
@@ -615,7 +620,7 @@
           return;
         }
         if (document.querySelectorAll('.quota-missing').length > 0) {
-          showMsg('必要台数が足りていない枠があります。先に埋めてから確定してください', 'err');
+          showMsg('車両（車番）が入っていない枠、または必要台数が足りていない枠があります。先に埋めてから確定してください', 'err');
           return;
         }
       }
@@ -1205,18 +1210,29 @@
 
         const tr = document.createElement('tr');
 
+        // 必要台数を超えた枠に配置されている（研修などの目的で置かれた）行かどうか
+        const isOverQuota = needCar > 0 && row > needCar && (rowData?.driver || rowData?.car_code);
+        const isOverQuotaJyoshu = needJyoshu > 0 && row > needJyoshu && rowData?.jyoshu1;
+
         // 車番セル
         const carTd = document.createElement('td');
         const carBox = makeCell('car', bushoCode, '配送', row, 'car_code', rowData?.car_code, isOsoban);
         carBox.classList.add('car-cell');
-        if (row <= needCar && !rowData?.car_code) carBox.classList.add('quota-missing');
+        // 必要台数の範囲内の枠は、埋まっていても常に赤枠をつける
+        if (row <= needCar) carBox.classList.add('quota-required');
+        // 運転手がいるのに車番が空いている枠は、必要台数の範囲外でも目立たせる
+        if ((row <= needCar || rowData?.driver) && !rowData?.car_code) carBox.classList.add('quota-missing');
+        if (isOverQuota) carBox.classList.add('over-quota');
         carTd.appendChild(carBox);
         tr.appendChild(carTd);
 
         // 運転手セル
         const driverTd = document.createElement('td');
         const driverBox = makeCell('staff', bushoCode, '配送', row, 'driver', rowData?.driver, isOsoban);
-        if (row <= needCar && !rowData?.driver) driverBox.classList.add('quota-missing');
+        if (row <= needCar) driverBox.classList.add('quota-required');
+        // 助手がいるのに運転手が空いている枠は、必要台数の範囲外でも目立たせる
+        if ((row <= needCar || rowData?.jyoshu1) && !rowData?.driver) driverBox.classList.add('quota-missing');
+        if (isOverQuota) driverBox.classList.add('over-quota');
         driverTd.appendChild(driverBox);
         tr.appendChild(driverTd);
 
@@ -1225,15 +1241,17 @@
           const jTd = document.createElement('td');
           const jField = j === 1 ? 'jyoshu1' : 'jyoshu2';
           const jBox = makeCell('staff', bushoCode, '配送', row, jField, rowData?.[jField], isOsoban);
+          if (j === 1 && row <= needJyoshu) jBox.classList.add('quota-required');
           if (j === 1 && row <= needJyoshu && !rowData?.jyoshu1) jBox.classList.add('quota-missing');
+          if (j === 1 && isOverQuotaJyoshu) jBox.classList.add('over-quota');
           jTd.appendChild(jBox);
           tr.appendChild(jTd);
         }
 
-        // スマホ担当セル（沖縄のみ）
+        // スマホ担当セル（沖縄のみ）：遅番の青枠はここには付けない
         if (showSmaho) {
           const smahoTd = document.createElement('td');
-          smahoTd.appendChild(makeCell('staff', bushoCode, '配送', row, 'smaho', rowData?.smaho, isOsoban));
+          smahoTd.appendChild(makeCell('staff', bushoCode, '配送', row, 'smaho', rowData?.smaho, false));
           tr.appendChild(smahoTd);
         }
 
@@ -1822,6 +1840,23 @@
         }
       }
 
+      // 必要台数を超えている枠に運転手を配置しようとしている場合は確認する（研修などのための配置はそのまま続行できる）
+      if (field === 'driver' && gyomuCode === '配送') {
+        const quota = carQuotaMap[bushoCode];
+        if (quota && quota.need_car && rowNo > quota.need_car) {
+          const ok = await showDialog(`この枠（${rowNo}台目）は必要台数（${quota.need_car}台）を超えています。\n研修などで配置しますか？`);
+          if (!ok) return;
+        }
+      }
+      // 必要な助手あり台数を超えている枠に助手を配置しようとしている場合も同様に確認する
+      if (field === 'jyoshu1' && gyomuCode === '配送') {
+        const quota = carQuotaMap[bushoCode];
+        if (quota && quota.need_jyoshu && rowNo > quota.need_jyoshu) {
+          const ok = await showDialog(`この枠（${rowNo}台目の助手）は必要な助手あり台数（${quota.need_jyoshu}台）を超えています。\n研修などで配置しますか？`);
+          if (!ok) return;
+        }
+      }
+
       const dateStr = getDateStr(currentDate);
       let value = dragInfo.code;
 
@@ -2086,9 +2121,9 @@
     function blockWidth(cfg) {
       if (cfg.gyomu_code === '配送') {
         const jyoshuCount = cfg.jyoshu_count || 0;
-        const osobanRow = cfg.osoban_row && cfg.osoban_row !== 'EMPTY' ? parseInt(cfg.osoban_row) : 0;
         const showSmaho = cfg.smaho_flg === true;
-        return 2 + jyoshuCount + (showSmaho ? 1 : 0) + (osobanRow > 0 ? 1 : 0); // 車番+運転+助手×n+(スマホ)+(遅列)
+        // 遅番は列を分けず車番セルの中に表示するので、列数には含めない
+        return 2 + jyoshuCount + (showSmaho ? 1 : 0); // 車番+運転+助手×n+(スマホ)
       }
       return cfg.jyoshu_count || 1; // 倉庫・事務は列数
     }
@@ -2140,14 +2175,12 @@
 
         if (gyomuName === '配送') {
           const osobanRow = cfg.osoban_row && cfg.osoban_row !== 'EMPTY' ? parseInt(cfg.osoban_row) : 0;
-          const hasOsobanCol = osobanRow > 0;
           const showSmaho = cfg.smaho_flg === true;
 
-          // ヘッダー行
+          // ヘッダー行（遅番は列を分けず、車番セルの中に表示するので列数は増やさない）
           const headers = ['車番', '運転'];
           for (let j = 0; j < jyoshuCount; j++) headers.push('助手');
           if (showSmaho) headers.push('スマホ');
-          if (hasOsobanCol) headers.push('遅');
           headers.forEach((h, i) => {
             const cell = sheet.getCell(row, col0 + i);
             cell.value = h;
@@ -2155,7 +2188,7 @@
             cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEEEEEE' } };
             cell.alignment = { horizontal: 'center', vertical: 'middle' };
             cell.border = { top:{style:'thin'}, bottom:{style:'thin'}, left:{style:'thin'}, right:{style:'thin'} };
-            sheet.getColumn(col0 + i).width = Math.max(sheet.getColumn(col0 + i).width || 0, h === '車番' ? 9 : (h === '遅' ? 5 : (h === '運転' ? 15 : 12)));
+            sheet.getColumn(col0 + i).width = Math.max(sheet.getColumn(col0 + i).width || 0, h === '車番' ? 9 : (h === '運転' ? 15 : 12));
           });
           row++;
 
@@ -2163,10 +2196,9 @@
           const oenQueue = oenData.filter(o => o.busho_code === bushoCode && o.gyomu_code === '配送').slice();
           function writeOenRow(o) {
             const s = staffRows.find(x => x.staff_code === o.staff_code) || masters.staffMap[o.staff_code];
-            const vals = ['', `💛 ${s?.name || o.staff_code}`];
+            const vals = ['', `💛${s?.name || o.staff_code}`];
             for (let j = 1; j <= jyoshuCount; j++) vals.push('');
             if (showSmaho) vals.push('');
-            if (hasOsobanCol) vals.push('');
             vals.forEach((v, i) => {
               const cell = sheet.getCell(row, col0 + i);
               cell.value = v;
@@ -2185,19 +2217,20 @@
               writeOenRow(oenQueue.shift());
               continue;
             }
-            const isOsoban = hasOsobanCol && r === osobanRow;
-            const vals = [rec?.car_code || '', getStaffName(rec?.driver)];
+            const isOsoban = osobanRow > 0 && r === osobanRow;
+            // 遅番は車番の欄に余白があるので、車番の前に「遅」を入れる
+            const carVal = isOsoban ? ('遅' + (rec?.car_code ? ' ' + rec.car_code : '')) : (rec?.car_code || '');
+            const vals = [carVal, getStaffName(rec?.driver)];
             for (let j = 1; j <= jyoshuCount; j++) vals.push(getStaffName(rec?.[j === 1 ? 'jyoshu1' : 'jyoshu2']));
             if (showSmaho) vals.push(getStaffName(rec?.smaho));
-            if (hasOsobanCol) vals.push(isOsoban ? '遅' : '');
 
             vals.forEach((v, i) => {
               const cell = sheet.getCell(row, col0 + i);
               cell.value = v;
               cell.alignment = { horizontal: 'center', vertical: 'middle' };
               cell.border = { top:{style:'thin'}, bottom:{style:'thin'}, left:{style:'thin'}, right:{style:'thin'} };
-              if (i === headers.length - 1 && hasOsobanCol && isOsoban) {
-                cell.font = { bold: true };
+              if (i === 0 && isOsoban) {
+                cell.font = { bold: true, color: { argb: 'FF1B4F72' } };
               }
             });
             row++;
@@ -2219,7 +2252,7 @@
             if (!rec?.driver && oenQueue.length > 0) {
               const o = oenQueue.shift();
               const s = staffRows.find(x => x.staff_code === o.staff_code) || masters.staffMap[o.staff_code];
-              cell.value = `💛 ${s?.name || o.staff_code}`;
+              cell.value = `💛${s?.name || o.staff_code}`;
               cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF3E5F9' } };
               cell.font = { bold: true, color: { argb: 'FF6C3483' } };
             } else {
@@ -2236,7 +2269,7 @@
             const cc = col0 + (i % colCount);
             const s = staffRows.find(x => x.staff_code === o.staff_code) || masters.staffMap[o.staff_code];
             const cell = sheet.getCell(rr, cc);
-            cell.value = `💛 ${s?.name || o.staff_code}`;
+            cell.value = `💛${s?.name || o.staff_code}`;
             cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF3E5F9' } };
             cell.font = { bold: true, color: { argb: 'FF6C3483' } };
             cell.alignment = { horizontal: 'center', vertical: 'middle' };
@@ -2433,6 +2466,19 @@
         }
         if (!hasValue) sheet.getColumn(c).width = 3;
       }
+
+      // 印刷したときに、用紙1枚にちょうど収まるように設定する
+      sheet.pageSetup = {
+        paperSize: 9, // A4
+        orientation: 'landscape',
+        fitToPage: true,
+        fitToWidth: 1,
+        fitToHeight: 1,
+        horizontalCentered: true,
+        verticalCentered: true,
+        margins: { left: 0.3, right: 0.3, top: 0.3, bottom: 0.3, header: 0, footer: 0 },
+      };
+      sheet.pageSetup.printArea = `A1:${sheet.getColumn(totalWidth).letter}${lastRow}`;
 
       // ダウンロード
       const buf = await workbook.xlsx.writeBuffer();
