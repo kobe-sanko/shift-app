@@ -39,12 +39,23 @@
     .empty-slot { color: #bbb; }
     .loading { text-align: center; padding: 20px; color: #888; }
     .slot-manage { display: flex; gap: 8px; justify-content: flex-end; margin-bottom: 8px; }
+    .filter-row { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 8px; }
+    .filter-btn { padding: 3px 10px; border: none; border-radius: 4px; cursor: pointer; font-size: 0.82rem; }
+    .filter-btn.active { outline: 3px solid #333; font-weight: bold; }
   </style>
 </head>
 <body>
   <h1>🅿️ 駐車場マスタ</h1>
   <a class="back" href="index.html">← メニューへ</a>
   <div id="msg" class="msg"></div>
+
+  <!-- 社員プルダウンをしぼりこむための所属選択（閲覧のみモードでも操作できるよう、フォームの外に置く） -->
+  <div style="display:flex;align-items:center;gap:8px;max-width:600px;margin:0 auto 8px;">
+    <label style="font-size:0.8rem;color:#666;white-space:nowrap;">社員を所属で絞込</label>
+    <select id="f_staff_filter" onchange="buildStaffSelect()" style="font-size:0.85rem;padding:4px 8px;border:1px solid #ccc;border-radius:4px;">
+      <option value="">-- 全員 --</option>
+    </select>
+  </div>
 
   <!-- 割り当てフォーム -->
   <div class="form-box">
@@ -72,6 +83,11 @@
     <button class="btn-del-slot" onclick="deleteLastSlot()">－ 最後の枠を削除</button>
   </div>
 
+  <!-- 一覧の絞り込み（割り当てられている社員の所属で絞る） -->
+  <div class="filter-row" id="filter-row">
+    <button class="filter-btn active" style="background:#555;color:white" onclick="filterTable('', this)">全員</button>
+  </div>
+
   <div id="loading" class="loading">読み込み中...</div>
   <table id="main-table" style="display:none">
     <thead>
@@ -88,22 +104,66 @@
     let masters = {};
     let rows = [];
     let selectedSlot = null;
+    let currentFilter = '';
 
     async function init() {
       masters = await loadMasters();
-      buildSelects();
+      buildFilterButtons();
+      buildStaffFilterSelect();
+      buildStaffSelect();
       lockMasterFormIfNeeded();
       await loadRows();
     }
 
-    function buildSelects() {
-      const sel = document.getElementById('f_staff');
-      masters.staffs.filter(s => !s.retired).forEach(s => {
+    // 一覧を絞り込むための所属ボタン（900番台・盤面専用は除く）
+    function buildFilterButtons() {
+      const row = document.getElementById('filter-row');
+      masters.bushos.filter(b => !b.busho_code.startsWith('9') && !b.is_banmen_only).forEach(b => {
+        const btn = document.createElement('button');
+        btn.className = 'filter-btn';
+        btn.style.background = b.color_h || '#888';
+        btn.style.color = getTextColor(b.color_h || '#888');
+        btn.textContent = b.busho_name;
+        btn.onclick = () => filterTable(b.busho_code, btn);
+        row.appendChild(btn);
+      });
+    }
+
+    function filterTable(bushoCode, btn) {
+      currentFilter = bushoCode;
+      document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+      if (btn) btn.classList.add('active');
+      renderTable();
+    }
+
+    // 「社員」プルダウンをしぼりこむための所属選択肢（900番台・盤面専用は除く）
+    function buildStaffFilterSelect() {
+      const sel = document.getElementById('f_staff_filter');
+      masters.bushos.filter(b => !b.busho_code.startsWith('9') && !b.is_banmen_only).forEach(b => {
         const opt = document.createElement('option');
-        opt.value = s.staff_code;
-        opt.textContent = `${s.name}（${s.staff_code}）`;
+        opt.value = b.busho_code;
+        opt.textContent = b.busho_name;
         sel.appendChild(opt);
       });
+    }
+
+    // 「社員」プルダウンの中身を、選んだ所属だけに絞り込んで作り直す
+    function buildStaffSelect() {
+      const filterCode = document.getElementById('f_staff_filter').value;
+      const sel = document.getElementById('f_staff');
+      const prevValue = sel.value;
+      sel.innerHTML = '<option value="">-- 空き --</option>';
+      masters.staffs
+        .filter(s => !s.retired)
+        .filter(s => !filterCode || s.busho_code === filterCode)
+        .forEach(s => {
+          const opt = document.createElement('option');
+          opt.value = s.staff_code;
+          opt.textContent = `${s.name}（${s.staff_code}）`;
+          sel.appendChild(opt);
+        });
+      // 絞り込んでも、今選ばれている人がリストに残っていればそのままにする
+      if ([...sel.options].some(o => o.value === prevValue)) sel.value = prevValue;
     }
 
     async function loadRows() {
@@ -118,7 +178,10 @@
     function renderTable() {
       const tbody = document.getElementById('tbody');
       tbody.innerHTML = '';
-      rows.forEach(r => {
+      const targetRows = currentFilter
+        ? rows.filter(r => masters.staffMap[r.staff_code]?.busho_code === currentFilter)
+        : rows;
+      targetRows.forEach(r => {
         const staff = masters.staffMap[r.staff_code];
         const tr = document.createElement('tr');
         if (r.slot_no === selectedSlot) tr.classList.add('selected');
@@ -133,6 +196,9 @@
         `;
         tbody.appendChild(tr);
       });
+      if (currentFilter && targetRows.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="3" style="color:#aaa;padding:20px;">該当する社員がいません</td></tr>`;
+      }
     }
 
     function selectRow(r) {
