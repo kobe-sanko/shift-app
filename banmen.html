@@ -2232,6 +2232,9 @@
               cell.border = isOsoban
                 ? { top: osobanBorder, bottom: osobanBorder, left: osobanBorder, right: osobanBorder }
                 : { top:{style:'thin'}, bottom:{style:'thin'}, left:{style:'thin'}, right:{style:'thin'} };
+              if (isOsoban) {
+                cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEAF4FC' } };
+              }
               if (i === 0 && isOsoban) {
                 cell.font = { bold: true, color: { argb: 'FF1B4F72' } };
               }
