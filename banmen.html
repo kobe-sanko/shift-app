@@ -2224,11 +2224,14 @@
             for (let j = 1; j <= jyoshuCount; j++) vals.push(getStaffName(rec?.[j === 1 ? 'jyoshu1' : 'jyoshu2']));
             if (showSmaho) vals.push(getStaffName(rec?.smaho));
 
+            const osobanBorder = { style: 'thick', color: { argb: 'FF1B4F72' } };
             vals.forEach((v, i) => {
               const cell = sheet.getCell(row, col0 + i);
               cell.value = v;
               cell.alignment = { horizontal: 'center', vertical: 'middle' };
-              cell.border = { top:{style:'thin'}, bottom:{style:'thin'}, left:{style:'thin'}, right:{style:'thin'} };
+              cell.border = isOsoban
+                ? { top: osobanBorder, bottom: osobanBorder, left: osobanBorder, right: osobanBorder }
+                : { top:{style:'thin'}, bottom:{style:'thin'}, left:{style:'thin'}, right:{style:'thin'} };
               if (i === 0 && isOsoban) {
                 cell.font = { bold: true, color: { argb: 'FF1B4F72' } };
               }
