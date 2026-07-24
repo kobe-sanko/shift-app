@@ -96,6 +96,7 @@
     let kintaiRows = [];   // 選択月のshift_kintai
     let shoteiDays = null; // 選択月の所定日数
     let currentFilter = '';
+    let gyomuShiftMap = {}; // 選択月のshift_gyomu_shift（staff_code → 行）
 
     async function init() {
       masters = await loadMasters();
@@ -124,7 +125,7 @@
 
     function buildFilterButtons() {
       const row = document.getElementById('filter-row');
-      masters.bushos.filter(b => parseInt(b.busho_code) < 900).forEach(b => {
+      masters.bushos.filter(b => parseInt(b.busho_code) < 900 && !b.is_banmen_only).forEach(b => {
         const btn = document.createElement('button');
         btn.className = 'filter-btn';
         btn.style.background = b.color_h || '#888';
@@ -169,15 +170,17 @@
       document.getElementById('loading').style.display = 'block';
       document.getElementById('table-wrap').style.display = 'none';
 
-      const [kintaiRes, shdRes, fyRes] = await Promise.all([
+      const [kintaiRes, shdRes, fyRes, gyomuShiftRes] = await Promise.all([
         sb.from('shift_kintai').select('*').eq('yearmonth', currentYM),
         sb.from('shift_shotnichi').select('*').eq('yearmonth', currentYM).maybeSingle(),
         sb.from('shift_kintai').select('staff_code, yearmonth, overtime_hours').in('yearmonth', fiscalYearMonths(currentYM)),
+        sb.from('shift_gyomu_shift').select('*').eq('yearmonth', currentYM),
       ]);
 
       if (kintaiRes.error) { showUploadMsg('データの読み込みに失敗しました', 'err'); }
       kintaiRows = kintaiRes.data || [];
       shoteiDays = shdRes.data ? shdRes.data.shotei_days : null;
+      gyomuShiftMap = Object.fromEntries((gyomuShiftRes.data || []).map(r => [r.staff_code, r]));
 
       // 年間残業（年度4月〜選択月までのovertime_hours合計）をstaff_codeごとに集計
       window.__nenkanZangyo = {};
@@ -217,21 +220,35 @@
         if (!sheet) throw new Error('シートが見つかりません');
 
         // 1〜4行目はタイトル・見出しなので、5行目以降がデータ
-        const records = [];
+        // 同じ人が月の途中で部署を移動していると、同じ社員CD・同じ年月の行が
+        // 2行以上に分かれて出てくることがあるので、合算してから1行にまとめる
+        const recordMap = new Map();
         sheet.eachRow((row, rowNumber) => {
           if (rowNumber < 5) return;
           const v = row.values; // 1始まり
           const yearmonth = String(v[2] ?? '').trim();
           const staffCode = String(v[5] ?? '').trim();
           if (!yearmonth || !staffCode) return;
-          records.push({
-            staff_code: staffCode,
-            yearmonth: yearmonth,
-            work_days: Number(v[7]) || 0,
-            work_hours: Number(v[10]) || 0,
-            overtime_hours: Number(v[12]) || 0,
-          });
+          const key = staffCode + '_' + yearmonth;
+          const workDays = Number(v[7]) || 0;
+          const workHours = Number(v[10]) || 0;
+          const overtimeHours = Number(v[12]) || 0;
+          if (recordMap.has(key)) {
+            const r = recordMap.get(key);
+            r.work_days += workDays;
+            r.work_hours += workHours;
+            r.overtime_hours += overtimeHours;
+          } else {
+            recordMap.set(key, {
+              staff_code: staffCode,
+              yearmonth: yearmonth,
+              work_days: workDays,
+              work_hours: workHours,
+              overtime_hours: overtimeHours,
+            });
+          }
         });
+        const records = [...recordMap.values()];
 
         if (records.length === 0) throw new Error('取り込めるデータが0件でした。ファイルの形式を確認してください。');
 
@@ -263,6 +280,37 @@
       el.className = 'upload-msg ' + type;
     }
 
+    // 業務シフトを見て、その社員が「今日から月末までに実際に働く予定の日数」を数える。
+    // 休日(900/901)・有休(902)・健診(903)などの900番台は数えない。
+    // 勤怠Excelは前日までのデータしか入っていないことが多いので、今日の分もまだ
+    // 「これから働く日」として1日分カウントする。
+    function countRemainingShiftDays(staffCode, ym) {
+      const shift = gyomuShiftMap[staffCode];
+      if (!shift) return null; // 業務シフトが登録されていない
+
+      const y = parseInt(ym.slice(0, 4));
+      const m = parseInt(ym.slice(4, 6));
+      const lastDay = new Date(y, m, 0).getDate();
+      const currentRealYm = getCurrentYearMonth();
+
+      let startDay;
+      if (ym < currentRealYm) return 0;       // すでに終わった月
+      else if (ym > currentRealYm) startDay = 1; // まだ来ていない月は1日から
+      else startDay = new Date().getDate();      // 今月は今日から（今日も含める）
+
+      let count = 0;
+      for (let d = startDay; d <= lastDay; d++) {
+        const key = `d${String(d).padStart(2, '0')}`;
+        const val = shift[key];
+        // シフトが空欄（未入力）の日は、休日ではなく勤務日として1日にカウントする
+        if (!val) { count++; continue; }
+        const codeNum = parseInt(val, 10);
+        const isKyujitsu = !isNaN(codeNum) && codeNum >= 900; // 休日・有休・健診など
+        if (!isKyujitsu) count++;
+      }
+      return count;
+    }
+
     // ===== テーブル描画 =====
     function renderTable() {
       const tbody = document.getElementById('tbody');
@@ -283,7 +331,9 @@
         const overHours = k ? k.overtime_hours : null;
 
         const nokoriJikan = (jougenJikan !== null && workHours !== null) ? jougenJikan - workHours : null;
-        const nokoriNissu = (shoteiDays !== null && workDays !== null) ? shoteiDays - workDays : null;
+        // 残り日数は、業務シフトを見て「今日から月末までに実際に働く予定の日数」を数える
+        // （休日・有休・健診は除く）。業務シフトが登録されていなければ計算できない。
+        const nokoriNissu = countRemainingShiftDays(staff.staff_code, currentYM);
         const hitsuyoJikan = (nokoriJikan !== null && nokoriNissu) ? nokoriJikan / nokoriNissu : null;
         const nenkanZangyo = window.__nenkanZangyo[staff.staff_code] || 0;
 

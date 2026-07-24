@@ -205,7 +205,8 @@
   </div>
 
   <script>
-    const KYUJITSU_MAP = { '901': '休日', '902': '有休', '903': '健診' };
+    // 900番台（休日・有休・健診・講習など）は所属マスタから動的に読み込む
+    let KYUJITSU_MAP = {};
 
     let masters = {};
     let staffRows = [];
@@ -230,6 +231,7 @@
     async function init() {
       currentYM = getCurrentYearMonth();
       masters = await loadMasters();
+      KYUJITSU_MAP = buildKyujitsuMap(masters.bushos);
       buildMonthSelect();
       buildFilterButtons();
       buildGyomuListModeSelect();
@@ -357,7 +359,7 @@
     function buildFilterButtons() {
       const row = document.getElementById('filter-row');
       const mobileSel = document.getElementById('filter-select-mobile');
-      masters.bushos.filter(b => parseInt(b.busho_code) < 900).forEach(b => {
+      masters.bushos.filter(b => parseInt(b.busho_code) < 900 && !b.is_banmen_only).forEach(b => {
         const btn = document.createElement('button');
         btn.className = 'filter-btn';
         btn.style.background = b.color_h;
@@ -1109,8 +1111,7 @@
       const sheet = workbook.addWorksheet(`${sheetLabel} ${bushoName}`);
 
       const weekNames = ['日','月','火','水','木','金','土'];
-      const KYUJITSU = { '900': '休日', '901': '休日', '902': '有休', '903': '健診',
-                         '900-01': '休日', '901-01': '休日', '902-01': '有休', '903-01': '健診' };
+      const KYUJITSU = buildKyujitsuMap(masters.bushos);
 
       // コードから表示名と色を取得
       function getCodeInfo(code) {

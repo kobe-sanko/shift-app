@@ -187,3 +187,30 @@ async function loadMasters() {
     carMap: Object.fromEntries((carRes.data||[]).map(c => [c.car_code, c])),
   };
 }
+
+// ============================================================
+// 900番台（休日・有休・健診・講習など「休み系」）の所属を扱う共通関数
+// 所属マスタ（shift_busho）で「9」から始まるコードを登録すれば、
+// ここを通じて業務シフトなどの画面に自動で反映される。
+// ============================================================
+
+// 900番台の所属だけを、コード順で取り出す
+function getKyujitsuBushos(bushos) {
+  return (bushos || [])
+    .filter(b => /^9\d*$/.test(b.busho_code) && b.is_active !== false)
+    .sort((a, b) => a.busho_code.localeCompare(b.busho_code, undefined, { numeric: true }));
+}
+
+// コード→名前のマップ（例：{901:'休日', 902:'有休', 903:'健診', 904:'講習'}）
+function buildKyujitsuMap(bushos) {
+  const map = {};
+  getKyujitsuBushos(bushos).forEach(b => { map[b.busho_code] = b.busho_name; });
+  return map;
+}
+
+// 名前→コードの逆引きマップ（例：{'休日':901, '有休':902, ...}）
+function buildKyujitsuCodeMap(bushos) {
+  const map = {};
+  getKyujitsuBushos(bushos).forEach(b => { map[b.busho_name] = b.busho_code; });
+  return map;
+}

@@ -662,7 +662,7 @@
       const toInsert = []; // shift_banmenへの新規挿入レコード
       const soukoJimuGroups = {}; // key: busho_code|gyomu_name → 社員コード配列
 
-      const KYUJITSU_MAP = { '901': '休日', '902': '有休', '903': '健診' };
+      const KYUJITSU_MAP = buildKyujitsuMap(masters.bushos);
 
       dayShiftList.forEach(({ staff_code, gyomu_code }) => {
         // 休日・有休・健診（901/902/903）→ お休みカードへ（この盤面に関連する所属の人だけ）
@@ -1436,7 +1436,10 @@
       const yasumiBushoList = (cfg.yasumi_bushos || '').split(',').filter(Boolean);
       const yasumiAllowed = yasumiBushoList.length > 0 ? new Set(yasumiBushoList) : boardBushoCodes;
 
-      ['休日', '有休', '健診'].forEach((type, idx) => {
+      // お休みカードに並べる分類（休日・有休・健診・講習など）は、
+      // 所属マスタで9から始まるコードを登録すれば自動で増える
+      const kyujitsuTypes = getKyujitsuBushos(masters.bushos).map(b => b.busho_name);
+      kyujitsuTypes.forEach((type, idx) => {
         const typeDiv = document.createElement('div');
         typeDiv.innerHTML = `<div class="yasumi-type">${type}</div>`;
         const grid = document.createElement('div');
@@ -2101,7 +2104,7 @@
     // 業務マスタにまだ登録されていない場合は、盤面の配置内容からそのまま自動登録する
     async function resolveOrCreateGyomuCode(bushoCode, gyomuCode, rowNo, field) {
       if (bushoCode === 'お休み') {
-        const KYUJITSU_CODE = { '休日': '901', '有休': '902', '健診': '903' };
+        const KYUJITSU_CODE = buildKyujitsuCodeMap(masters.bushos);
         return KYUJITSU_CODE[gyomuCode] || null;
       }
 
@@ -2330,7 +2333,7 @@
       hdr.alignment = { horizontal: 'center', vertical: 'middle' };
       let row = row0 + 1;
 
-      ['休日', '有休', '健診'].forEach(type => {
+      getKyujitsuBushos(masters.bushos).map(b => b.busho_name).forEach(type => {
         if (colWidth > 1) sheet.mergeCells(row, col0, row, col0 + colWidth - 1);
         const lbl = sheet.getCell(row, col0);
         lbl.value = type;

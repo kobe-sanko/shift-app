@@ -92,6 +92,9 @@
           <label class="wd-check-label"><input type="checkbox" class="off-wd-check" value="6">土</label>
         </div>
       </div>
+      <label class="wd-check-label" style="margin-left:14px;">
+        <input type="checkbox" id="f_banmen_only">盤面専用（フィルター・社員登録には出さない）
+      </label>
     </div>
   </div>
 
@@ -105,6 +108,7 @@
         <th style="width:170px">色</th>
         <th style="width:80px">有効</th>
         <th style="width:120px">定休日</th>
+        <th style="width:90px">盤面専用</th>
       </tr>
     </thead>
     <tbody id="tbody"></tbody>
@@ -159,6 +163,7 @@
           <td><span class="badge" style="${colorStyle}">${color}</span></td>
           <td>${r.is_active ? '有効' : '無効'}</td>
           <td>${offText}</td>
+          <td>${r.is_banmen_only ? '<span class="badge" style="background:#8e44ad;color:#fff">盤面専用</span>' : '－'}</td>
         `;
         tbody.appendChild(tr);
       });
@@ -174,6 +179,7 @@
       document.getElementById('f_active').value     = r.is_active ? 'true' : 'false';
       const offSet = new Set((r.off_weekdays || '').split(',').filter(v => v !== ''));
       document.querySelectorAll('.off-wd-check').forEach(chk => { chk.checked = offSet.has(chk.value); });
+      document.getElementById('f_banmen_only').checked = !!r.is_banmen_only;
       renderTable();
     }
 
@@ -193,6 +199,7 @@
         color_h:    color,
         is_active:  document.getElementById('f_active').value === 'true',
         off_weekdays: offWeekdays,
+        is_banmen_only: document.getElementById('f_banmen_only').checked,
       };
 
       if (mode === 'add') {
@@ -223,6 +230,7 @@
       document.getElementById('f_name').value       = '';
       document.getElementById('f_color_text').value = '';
       document.querySelectorAll('.off-wd-check').forEach(chk => { chk.checked = false; });
+      document.getElementById('f_banmen_only').checked = false;
       await loadRows();
     }
 

@@ -55,7 +55,8 @@
   </table>
 
   <script>
-    const KYUJITSU_MAP = { '901': '休日', '902': '有休', '903': '健診' };
+    // 900番台（休日・有休・健診・講習など）は所属マスタから動的に読み込む
+    let KYUJITSU_MAP = {};
 
     let masters = {};
     let currentDate = new Date();
@@ -64,6 +65,7 @@
 
     async function init() {
       masters = await loadMasters();
+      KYUJITSU_MAP = buildKyujitsuMap(masters.bushos);
       await loadData();
     }
 

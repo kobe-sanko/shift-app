@@ -145,7 +145,7 @@
 
     function buildFilterButtons() {
       const row = document.getElementById('filter-row');
-      masters.bushos.filter(b => !b.busho_code.startsWith('9')).forEach(b => {
+      masters.bushos.filter(b => !b.busho_code.startsWith('9') && !b.is_banmen_only).forEach(b => {
         const btn = document.createElement('button');
         btn.className = 'filter-btn';
         btn.style.background = b.color_h;
@@ -158,7 +158,7 @@
 
     function buildSelects() {
       const bushoSel = document.getElementById('f_busho');
-      masters.bushos.filter(b => !b.busho_code.startsWith('9')).forEach(b => {
+      masters.bushos.filter(b => !b.busho_code.startsWith('9') && !b.is_banmen_only).forEach(b => {
         const opt = document.createElement('option');
         opt.value = b.busho_code;
         opt.textContent = b.busho_name;

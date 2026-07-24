@@ -130,6 +130,7 @@
 
     async function init() {
       masters = await loadMasters();
+      KYUJITSU_MAP = buildKyujitsuMap(masters.bushos);
       buildFilterButtons();
       buildGyomuListModeSelect();
       initTbodyEvents();
@@ -300,7 +301,7 @@
 
     function buildFilterButtons() {
       const row = document.getElementById('filter-row');
-      masters.bushos.filter(b => parseInt(b.busho_code) < 900).forEach(b => {
+      masters.bushos.filter(b => parseInt(b.busho_code) < 900 && !b.is_banmen_only).forEach(b => {
         const btn = document.createElement('button');
         btn.className = 'filter-btn';
         btn.style.background = b.color_h;
@@ -330,7 +331,8 @@
       document.getElementById('main-table').style.display = '';
     }
 
-    const KYUJITSU_MAP = { '901': '休日', '902': '有休', '903': '健診' };
+    // 900番台（休日・有休・健診・講習など）は所属マスタから動的に読み込む
+    let KYUJITSU_MAP = {};
 
     function getBadgeHtml(code) {
       if (!code || code === 'EMPTY') return `<span class="badge empty">－</span>`;
