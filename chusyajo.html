@@ -13,8 +13,15 @@
     .date-bar { display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 6px; }
     .date-bar button { font-size: 0.9rem; padding: 4px 10px; border: none; border-radius: 4px; cursor: pointer; background: #666; color: white; }
     .date-label { font-size: 1rem; font-weight: bold; min-width: 140px; text-align: center; }
-    .kuuki-bar { text-align: center; margin-bottom: 10px; font-size: 0.95rem; }
+    .kuuki-bar { text-align: center; margin-bottom: 6px; font-size: 0.95rem; }
     .kuuki-badge { display: inline-block; padding: 3px 12px; border-radius: 4px; font-weight: bold; background: #e74c3c; color: white; }
+    .kuuki-nums { text-align: center; margin-bottom: 10px; display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
+    .num-circle {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 26px; height: 26px; border-radius: 50%; font-weight: bold; font-size: 0.85rem; flex-shrink: 0;
+    }
+    .num-circle.on-green  { background: #27ae60; color: white; }
+    .num-circle.on-purple { background: #6c3483; color: white; }
     .msg { text-align: center; font-size: 0.85rem; padding: 6px; border-radius: 4px; margin-bottom: 8px; display: none; }
     .msg.ok  { background: #d4edda; color: #155724; display: block; }
     .msg.err { background: #fdecea; color: #c0392b; display: block; }
@@ -23,11 +30,12 @@
     th { background: #6c3483; color: white; padding: 8px 4px; text-align: center; }
     td { padding: 9px 4px; text-align: center; border-bottom: 1px solid #f0f0f0; }
     .empty-name { color: #bbb; }
+    .name-faded { color: #aaa; }
     .status { display: inline-block; padding: 3px 10px; border-radius: 4px; font-size: 0.8rem; font-weight: bold; }
     .status-work   { background: #d4edda; color: #1e7e34; }
     .status-leave  { background: #fdecea; color: #c0392b; }
-    .status-none   { background: #eee; color: #999; }
-    tr.leave-row td { background: #fff5f5; }
+    .status-empty  { background: #27ae60; color: white; }
+    tr.empty-row td { background: #eafaf1; }
     .loading { text-align: center; padding: 20px; color: #888; }
   </style>
 </head>
@@ -45,6 +53,7 @@
   </div>
 
   <div class="kuuki-bar">空き駐車場：<span class="kuuki-badge" id="kuuki-count">-</span>台</div>
+  <div class="kuuki-nums" id="kuuki-nums"></div>
 
   <div id="loading" class="loading">読み込み中...</div>
   <table id="main-table" style="display:none">
@@ -62,6 +71,7 @@
     let currentDate = new Date();
     let slotRows = [];
     let shiftMap = {}; // staff_code -> その日のシフト内容（gyomu_code等）
+    let oenStaffSet = new Set(); // その日、応援で出勤する予定のstaff_code
 
     async function init() {
       masters = await loadMasters();
@@ -99,6 +109,13 @@
       return `d${String(d.getDate()).padStart(2, '0')}`;
     }
 
+    function getDateStr(d) {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${y}${m}${day}`;
+    }
+
     async function loadData() {
       document.getElementById('date-label').textContent = getDateLabel(currentDate);
       document.getElementById('loading').style.display = 'block';
@@ -106,21 +123,24 @@
 
       const yearMonth = getYearMonth(currentDate);
       const dayCol = getDayCol(currentDate);
+      const dateStr = getDateStr(currentDate);
 
-      const [slotRes, shiftRes] = await Promise.all([
+      const [slotRes, shiftRes, oenRes] = await Promise.all([
         sb.from('shift_chusyajo').select('*').order('slot_no'),
         sb.from('shift_gyomu_shift').select(`staff_code, ${dayCol}`).eq('yearmonth', yearMonth),
+        sb.from('shift_banmen_oen').select('staff_code').eq('date', dateStr),
       ]);
 
-      if (slotRes.error || shiftRes.error) {
+      if (slotRes.error || shiftRes.error || oenRes.error) {
         showMsg('データの読み込みに失敗しました', 'err');
-        console.error(slotRes.error || shiftRes.error);
+        console.error(slotRes.error || shiftRes.error || oenRes.error);
         return;
       }
 
       slotRows = slotRes.data || [];
       shiftMap = {};
       (shiftRes.data || []).forEach(r => { shiftMap[r.staff_code] = r[dayCol]; });
+      oenStaffSet = new Set((oenRes.data || []).map(r => r.staff_code));
 
       renderTable();
       document.getElementById('loading').style.display = 'none';
@@ -128,38 +148,64 @@
     }
 
     // ===== 状態を判定 =====
-    // 戻り値: { label, cls, isLeave }
+    // 戻り値: { label, cls, isEmpty }
+    // 未割当（誰も割り当てられていない枠）も、休日などで今日使われない枠も、
+    // どちらも「空き」として扱う。ただし、健診・講習などで昼から応援に出る人は、
+    // 応援に登録されていれば「出勤」扱いにする（車を使うため）
     function getStatus(staffCode) {
-      if (!staffCode) return { label: '未割当', cls: 'status-none', isLeave: false };
+      if (!staffCode) return { label: '空き', cls: 'status-empty', isEmpty: true };
       const code = shiftMap[staffCode];
       if (code && KYUJITSU_MAP[code]) {
-        return { label: KYUJITSU_MAP[code], cls: 'status-leave', isLeave: true };
+        if (oenStaffSet.has(staffCode)) {
+          return { label: '出勤', cls: 'status-work', isEmpty: false };
+        }
+        return { label: KYUJITSU_MAP[code], cls: 'status-leave', isEmpty: true };
       }
-      return { label: '出勤', cls: 'status-work', isLeave: false };
+      return { label: '出勤', cls: 'status-work', isEmpty: false };
+    }
+
+    // 数字を丸バッジのHTMLにする
+    function numCircle(no, colorClass) {
+      return `<span class="num-circle ${colorClass}">${no}</span>`;
     }
 
     function renderTable() {
       const tbody = document.getElementById('tbody');
       tbody.innerHTML = '';
-      let leaveCount = 0;
+      const emptySlotNos = [];
 
       slotRows.forEach(r => {
         const staff = masters.staffMap[r.staff_code];
         const status = getStatus(r.staff_code);
-        if (status.isLeave) leaveCount++;
+        if (status.isEmpty) emptySlotNos.push(r.slot_no);
 
-        const nameHtml = staff ? staff.name : `<span class="empty-name">－</span>`;
+        // 未割当は「－」、休みなどで空きになった人は名前を薄く、出勤の人は通常表示
+        let nameHtml;
+        if (!staff) {
+          nameHtml = `<span class="empty-name">－</span>`;
+        } else if (status.isEmpty) {
+          nameHtml = `<span class="name-faded">${staff.name}</span>`;
+        } else {
+          nameHtml = staff.name;
+        }
+
         const tr = document.createElement('tr');
-        if (status.isLeave) tr.className = 'leave-row';
+        if (status.isEmpty) tr.className = 'empty-row';
         tr.innerHTML = `
-          <td>${r.slot_no}番</td>
+          <td>${numCircle(r.slot_no, 'on-purple')}</td>
           <td>${nameHtml}</td>
           <td><span class="status ${status.cls}">${status.label}</span></td>
         `;
         tbody.appendChild(tr);
       });
 
-      document.getElementById('kuuki-count').textContent = leaveCount;
+      document.getElementById('kuuki-count').textContent = emptySlotNos.length;
+
+      // どの番号が空いているか、ひと目でわかるように丸バッジを並べて表示する
+      const numsEl = document.getElementById('kuuki-nums');
+      numsEl.innerHTML = emptySlotNos.length > 0
+        ? emptySlotNos.map(no => numCircle(no, 'on-green')).join('')
+        : '<span style="color:#999;font-size:0.85rem;">空きなし</span>';
     }
 
     function showMsg(text, type) {
