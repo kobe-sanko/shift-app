@@ -1355,8 +1355,10 @@
       box.dataset.field = field;
       box.dataset.accept = acceptType;
 
-      // 遅番の行の車番欄には「遅」の文字を入れる（エクセルと同じ見せ方）
+      // 遅番の行の車番欄には「遅」の文字を入れる（エクセルと同じ見せ方）。
+      // 「遅」の文字だけを左端に固定し、車番自体は今まで通り中央に表示する。
       const showOsobanMark = field === 'car_code' && isOsoban;
+      if (showOsobanMark) box.style.position = 'relative';
 
       if (value && value !== 'EMPTY') {
         // 表示名を解決
@@ -1365,12 +1367,10 @@
           const s = staffRows.find(s => s.staff_code === value);
           displayName = s?.name || value;
         }
-        if (showOsobanMark) displayName = `遅 ${displayName}`;
         // spanをdraggableにして盤面内ドラッグを可能にする
         const span = document.createElement('span');
         span.style.flex = '1';
         span.textContent = displayName;
-        if (showOsobanMark) { span.style.textAlign = 'left'; box.style.justifyContent = 'flex-start'; }
         span.draggable = canEdit();
         span.addEventListener('dragstart', e => {
           e.stopPropagation();
@@ -1394,16 +1394,21 @@
         if (!canEdit()) delBtn.disabled = true;
         box.appendChild(span);
         box.appendChild(delBtn);
-      } else if (showOsobanMark) {
-        // 車番が未入力でも、遅番の行だとわかるように「遅」の文字だけ表示する
-        const span = document.createElement('span');
-        span.style.flex = '1';
-        span.style.color = '#1b4f72';
-        span.style.fontWeight = 'bold';
-        span.style.textAlign = 'left';
-        span.textContent = '遅';
-        box.style.justifyContent = 'flex-start';
-        box.appendChild(span);
+      }
+
+      if (showOsobanMark) {
+        // 「遅」の文字だけを、セルの左端に固定表示する
+        const mark = document.createElement('span');
+        mark.textContent = '遅';
+        mark.style.position = 'absolute';
+        mark.style.left = '3px';
+        mark.style.top = '50%';
+        mark.style.transform = 'translateY(-50%)';
+        mark.style.color = '#1b4f72';
+        mark.style.fontWeight = 'bold';
+        mark.style.fontSize = '0.68rem';
+        mark.style.pointerEvents = 'none';
+        box.appendChild(mark);
       }
 
       // ドロップイベント
