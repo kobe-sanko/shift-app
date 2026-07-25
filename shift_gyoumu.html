@@ -1130,7 +1130,7 @@
       }
 
       // 列幅
-      sheet.getColumn(1).width = 10; // 氏名
+      sheet.getColumn(1).width = 14; // 氏名（5文字でも切れないように広げる）
       for (let d = 1; d <= days; d++) sheet.getColumn(d + 1).width = 5.5;
 
       // タイトル行
@@ -1200,7 +1200,7 @@
 
         // 氏名セル
         const nameCell = dataRow.getCell(1);
-        nameCell.alignment = { horizontal: 'left', vertical: 'middle' };
+        nameCell.alignment = { horizontal: 'center', vertical: 'middle' };
         nameCell.border = { top:{style:'thin'}, bottom:{style:'thin'}, left:{style:'thin'}, right:{style:'thin'} };
 
         // 日付セルに色付け
