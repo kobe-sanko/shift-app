@@ -1162,8 +1162,16 @@
         }
       });
 
-      // 対象社員（所属コードが一致する人のみ）
-      const targetStaffs = staffRows.filter(s => !isFilterHidden(s));
+      // 対象社員（所属コードが一致する人のみ）。画面と同じく、表示順設定を反映して並び替える
+      const targetStaffs = staffRows
+        .filter(s => !isFilterHidden(s))
+        .sort((a, b) => {
+          if (!currentFilter) return 0;
+          const junA = hyojiJunMap[currentFilter]?.[a.staff_code] ?? 9999;
+          const junB = hyojiJunMap[currentFilter]?.[b.staff_code] ?? 9999;
+          if (junA !== junB) return junA - junB;
+          return a.staff_code.localeCompare(b.staff_code);
+        });
 
       // データ行
       targetStaffs.forEach(s => {
