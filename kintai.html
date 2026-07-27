@@ -296,14 +296,21 @@
         const today = new Date();
         const todayY = today.getFullYear(), todayM = today.getMonth(), todayD = today.getDate();
 
+        // このExcelファイル自体が「いつ保存されたか」を、データ基準日として使う。
+        // （ファイルの中身は、月の最後の日まで全員分の行があらかじめ用意されていて、
+        //   まだ来ていない日は空欄で埋まっているだけなので、行の日付からは
+        //   「実際どこまでのデータか」は分からない。ファイルの保存日時の方が確実。）
+        const fileSavedAt = wb.modified || wb.created || new Date();
+        const asOfDate = `${fileSavedAt.getFullYear()}-${String(fileSavedAt.getMonth() + 1).padStart(2, '0')}-${String(fileSavedAt.getDate()).padStart(2, '0')}`;
+
         // 3行目以降：社員ごと・日ごとのデータ（C列=社員CD、E列=日付、J列=労働時間）
-        const totals = new Map(); // staff_code -> { work_days, work_hours, overtime_hours, today_done, as_of_date }
+        const totals = new Map(); // staff_code -> { work_days, work_hours, overtime_hours, today_done }
         sheet.eachRow((row, rowNumber) => {
           if (rowNumber < 3) return;
           const v = row.values;
           const staffCode = String(cellVal(v[3]) ?? '').trim();
           if (!staffCode) return;
-          if (!totals.has(staffCode)) totals.set(staffCode, { work_days: 0, work_hours: 0, overtime_hours: 0, today_done: null, as_of_date: null });
+          if (!totals.has(staffCode)) totals.set(staffCode, { work_days: 0, work_hours: 0, overtime_hours: 0, today_done: null });
           const t = totals.get(staffCode);
 
           // この行が「今日」の分であれば、退勤済みかどうかを記録しておく
@@ -313,13 +320,6 @@
           const hoursForFlag = toHours(v[10]);
           if (d && d.getUTCFullYear() === todayY && d.getUTCMonth() === todayM && d.getUTCDate() === todayD) {
             t.today_done = hoursForFlag != null && hoursForFlag > 0;
-          }
-
-          // このファイルに載っている、その社員の一番新しい日付を「データ基準日」として覚えておく
-          // （部署ごとに別々のタイミングで取り込むため、いつ時点のデータかが分かるようにする）
-          if (d) {
-            const dStr = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
-            if (!t.as_of_date || dStr > t.as_of_date) t.as_of_date = dStr;
           }
 
           const hours = hoursForFlag; // 労働時間
@@ -338,7 +338,7 @@
           work_hours: Math.round(t.work_hours * 100) / 100,
           overtime_hours: Math.round(t.overtime_hours * 100) / 100,
           today_done: t.today_done,
-          as_of_date: t.as_of_date,
+          as_of_date: asOfDate,
         }));
 
         // このファイルに載っている社員の分だけを消してから、新しく入れ直す。
