@@ -42,6 +42,8 @@
     .table-wrap { overflow-x: auto; }
     table { border-collapse: collapse; white-space: nowrap; margin: 0 auto; font-size: 0.82rem; background: white; box-shadow: 0 1px 4px rgba(0,0,0,0.1); border-radius: 8px; overflow: hidden; }
     th { background: #eee; padding: 6px 8px; text-align: center; border-bottom: 1px solid #ddd; font-size: 0.78rem; }
+    th.sortable { cursor: pointer; user-select: none; }
+    th.sortable:hover { background: #ddd; }
     td { padding: 5px 8px; text-align: center; border-bottom: 1px solid #f0f0f0; }
     tr:hover td { background: #f8f8ff; }
     .badge { display: inline-block; padding: 1px 7px; border-radius: 3px; font-size: 0.75rem; }
@@ -50,6 +52,16 @@
     .ok    { background: #e8f5e9; color: #1a6e2e; }
     .na    { color: #bbb; }
     .loading { text-align: center; padding: 20px; color: #888; }
+    .print-title { display: none; text-align: center; font-size: 1.1rem; font-weight: bold; margin-bottom: 10px; }
+
+    @media print {
+      .back, .top-area, .shd-banner, .upload-box, .upload-msg, .filter-row { display: none !important; }
+      .print-title { display: block; }
+      body { background: white; padding: 0; }
+      table { box-shadow: none; border-radius: 0; margin: 0; width: 100%; }
+      th.sortable { cursor: default; }
+      @page { size: landscape; margin: 10mm; }
+    }
   </style>
 </head>
 <body>
@@ -59,7 +71,10 @@
   <div class="top-area">
     <select id="ym-sel" onchange="loadData()"></select>
     <a href="master_shotnichi.html" class="btn" style="background:#e67e22;text-decoration:none;">📅 所定日数設定</a>
+    <button class="btn" style="background:#555;" onclick="window.print()">🖨️ 印刷する</button>
   </div>
+
+  <div class="print-title" id="print-title"></div>
 
   <div class="shd-banner" id="shd-banner">読み込み中…</div>
 
@@ -82,8 +97,8 @@
       <thead>
         <tr>
           <th>社員CD</th><th>氏名</th><th>所属</th><th>勤務日数</th>
-          <th>労働時間(h)</th><th>残業時間(h)</th><th>上限時間(h)</th>
-          <th>残り時間(h)</th><th>残り日数</th><th>1日あたり(h)</th><th>年間残業(h)</th>
+          <th class="sortable" id="th-workHours" onclick="sortBy('workHours')">労働時間(h)</th><th>残業時間(h)</th><th>上限時間(h)</th>
+          <th class="sortable" id="th-nokoriJikan" onclick="sortBy('nokoriJikan')">残り時間(h)</th><th>残り日数</th><th>1日あたり(h)</th><th>年間残業(h)</th>
         </tr>
       </thead>
       <tbody id="tbody"></tbody>
@@ -97,6 +112,37 @@
     let shoteiDays = null; // 選択月の所定日数
     let currentFilter = '';
     let gyomuShiftMap = {}; // 選択月のshift_gyomu_shift（staff_code → 行）
+    let sortKey = null;   // 並び替え対象（'workHours' / 'nokoriJikan' / 'hitsuyoJikan'）
+    let sortDir = 'desc'; // 'desc' または 'asc'
+
+    // 並び替えボタンが押されたときの処理。同じ列をもう一度押すと昇順・降順が入れ替わる
+    function sortBy(key) {
+      if (sortKey === key) {
+        sortDir = sortDir === 'desc' ? 'asc' : 'desc';
+      } else {
+        sortKey = key;
+        sortDir = 'desc';
+      }
+      renderTable();
+    }
+
+    // データが無い（－）人は、並び替えても常に一番下に来るようにする
+    function compareNullable(a, b, dir) {
+      if (a == null && b == null) return 0;
+      if (a == null) return 1;
+      if (b == null) return -1;
+      return dir === 'desc' ? b - a : a - b;
+    }
+
+    function updateSortHeaders() {
+      const labels = { workHours: '労働時間(h)', nokoriJikan: '残り時間(h)' };
+      Object.entries(labels).forEach(([key, label]) => {
+        const th = document.getElementById('th-' + key);
+        if (!th) return;
+        const arrow = sortKey === key ? (sortDir === 'desc' ? ' ▼' : ' ▲') : '';
+        th.textContent = label + arrow;
+      });
+    }
 
     async function init() {
       masters = await loadMasters();
@@ -349,11 +395,17 @@
       const tbody = document.getElementById('tbody');
       tbody.innerHTML = '';
 
+      // 印刷したときに、画面の月・所属の絞り込みが分かるようにタイトルを入れておく
+      const y = currentYM.substring(0, 4), m = currentYM.substring(4, 6);
+      const filterName = currentFilter ? (masters.bushoMap[currentFilter]?.busho_name || currentFilter) : '全員';
+      document.getElementById('print-title').textContent = `勤怠管理　${y}年${m}月（${filterName}）`;
+
       const kintaiMap = Object.fromEntries(kintaiRows.map(r => [r.staff_code, r]));
       let targetStaffs = masters.staffs.filter(s => !s.retired);
       if (currentFilter) targetStaffs = targetStaffs.filter(s => s.busho_code === currentFilter);
 
-      targetStaffs.forEach(staff => {
+      // まず、表示に必要な数字をすべて計算しておく（並び替えのため）
+      const rows = targetStaffs.map(staff => {
         const k = kintaiMap[staff.staff_code];
         const busho = masters.bushoMap[staff.busho_code];
         const overLimit = staff.overtime_limit || 60;
@@ -370,6 +422,15 @@
         const hitsuyoJikan = (nokoriJikan !== null && nokoriNissu) ? nokoriJikan / nokoriNissu : null;
         const nenkanZangyo = window.__nenkanZangyo[staff.staff_code] || 0;
 
+        return { staff, busho, overLimit, jougenJikan, workDays, workHours, overHours, nokoriJikan, nokoriNissu, hitsuyoJikan, nenkanZangyo };
+      });
+
+      // 並び替えボタンが押されていれば、その項目で並び替える
+      if (sortKey) {
+        rows.sort((a, b) => compareNullable(a[sortKey], b[sortKey], sortDir));
+      }
+
+      rows.forEach(({ staff, busho, overLimit, jougenJikan, workDays, workHours, overHours, nokoriJikan, nokoriNissu, hitsuyoJikan, nenkanZangyo }) => {
         const bushoHtml = busho
           ? `<span class="badge" style="background:${busho.color_h};color:${getTextColor(busho.color_h)}">${busho.busho_name}</span>`
           : '－';
@@ -410,9 +471,11 @@
         tbody.appendChild(tr);
       });
 
-      if (targetStaffs.length === 0) {
+      if (rows.length === 0) {
         tbody.innerHTML = `<tr><td colspan="11" style="color:#aaa;padding:20px;">対象の社員がいません</td></tr>`;
       }
+
+      updateSortHeaders();
     }
 
     init();
