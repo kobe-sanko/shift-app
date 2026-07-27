@@ -96,9 +96,9 @@
     <table>
       <thead>
         <tr>
-          <th>社員CD</th><th>氏名</th><th>所属</th><th>勤務日数</th>
+          <th>社員CD</th><th>氏名</th><th>所属</th><th>勤務日数</th><th>勤務予定日数</th>
           <th class="sortable" id="th-workHours" onclick="sortBy('workHours')">労働時間(h)</th><th>残業時間(h)</th><th>上限時間(h)</th>
-          <th class="sortable" id="th-nokoriJikan" onclick="sortBy('nokoriJikan')">残り時間(h)</th><th>残り日数</th><th>1日あたり(h)</th><th>年間残業(h)</th>
+          <th class="sortable" id="th-nokoriJikan" onclick="sortBy('nokoriJikan')">残り時間(h)</th><th>残り日数</th><th>1日あたり(h)</th><th>年間残業(h)</th><th>データ基準日</th>
         </tr>
       </thead>
       <tbody id="tbody"></tbody>
@@ -297,13 +297,13 @@
         const todayY = today.getFullYear(), todayM = today.getMonth(), todayD = today.getDate();
 
         // 3行目以降：社員ごと・日ごとのデータ（C列=社員CD、E列=日付、J列=労働時間）
-        const totals = new Map(); // staff_code -> { work_days, work_hours, overtime_hours, today_done }
+        const totals = new Map(); // staff_code -> { work_days, work_hours, overtime_hours, today_done, as_of_date }
         sheet.eachRow((row, rowNumber) => {
           if (rowNumber < 3) return;
           const v = row.values;
           const staffCode = String(cellVal(v[3]) ?? '').trim();
           if (!staffCode) return;
-          if (!totals.has(staffCode)) totals.set(staffCode, { work_days: 0, work_hours: 0, overtime_hours: 0, today_done: null });
+          if (!totals.has(staffCode)) totals.set(staffCode, { work_days: 0, work_hours: 0, overtime_hours: 0, today_done: null, as_of_date: null });
           const t = totals.get(staffCode);
 
           // この行が「今日」の分であれば、退勤済みかどうかを記録しておく
@@ -313,6 +313,13 @@
           const hoursForFlag = toHours(v[10]);
           if (d && d.getUTCFullYear() === todayY && d.getUTCMonth() === todayM && d.getUTCDate() === todayD) {
             t.today_done = hoursForFlag != null && hoursForFlag > 0;
+          }
+
+          // このファイルに載っている、その社員の一番新しい日付を「データ基準日」として覚えておく
+          // （部署ごとに別々のタイミングで取り込むため、いつ時点のデータかが分かるようにする）
+          if (d) {
+            const dStr = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+            if (!t.as_of_date || dStr > t.as_of_date) t.as_of_date = dStr;
           }
 
           const hours = hoursForFlag; // 労働時間
@@ -331,10 +338,15 @@
           work_hours: Math.round(t.work_hours * 100) / 100,
           overtime_hours: Math.round(t.overtime_hours * 100) / 100,
           today_done: t.today_done,
+          as_of_date: t.as_of_date,
         }));
 
-        // その年月の既存データを消してから、新しく入れ直す
-        const { error: delErr } = await sb.from('shift_kintai').delete().eq('yearmonth', yearmonth);
+        // このファイルに載っている社員の分だけを消してから、新しく入れ直す。
+        // （その年月を全員分消してしまうと、他の部署の人が別のタイミングで
+        //   取り込んだデータまで消えてしまうため、対象の社員だけに絞る）
+        const staffCodesInFile = records.map(r => r.staff_code);
+        const { error: delErr } = await sb.from('shift_kintai')
+          .delete().eq('yearmonth', yearmonth).in('staff_code', staffCodesInFile);
         if (delErr) throw delErr;
 
         const { error } = await sb.from('shift_kintai').insert(records);
@@ -390,6 +402,35 @@
       return count;
     }
 
+    // 所属マスタから「休日」という名前の900番台コードを探す（有休・健診・講習などは対象外）
+    function getHolidayBushoCode() {
+      const b = (masters.bushos || []).find(x => /^9\d*$/.test(String(x.busho_code)) && x.busho_name === '休日');
+      return b ? b.busho_code : null;
+    }
+
+    // 業務シフトを見て、その月まるごとの「勤務予定日数」を数える。
+    // 休日は除外し、有休・健診・講習などは勤務日数として数える（勤務日数の考え方と同じ）。
+    // シフトが空欄（未入力）の日はカウントしない。
+    function countScheduledWorkDays(staffCode, ym) {
+      const shift = gyomuShiftMap[staffCode];
+      if (!shift) return null; // 業務シフトが登録されていない
+
+      const y = parseInt(ym.slice(0, 4));
+      const m = parseInt(ym.slice(4, 6));
+      const lastDay = new Date(y, m, 0).getDate();
+      const holidayCode = getHolidayBushoCode();
+
+      let count = 0;
+      for (let d = 1; d <= lastDay; d++) {
+        const key = `d${String(d).padStart(2, '0')}`;
+        const val = shift[key];
+        if (!val) continue; // 空欄はカウントしない
+        if (holidayCode && String(val) === String(holidayCode)) continue; // 休日は除外
+        count++;
+      }
+      return count;
+    }
+
     // ===== テーブル描画 =====
     function renderTable() {
       const tbody = document.getElementById('tbody');
@@ -415,14 +456,19 @@
         const workHours = k ? k.work_hours : null;
         const overHours = k ? k.overtime_hours : null;
 
+        // 勤務予定日数は、業務シフトを見てその月まるごと「働く予定の日数」を数える
+        // （休日は除く。有休・健診・講習などは勤務日数として数える）
+        const yoteiNissu = countScheduledWorkDays(staff.staff_code, currentYM);
+
         const nokoriJikan = (jougenJikan !== null && workHours !== null) ? jougenJikan - workHours : null;
         // 残り日数は、業務シフトを見て「今日から月末までに実際に働く予定の日数」を数える
         // （休日・有休・健診は除く）。業務シフトが登録されていなければ計算できない。
         const nokoriNissu = countRemainingShiftDays(staff.staff_code, currentYM, k?.today_done);
         const hitsuyoJikan = (nokoriJikan !== null && nokoriNissu) ? nokoriJikan / nokoriNissu : null;
         const nenkanZangyo = window.__nenkanZangyo[staff.staff_code] || 0;
+        const asOfDate = k ? k.as_of_date : null;
 
-        return { staff, busho, overLimit, jougenJikan, workDays, workHours, overHours, nokoriJikan, nokoriNissu, hitsuyoJikan, nenkanZangyo };
+        return { staff, busho, overLimit, jougenJikan, workDays, yoteiNissu, workHours, overHours, nokoriJikan, nokoriNissu, hitsuyoJikan, nenkanZangyo, asOfDate };
       });
 
       // 並び替えボタンが押されていれば、その項目で並び替える
@@ -430,10 +476,18 @@
         rows.sort((a, b) => compareNullable(a[sortKey], b[sortKey], sortDir));
       }
 
-      rows.forEach(({ staff, busho, overLimit, jougenJikan, workDays, workHours, overHours, nokoriJikan, nokoriNissu, hitsuyoJikan, nenkanZangyo }) => {
+      rows.forEach(({ staff, busho, overLimit, jougenJikan, workDays, yoteiNissu, workHours, overHours, nokoriJikan, nokoriNissu, hitsuyoJikan, nenkanZangyo, asOfDate }) => {
         const bushoHtml = busho
           ? `<span class="badge" style="background:${busho.color_h};color:${getTextColor(busho.color_h)}">${busho.busho_name}</span>`
           : '－';
+
+        // データ基準日は「7/27」のように月日だけで表示する
+        const asOfHtml = asOfDate ? asOfDate.slice(5).replace('-', '/') : '－';
+
+        // 勤務予定日数が所定日数より少なければ、目立つように赤くする
+        const yoteiHtml = yoteiNissu == null ? '<span class="na">－</span>'
+          : (shoteiDays != null && yoteiNissu < shoteiDays) ? `<span class="over">${yoteiNissu}</span>`
+          : yoteiNissu;
 
         const zangyoRate = overHours && overLimit ? (overHours / overLimit * 100) : 0;
         const overHtml = overHours == null ? '－'
@@ -460,6 +514,7 @@
           <td style="text-align:left;">${staff.name}</td>
           <td>${bushoHtml}</td>
           <td>${workDays ?? '－'}</td>
+          <td>${yoteiHtml}</td>
           <td>${workHours != null ? workHours.toFixed(2) : '－'}</td>
           <td>${overHtml}</td>
           <td>${jougenJikan ?? '－'}</td>
@@ -467,12 +522,13 @@
           <td>${nokoriNissu ?? '－'}</td>
           <td>${hitsuyoHtml}</td>
           <td>${nenkanHtml}</td>
+          <td>${asOfHtml}</td>
         `;
         tbody.appendChild(tr);
       });
 
       if (rows.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="11" style="color:#aaa;padding:20px;">対象の社員がいません</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="13" style="color:#aaa;padding:20px;">対象の社員がいません</td></tr>`;
       }
 
       updateSortHeaders();
