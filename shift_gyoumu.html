@@ -681,6 +681,7 @@
           btnTr.innerHTML = `
             <td colspan="${daysInMonth + 2}" style="text-align:left">
               <button class="btn btn-create" style="background:#3498db" onclick="copyFromBase('${s.staff_code}')">ベース業務からコピー</button>
+              <button class="btn" style="background:#e74c3c;margin-left:8px" onclick="clearAllStaff('${s.staff_code}')">全削除</button>
               <button class="btn btn-save" onclick="saveStaff('${s.staff_code}')" style="margin-left:8px">この社員を保存</button>
             </td>`;
           tbody.appendChild(btnTr);
@@ -867,6 +868,24 @@
       changed[staffCode] = true;
       document.getElementById('btn-save').style.display = '';
       showMsg('ベース業務からコピーしました。「この社員を保存」で保存してください。', 'ok');
+    }
+
+    // ===== 全削除（この社員の今月分をすべて空欄にする） =====
+    async function clearAllStaff(staffCode) {
+      if (!canEdit()) { showMsg('閲覧のみモードのため変更できません', 'err'); return; }
+      if (!confirm('この社員の今月の業務を、すべて削除しますか？\n※保存するまでは確定しません')) return;
+      for (let d = 1; d <= daysInMonth; d++) {
+        const key = `d${String(d).padStart(2,'0')}`;
+        const sel = document.getElementById(`sel_${staffCode}_${key}`);
+        if (sel) {
+          sel.value = '';
+          if (!changedCells[staffCode]) changedCells[staffCode] = {};
+          changedCells[staffCode][key] = true;
+        }
+      }
+      changed[staffCode] = true;
+      document.getElementById('btn-save').style.display = '';
+      showMsg('すべて削除しました。「この社員を保存」で保存してください。', 'ok');
     }
 
     // ===== 保存 =====
