@@ -9,7 +9,15 @@
   <style>
     * { box-sizing: border-box; }
     body { font-family: sans-serif; margin: 0 auto; padding: 20px; background: #f5f5f5; max-width: 860px; }
-    h1 { font-size: 1.3rem; text-align: center; margin: 10px 0 24px; }
+    h1 { font-size: 1.3rem; margin: 0; }
+    .title-row { display: flex; align-items: center; justify-content: center; gap: 12px; margin: 10px 0 24px; flex-wrap: wrap; }
+    .btn-manual {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 6px 14px; border-radius: 6px; text-decoration: none;
+      background: #34495e; color: white; font-size: 0.82rem; font-weight: bold;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.15);
+    }
+    .btn-manual:hover { opacity: 0.85; }
     .section { margin-bottom: 20px; }
     .section-title {
       font-size: 0.85rem; color: #555; font-weight: bold;
@@ -44,7 +52,10 @@
   </style>
 </head>
 <body>
-  <h1>📅 シフト管理システム</h1>
+  <div class="title-row">
+    <h1>📅 シフト管理システム</h1>
+    <a class="btn-manual" href="manual.pdf" target="_blank">📖 マニュアル</a>
+  </div>
 
   <!-- スマホ専用メニュー -->
   <div class="section sp-show">

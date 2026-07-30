@@ -20,6 +20,7 @@
       let auth;
       try { auth = JSON.parse(authRaw); } catch (e) { auth = null; }
       const bar = document.createElement('div');
+      bar.id = 'shift-auth-bar';
       bar.style.cssText = 'background:#333;color:white;font-size:0.7rem;padding:2px 8px;text-align:right;';
       const nameLabel = auth && auth.name ? `👤 ${auth.name}さん　` : '';
       bar.innerHTML = `${nameLabel}<a href="#" style="color:#9cf;" id="shiftAppLogoutLink">ログアウト</a>`;
@@ -87,44 +88,14 @@ function lockMasterFormIfNeeded(extraSelector) {
 }
 
 // ============================================================
-// 本番／テスト 切り替えの仕組み
+// 保管庫（Supabase）接続設定
 // ============================================================
 
-// 本番用の保管庫
-const PROD_URL = 'https://ztswbtiualzlmqffjgus.supabase.co';
-const PROD_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp0c3didGl1YWx6bG1xZmZqZ3VzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIwNzEwNTAsImV4cCI6MjA5NzY0NzA1MH0.fOZFEe1RCMMjSpiWF7xqg3wCPhn6atiqfavkrO-3UIg';
-
-// テスト用の保管庫
-const TEST_URL = 'https://yialexyyfemouoyltoum.supabase.co';
-const TEST_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlpYWxleHl5ZmVtb3VveWx0b3VtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODM0MTgwODcsImV4cCI6MjA5ODk5NDA4N30.FgMVYEBnnpGUrwxHvWOn6fWhDjmA8ixxd63Jl2z-s-g';
-
-// 今どちらのモードか（ブラウザに記憶させる。何も設定していなければ本番）
-function isTestMode() {
-  return localStorage.getItem('shiftAppMode') === 'test';
-}
-
-// モードを切り替えて、ページを読み込み直す
-function setTestMode(on) {
-  if (on) localStorage.setItem('shiftAppMode', 'test');
-  else localStorage.removeItem('shiftAppMode');
-  location.reload();
-}
-
-const SUPABASE_URL = isTestMode() ? TEST_URL : PROD_URL;
-const SUPABASE_KEY = isTestMode() ? TEST_KEY : PROD_KEY;
+const SUPABASE_URL = 'https://ztswbtiualzlmqffjgus.supabase.co';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp0c3didGl1YWx6bG1xZmZqZ3VzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIwNzEwNTAsImV4cCI6MjA5NzY0NzA1MH0.fOZFEe1RCMMjSpiWF7xqg3wCPhn6atiqfavkrO-3UIg';
 
 // Supabaseクライアント
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
-
-// テストモード中は、画面の一番上に目立つ帯を出す
-if (isTestMode()) {
-  window.addEventListener('DOMContentLoaded', () => {
-    const bar = document.createElement('div');
-    bar.textContent = '⚠️ テストモードで表示しています（本番のデータではありません）';
-    bar.style.cssText = 'position:sticky;top:0;left:0;right:0;z-index:9999;background:#e67e22;color:white;text-align:center;font-size:0.85rem;font-weight:bold;padding:6px;';
-    document.body.prepend(bar);
-  });
-}
 
 // ============================================================
 // 共通ユーティリティ関数

@@ -20,6 +20,17 @@
     .shd-banner { text-align: center; font-size: 0.85rem; color: #555; margin-bottom: 8px; }
     .shd-banner a { color: #4a90e2; }
 
+    .kijun-box { text-align: center; font-size: 0.85rem; color: #444; margin-bottom: 10px; }
+    .kijun-box input { font-size: 0.85rem; padding: 3px 6px; border: 1px solid #ccc; border-radius: 4px; }
+
+    .fiscal-box { text-align: center; font-size: 0.85rem; color: #444; margin-bottom: 10px; }
+    .fiscal-box select { font-size: 0.85rem; padding: 3px 6px; border: 1px solid #ccc; border-radius: 4px; }
+    .year-check-result {
+      display: none; max-width: 420px; margin: 0 auto 12px; background: white; border-radius: 8px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.1); padding: 10px 14px; font-size: 0.85rem;
+    }
+    .year-check-result .row { padding: 3px 0; }
+
     .upload-box {
       background: #f0f8ff; border: 1px solid #4a90e2; border-radius: 8px; padding: 12px 16px;
       margin: 0 auto 12px; max-width: 560px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: center;
@@ -46,6 +57,8 @@
     th.sortable:hover { background: #ddd; }
     td { padding: 5px 8px; text-align: center; border-bottom: 1px solid #f0f0f0; }
     tr:hover td { background: #f8f8ff; }
+    tr.row-danger td { background: #fde8e8; color: #c0392b; font-weight: bold; }
+    tr.row-danger:hover td { background: #fbd8d8; }
     .badge { display: inline-block; padding: 1px 7px; border-radius: 3px; font-size: 0.75rem; }
     .warn  { background: #fff3cd; color: #856404; font-weight: bold; }
     .over  { background: #fde8e8; color: #c0392b; font-weight: bold; }
@@ -55,11 +68,13 @@
     .print-title { display: none; text-align: center; font-size: 1.1rem; font-weight: bold; margin-bottom: 10px; }
 
     @media print {
-      .back, .top-area, .shd-banner, .upload-box, .upload-msg, .filter-row { display: none !important; }
+      .back, .top-area, .shd-banner, .kijun-box, .fiscal-box, .year-check-result, .upload-box, .upload-msg, .filter-row { display: none !important; }
+      #shift-auth-bar { display: none !important; }
       .print-title { display: block; }
       body { background: white; padding: 0; }
       table { box-shadow: none; border-radius: 0; margin: 0; width: 100%; }
       th.sortable { cursor: default; }
+      .badge { color: #000 !important; }
       @page { size: landscape; margin: 10mm; }
     }
   </style>
@@ -78,6 +93,29 @@
 
   <div class="shd-banner" id="shd-banner">読み込み中…</div>
 
+  <div class="kijun-box" id="kijun-box">
+    1日あたり基準時間：
+    <input type="number" id="kijun-input" min="0" step="0.5" style="width:70px;">
+    時間
+    <button class="btn" style="background:#27ae60;" onclick="saveKijun()">設定</button>
+    <span id="kijun-msg" style="font-size:0.8rem;color:#888;"></span>
+  </div>
+
+  <div class="fiscal-box" id="fiscal-box">
+    年間残業の年度開始月：
+    <select id="fiscal-month-input">
+      <option value="1">1月</option><option value="2">2月</option><option value="3">3月</option>
+      <option value="4">4月</option><option value="5">5月</option><option value="6">6月</option>
+      <option value="7">7月</option><option value="8">8月</option><option value="9">9月</option>
+      <option value="10">10月</option><option value="11">11月</option><option value="12">12月</option>
+    </select>
+    <button class="btn fiscal-save-btn" style="background:#27ae60;" onclick="saveFiscalStartMonth()">設定</button>
+    <button class="btn" style="background:#8e44ad;" onclick="checkYearData()">📊 年間データ確認</button>
+    <span id="fiscal-msg" style="font-size:0.8rem;color:#888;"></span>
+  </div>
+
+  <div class="year-check-result" id="year-check-result"></div>
+
   <div class="upload-box">
     <label>📂 勤怠Excelを取り込む：</label>
     <label class="file-btn" for="kintai-file">ファイルの選択</label>
@@ -88,7 +126,7 @@
   <div class="upload-msg" id="upload-msg"></div>
 
   <div class="filter-row" id="filter-row">
-    <button class="filter-btn active" style="background:#555;color:white" onclick="filterTable('', this)">全員</button>
+    <button class="filter-btn active" id="filter-btn-all" style="background:#555;color:white" onclick="clearFilter()">全員</button>
   </div>
 
   <div id="loading" class="loading">読み込み中...</div>
@@ -110,7 +148,9 @@
     let currentYM = '';
     let kintaiRows = [];   // 選択月のshift_kintai
     let shoteiDays = null; // 選択月の所定日数
-    let currentFilter = '';
+    let hitsuyoKijun = 10; // 「1日あたり」の基準時間（月ごとに設定可能。未設定なら10）
+    let fiscalStartMonth = 4; // 年間残業を集計する年度の開始月（設定可能。未設定なら4月）
+    let currentFilter = new Set(); // 選んだ所属コードの集合（複数選択可）。空なら全員
     let gyomuShiftMap = {}; // 選択月のshift_gyomu_shift（staff_code → 行）
     let sortKey = null;   // 並び替え対象（'workHours' / 'nokoriJikan' / 'hitsuyoJikan'）
     let sortDir = 'desc'; // 'desc' または 'asc'
@@ -149,7 +189,26 @@
       currentYM = getCurrentYearMonth();
       buildYmSelect();
       buildFilterButtons();
-      lockMasterFormIfNeeded('.upload-box input[type=file], .upload-box button');
+      lockMasterFormIfNeeded('.upload-box input[type=file], .upload-box button, .kijun-box input, .kijun-box button, .fiscal-box select, .fiscal-save-btn');
+
+      // 年間残業を集計する年度の開始月（設定されていなければ4月のまま）
+      const { data: settingRow } = await sb.from('shift_app_settings').select('value').eq('key', 'fiscal_start_month').maybeSingle();
+      if (settingRow && settingRow.value) fiscalStartMonth = parseInt(settingRow.value) || 4;
+      document.getElementById('fiscal-month-input').value = String(fiscalStartMonth);
+
+      await loadData();
+    }
+
+    // 「年度開始月」を保存する（全期間共通の設定なので、月ごとではなく1つだけ）
+    async function saveFiscalStartMonth() {
+      if (!canEdit()) { document.getElementById('fiscal-msg').textContent = '閲覧のみモードのため変更できません'; return; }
+      const val = parseInt(document.getElementById('fiscal-month-input').value);
+      const { error } = await sb.from('shift_app_settings')
+        .upsert({ key: 'fiscal_start_month', value: String(val) }, { onConflict: 'key' });
+      if (error) { document.getElementById('fiscal-msg').textContent = '保存に失敗しました: ' + error.message; return; }
+      fiscalStartMonth = val;
+      document.getElementById('fiscal-msg').textContent = '✅ 設定しました';
+      document.getElementById('year-check-result').style.display = 'none';
       await loadData();
     }
 
@@ -177,15 +236,31 @@
         btn.style.background = b.color_h || '#888';
         btn.style.color = getTextColor(b.color_h || '#888');
         btn.textContent = b.busho_name;
-        btn.onclick = () => filterTable(b.busho_code, btn);
+        btn.dataset.bushoCode = b.busho_code;
+        btn.onclick = () => toggleFilter(b.busho_code, btn);
         row.appendChild(btn);
       });
     }
 
-    function filterTable(bushoCode, btn) {
-      currentFilter = bushoCode;
+    // 所属ボタンを押すたびに、選択に追加／解除する（複数選択可）
+    function toggleFilter(bushoCode, btn) {
+      if (currentFilter.has(bushoCode)) {
+        currentFilter.delete(bushoCode);
+        btn.classList.remove('active');
+      } else {
+        currentFilter.add(bushoCode);
+        btn.classList.add('active');
+      }
+      // 1つでも所属を選んでいれば「全員」は非アクティブに、何も選んでいなければ「全員」に戻す
+      document.getElementById('filter-btn-all').classList.toggle('active', currentFilter.size === 0);
+      renderTable();
+    }
+
+    // 「全員」ボタン：選択をすべて解除する
+    function clearFilter() {
+      currentFilter.clear();
       document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
-      if (btn) btn.classList.add('active');
+      document.getElementById('filter-btn-all').classList.add('active');
       renderTable();
     }
 
@@ -195,20 +270,68 @@
     }
 
     // ===== 所定日数・年度の範囲判定 =====
-    // 年度は4月始まり（例：2026年7月なら 2026年4月〜2027年3月が対象年度）
+    // 年度の開始月はfiscalStartMonthで設定可能（既定は4月始まり。
+    // 例：4月始まりで2026年7月を選んでいる場合、2026年4月〜2026年7月が対象）
     function fiscalYearMonths(ym) {
       const y = parseInt(ym.substring(0, 4));
       const m = parseInt(ym.substring(4, 6));
-      const fiscalStartYear = m >= 4 ? y : y - 1;
+      const startOffset = fiscalStartMonth - 1; // 4月始まりなら3
+      const fiscalStartYear = m >= fiscalStartMonth ? y : y - 1;
       const list = [];
       for (let i = 0; i < 12; i++) {
-        const yy = fiscalStartYear + Math.floor((3 + i) / 12);
-        const mm = ((3 + i) % 12) + 1;
+        const yy = fiscalStartYear + Math.floor((startOffset + i) / 12);
+        const mm = ((startOffset + i) % 12) + 1;
         const targetYm = `${yy}${String(mm).padStart(2, '0')}`;
         list.push(targetYm);
         if (targetYm === ym) break; // 選択月まで
       }
       return list;
+    }
+
+    // ===== 年間データの取り込み確認 =====
+    // 年度内の各月について、その月のデータが月末まできちんと取り込まれているかを確認する。
+    // データ基準日（as_of_date）が、その月の最終日より前であれば「途中までかもしれない」と警告する。
+    async function checkYearData() {
+      const months = fiscalYearMonths(currentYM);
+      const realYm = getCurrentYearMonth();
+
+      const { data: allRows, error } = await sb.from('shift_kintai')
+        .select('yearmonth, staff_code, as_of_date').in('yearmonth', months);
+      if (error) { alert('確認に失敗しました: ' + error.message); return; }
+
+      const byMonth = {};
+      months.forEach(ym => { byMonth[ym] = []; });
+      (allRows || []).forEach(r => { if (byMonth[r.yearmonth]) byMonth[r.yearmonth].push(r); });
+
+      const results = months.map(ym => {
+        const { year, month } = parseYearMonth(ym);
+        const label = `${year}年${month}月`;
+
+        if (ym === realYm) {
+          return { icon: '🔵', label, text: '今月（進行中）' };
+        }
+
+        const rowsForMonth = byMonth[ym];
+        if (rowsForMonth.length === 0) {
+          return { icon: '⚪', label, text: 'まだ取り込まれていません' };
+        }
+
+        const lastDay = getDaysInMonth(year, month);
+        const lastDayStr = `${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+        const incomplete = rowsForMonth.some(r => !r.as_of_date || r.as_of_date < lastDayStr);
+        if (incomplete) {
+          return { icon: '⚠️', label, text: '月末より前のデータのままかもしれません（要確認）' };
+        }
+        return { icon: '✅', label, text: '月末まで取り込み済み' };
+      });
+
+      renderYearCheckResults(results);
+    }
+
+    function renderYearCheckResults(results) {
+      const el = document.getElementById('year-check-result');
+      el.innerHTML = results.map(r => `<div class="row">${r.icon} <strong>${r.label}</strong>：${r.text}</div>`).join('');
+      el.style.display = 'block';
     }
 
     async function loadData() {
@@ -226,6 +349,7 @@
       if (kintaiRes.error) { showUploadMsg('データの読み込みに失敗しました', 'err'); }
       kintaiRows = kintaiRes.data || [];
       shoteiDays = shdRes.data ? shdRes.data.shotei_days : null;
+      hitsuyoKijun = (shdRes.data && shdRes.data.hitsuyo_kijun != null) ? shdRes.data.hitsuyo_kijun : 10;
       gyomuShiftMap = Object.fromEntries((gyomuShiftRes.data || []).map(r => [r.staff_code, r]));
 
       // 年間残業（年度4月〜選択月までのovertime_hours合計）をstaff_codeごとに集計
@@ -234,11 +358,33 @@
         window.__nenkanZangyo[r.staff_code] = (window.__nenkanZangyo[r.staff_code] || 0) + (r.overtime_hours || 0);
       });
 
+      document.getElementById('kijun-input').value = hitsuyoKijun;
+      document.getElementById('kijun-msg').textContent = '';
+
       renderShdBanner();
       renderTable();
 
       document.getElementById('loading').style.display = 'none';
       document.getElementById('table-wrap').style.display = 'block';
+    }
+
+    // 「1日あたり基準時間」を、選択中の月に対して保存する
+    async function saveKijun() {
+      if (!canEdit()) { document.getElementById('kijun-msg').textContent = '閲覧のみモードのため変更できません'; return; }
+      const val = document.getElementById('kijun-input').value;
+      const kijun = val === '' ? null : parseFloat(val);
+
+      const { data: existing } = await sb.from('shift_shotnichi').select('yearmonth').eq('yearmonth', currentYM).maybeSingle();
+      if (!existing) {
+        document.getElementById('kijun-msg').textContent = '先にこの月の所定日数を設定してください（📅 所定日数設定）';
+        return;
+      }
+      const { error } = await sb.from('shift_shotnichi').update({ hitsuyo_kijun: kijun }).eq('yearmonth', currentYM);
+      if (error) { document.getElementById('kijun-msg').textContent = '保存に失敗しました: ' + error.message; return; }
+
+      hitsuyoKijun = kijun != null ? kijun : 10;
+      document.getElementById('kijun-msg').textContent = '✅ 設定しました';
+      renderTable();
     }
 
     function renderShdBanner() {
@@ -371,23 +517,28 @@
       el.className = 'upload-msg ' + type;
     }
 
-    // 業務シフトを見て、その社員が「今日から月末までに実際に働く予定の日数」を数える。
+    // 業務シフトを見て、「データ基準日から月末までに実際に働く予定の日数」を数える。
+    // 実際の今日の日付ではなく、取り込んだデータの基準日（asOfDate）を基準にする。
+    // （データ基準日が実際の今日より前のことがあるため、実際の今日を基準にすると
+    //   ずれてしまう。データ基準日が無い古いデータの場合だけ、実際の今日で代用する）
     // 休日(900/901)・有休(902)・健診(903)などの900番台は数えない。
-    // 今日すでに退勤済み（todayDone=true）であれば、今日は含めず明日から数える。
-    // まだ退勤していない（todayDone=falseまたは不明）場合は、今日もこれから働く日として数える。
-    function countRemainingShiftDays(staffCode, ym, todayDone) {
+    // データ基準日の時点ですでに退勤済み（todayDone=true）であれば、その日は含めず翌日から数える。
+    // まだ退勤していない（todayDone=falseまたは不明）場合は、その日もこれから働く日として数える。
+    function countRemainingShiftDays(staffCode, ym, todayDone, asOfDate) {
       const shift = gyomuShiftMap[staffCode];
       if (!shift) return null; // 業務シフトが登録されていない
 
       const y = parseInt(ym.slice(0, 4));
       const m = parseInt(ym.slice(4, 6));
       const lastDay = new Date(y, m, 0).getDate();
-      const currentRealYm = getCurrentYearMonth();
+
+      const refDate = asOfDate ? new Date(asOfDate + 'T00:00:00') : new Date();
+      const refYm = `${refDate.getFullYear()}${String(refDate.getMonth() + 1).padStart(2, '0')}`;
 
       let startDay;
-      if (ym < currentRealYm) return 0;       // すでに終わった月
-      else if (ym > currentRealYm) startDay = 1; // まだ来ていない月は1日から
-      else startDay = todayDone ? new Date().getDate() + 1 : new Date().getDate(); // 今日退勤済みなら明日から
+      if (ym < refYm) return 0;       // すでに終わった月
+      else if (ym > refYm) startDay = 1; // まだ来ていない月は1日から
+      else startDay = todayDone ? refDate.getDate() + 1 : refDate.getDate(); // 基準日に退勤済みなら翌日から
 
       let count = 0;
       for (let d = startDay; d <= lastDay; d++) {
@@ -438,12 +589,14 @@
 
       // 印刷したときに、画面の月・所属の絞り込みが分かるようにタイトルを入れておく
       const y = currentYM.substring(0, 4), m = currentYM.substring(4, 6);
-      const filterName = currentFilter ? (masters.bushoMap[currentFilter]?.busho_name || currentFilter) : '全員';
+      const filterName = currentFilter.size > 0
+        ? [...currentFilter].map(c => masters.bushoMap[c]?.busho_name || c).join('・')
+        : '全員';
       document.getElementById('print-title').textContent = `勤怠管理　${y}年${m}月（${filterName}）`;
 
       const kintaiMap = Object.fromEntries(kintaiRows.map(r => [r.staff_code, r]));
       let targetStaffs = masters.staffs.filter(s => !s.retired);
-      if (currentFilter) targetStaffs = targetStaffs.filter(s => s.busho_code === currentFilter);
+      if (currentFilter.size > 0) targetStaffs = targetStaffs.filter(s => currentFilter.has(s.busho_code));
 
       // まず、表示に必要な数字をすべて計算しておく（並び替えのため）
       const rows = targetStaffs.map(staff => {
@@ -463,7 +616,7 @@
         const nokoriJikan = (jougenJikan !== null && workHours !== null) ? jougenJikan - workHours : null;
         // 残り日数は、業務シフトを見て「今日から月末までに実際に働く予定の日数」を数える
         // （休日・有休・健診は除く）。業務シフトが登録されていなければ計算できない。
-        const nokoriNissu = countRemainingShiftDays(staff.staff_code, currentYM, k?.today_done);
+        const nokoriNissu = countRemainingShiftDays(staff.staff_code, currentYM, k?.today_done, k?.as_of_date);
         const hitsuyoJikan = (nokoriJikan !== null && nokoriNissu) ? nokoriJikan / nokoriNissu : null;
         const nenkanZangyo = window.__nenkanZangyo[staff.staff_code] || 0;
         const asOfDate = k ? k.as_of_date : null;
@@ -495,20 +648,20 @@
           : zangyoRate >= 80 ? `<span class="warn">${overHours.toFixed(2)}</span>`
           : overHours.toFixed(2);
 
-        const nokoriHtml = nokoriJikan == null ? '<span class="na">－</span>'
-          : nokoriJikan < 0 ? `<span class="over">${nokoriJikan.toFixed(2)}</span>`
-          : nokoriJikan < 10 ? `<span class="warn">${nokoriJikan.toFixed(2)}</span>`
-          : `<span class="ok">${nokoriJikan.toFixed(2)}</span>`;
+        const nokoriHtml = nokoriJikan == null ? '<span class="na">－</span>' : nokoriJikan.toFixed(2);
 
-        const hitsuyoHtml = hitsuyoJikan == null ? '<span class="na">－</span>'
-          : hitsuyoJikan > 10 ? `<span class="over">${hitsuyoJikan.toFixed(2)}</span>`
-          : hitsuyoJikan.toFixed(2);
+        // 1日あたりは、残り時間を残り日数で割った「1日にどれだけ働ける余裕があるか」の数字なので、
+        // 数字が基準時間より小さいほど余裕がなく危ない（大きいほど余裕がある）。
+        // 基準時間を下回ったら、セルではなく行全体を赤くして目立たせる
+        const isKijunUnder = hitsuyoJikan != null && hitsuyoJikan < hitsuyoKijun;
+        const hitsuyoHtml = hitsuyoJikan == null ? '<span class="na">－</span>' : hitsuyoJikan.toFixed(2);
 
         const nenkanHtml = nenkanZangyo >= 360 ? `<span class="over">${nenkanZangyo.toFixed(1)}</span>`
           : nenkanZangyo >= 300 ? `<span class="warn">${nenkanZangyo.toFixed(1)}</span>`
           : nenkanZangyo.toFixed(1);
 
         const tr = document.createElement('tr');
+        if (isKijunUnder) tr.classList.add('row-danger');
         tr.innerHTML = `
           <td>${staff.staff_code}</td>
           <td style="text-align:left;">${staff.name}</td>
