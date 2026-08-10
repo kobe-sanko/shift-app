@@ -314,6 +314,9 @@
   <div class="dialog-overlay" id="dialog">
     <div class="dialog-box">
       <p id="dialog-msg"></p>
+      <div id="dialog-checkbox-row" style="text-align:left;font-size:0.85rem;margin:8px 0;">
+        <label><input type="checkbox" id="dialog-checkbox" checked> この組み合わせを、業務適性にも登録する</label>
+      </div>
       <div class="dialog-btns" id="dialog-btns">
         <button class="btn-ok" id="dialog-ok-btn" onclick="dialogOk()">入力する</button>
         <button class="btn-cancel" id="dialog-cancel-btn" onclick="dialogCancel()">キャンセル</button>
@@ -715,6 +718,9 @@
         const staff = staffRows.find(s => s.staff_code === staffCode);
         const car = staff?.car_code;
         if (!car || car === 'EMPTY') return null;
+        // 社員マスタに紐づいている車が、車両管理側にもう存在しない（削除された等）場合は、
+        // その車番をそのまま盤面に出してしまわないようにする
+        if (!carRows.some(c => c.car_code === car)) return null;
         if (syakenCarCodes.has(car)) return null; // 車検などで使えない車は自動セットしない
         if (carsAssignedToday.has(car)) return null; // すでに他の人にこの日割り当て済みの車は重複させない
         return car;
@@ -1166,16 +1172,20 @@
       const needJyoshu = quota?.need_jyoshu || 0;
 
       // 応援登録されている人（午後から）：まず空いている枠に入れて、入りきらない分だけ下に追加する
-      const oenQueue = oenData.filter(o => o.busho_code === bushoCode && o.gyomu_code === '配送').slice();
+      // すでにこの所属・業務の運転として盤面に確定している人（車番を設定済みなど）は、
+      // 応援待ちの表示からは除く（二重表示防止）
+      const oenQueue = oenData.filter(o =>
+        o.busho_code === bushoCode && o.gyomu_code === '配送' &&
+        !banmenData.some(r => r.busho_code === bushoCode && r.gyomu_code === '配送' && r.driver === o.staff_code)
+      ).slice();
 
       const extraCols = jyoshuCount + (showSmaho ? 1 : 0);
-      function appendOenRow(o) {
+      function appendOenRow(o, rowNo) {
         const s = staffRows.find(s => s.staff_code === o.staff_code) || masters.staffMap[o.staff_code];
         const tr = document.createElement('tr');
         tr.className = 'oen-extra-tr';
         const carTd = document.createElement('td');
-        const carBox = document.createElement('div');
-        carBox.className = 'cell-box oen-extra-td';
+        const carBox = makeOenCarCell(bushoCode, '配送', rowNo, o.staff_code);
         carTd.appendChild(carBox);
         tr.appendChild(carTd);
         const driverTd = document.createElement('td');
@@ -1204,7 +1214,7 @@
         // この枠がまったく使われておらず、応援待ちの人がいれば、その枠に応援の人を表示する
         const isRowEmpty = !rowData || (!rowData.driver && !rowData.car_code);
         if (isRowEmpty && oenQueue.length > 0) {
-          table.appendChild(appendOenRow(oenQueue.shift()));
+          table.appendChild(appendOenRow(oenQueue.shift(), row));
           continue;
         }
 
@@ -1258,8 +1268,9 @@
         table.appendChild(tr);
       }
 
-      // 枠に入りきらなかった応援の人は、表の下に追加行として表示する
-      oenQueue.forEach(o => table.appendChild(appendOenRow(o)));
+      // 枠に入りきらなかった応援の人は、表の下に追加行として表示する（枠番は最後尾から続けて割り当てる）
+      let extraRowNo = rowCount + 1;
+      oenQueue.forEach(o => table.appendChild(appendOenRow(o, extraRowNo++)));
 
       return table;
     }
@@ -1676,6 +1687,7 @@
         .select().single();
       if (error) { showMsg('登録に失敗しました', 'err'); return; }
       oenData.push(data);
+      buildLeftPanel();
       buildBoard();
       showMsg('登録しました', 'ok');
     }
@@ -1685,19 +1697,30 @@
       const { error } = await sb.from('shift_banmen_oen').delete().eq('id', id);
       if (error) { showMsg('削除に失敗しました', 'err'); return; }
       oenData = oenData.filter(o => o.id !== id);
+      buildLeftPanel();
       buildBoard();
     }
 
     // ===== ドラッグ＆ドロップ =====
-    function showDialog(msg) {
+    function showDialog(msg, showCheckbox = false) {
       return new Promise(resolve => {
         document.getElementById('dialog-msg').textContent = msg;
+        const row = document.getElementById('dialog-checkbox-row');
+        row.style.display = showCheckbox ? 'block' : 'none';
+        document.getElementById('dialog-checkbox').checked = true;
         document.getElementById('dialog').classList.add('show');
         dialogResolve = resolve;
       });
     }
-    function dialogOk() { document.getElementById('dialog').classList.remove('show'); if (dialogResolve) dialogResolve(true); }
-    function dialogCancel() { document.getElementById('dialog').classList.remove('show'); if (dialogResolve) dialogResolve(false); }
+    function dialogOk() {
+      document.getElementById('dialog').classList.remove('show');
+      const register = document.getElementById('dialog-checkbox').checked;
+      if (dialogResolve) dialogResolve({ ok: true, register });
+    }
+    function dialogCancel() {
+      document.getElementById('dialog').classList.remove('show');
+      if (dialogResolve) dialogResolve({ ok: false, register: false });
+    }
 
     // 確認は不要で、ただ知らせて閉じるだけのお知らせ（キャンセルボタンは隠し、OKボタンは「閉じる」にする）
     function showAlertDialog(msg) {
@@ -1854,12 +1877,14 @@
       }
 
       // 業務適性チェック（社員かつ業務コードがある場合のみ。お休みは対象外）
+      let registerTekisei = false;
       if (dragInfo.type === 'staff' && acceptType === 'staff' && bushoCode !== 'お休み') {
         const tekisei = tekiseiMap[dragInfo.code] || [];
         const hasTekisei = tekisei.some(t => t.busho_code === bushoCode);
         if (!hasTekisei) {
-          const ok = await showDialog(`「${dragInfo.name}」は「${masters.bushoMap[bushoCode]?.busho_name || bushoCode}」の業務適性がありません。\nそれでも入力しますか？`);
-          if (!ok) return;
+          const result = await showDialog(`「${dragInfo.name}」は「${masters.bushoMap[bushoCode]?.busho_name || bushoCode}」の業務適性がありません。\nそれでも入力しますか？`, true);
+          if (!result.ok) return;
+          registerTekisei = result.register;
         }
       }
 
@@ -1867,16 +1892,16 @@
       if (field === 'driver' && gyomuCode === '配送') {
         const quota = carQuotaMap[bushoCode];
         if (quota && quota.need_car && rowNo > quota.need_car) {
-          const ok = await showDialog(`この枠（${rowNo}台目）は必要台数（${quota.need_car}台）を超えています。\n研修などで配置しますか？`);
-          if (!ok) return;
+          const result = await showDialog(`この枠（${rowNo}台目）は必要台数（${quota.need_car}台）を超えています。\n研修などで配置しますか？`);
+          if (!result.ok) return;
         }
       }
       // 必要な助手あり台数を超えている枠に助手を配置しようとしている場合も同様に確認する
       if (field === 'jyoshu1' && gyomuCode === '配送') {
         const quota = carQuotaMap[bushoCode];
         if (quota && quota.need_jyoshu && rowNo > quota.need_jyoshu) {
-          const ok = await showDialog(`この枠（${rowNo}台目の助手）は必要な助手あり台数（${quota.need_jyoshu}台）を超えています。\n研修などで配置しますか？`);
-          if (!ok) return;
+          const result = await showDialog(`この枠（${rowNo}台目の助手）は必要な助手あり台数（${quota.need_jyoshu}台）を超えています。\n研修などで配置しますか？`);
+          if (!result.ok) return;
         }
       }
 
@@ -1995,6 +2020,21 @@
       if (dragInfo.type === 'staff' && field !== 'smaho') {
         const newGyomuCode = await resolveOrCreateGyomuCode(bushoCode, gyomuCode, rowNo, field);
 
+        // 業務適性チェックのダイアログで「登録する」を選んでいた場合、ここで業務適性・所属適性に登録する
+        if (registerTekisei && newGyomuCode) {
+          const { error: tekiseiErr } = await sb.from('shift_gyomu_tekisei')
+            .insert({ staff_code: value, busho_code: bushoCode, gyomu_code: newGyomuCode });
+          if (!tekiseiErr) {
+            if (!tekiseiMap[value]) tekiseiMap[value] = [];
+            tekiseiMap[value].push({ gyomu_code: newGyomuCode, busho_code: bushoCode });
+          }
+          const { data: existingBusho } = await sb.from('shift_busho_tekisei')
+            .select('id').eq('staff_code', value).eq('busho_code', bushoCode).maybeSingle();
+          if (!existingBusho) {
+            await sb.from('shift_busho_tekisei').insert({ staff_code: value, busho_code: bushoCode });
+          }
+        }
+
         // 盤面内移動の場合：移動先の業務コードを書く（元の場所は自動的に上書きされる）
         if (dragInfo.fromBusho && !(
           dragInfo.fromBusho === bushoCode && dragInfo.fromGyomu === gyomuCode &&
@@ -2063,6 +2103,64 @@
       buildBoard();
     }
 
+    // ===== 応援待ちの人の車番欄（まだ盤面のデータが存在しない枠）=====
+    // 通常のmakeCellは既存の盤面データがある前提のセルを作るが、
+    // 応援待ちの枠にはまだデータが存在しないため、専用のドロップ処理を用意する。
+    // 車をドロップした時点で「運転手（応援の人）」と「車番」を同時に確定させる。
+    function makeOenCarCell(bushoCode, gyomuCode, rowNo, staffCode) {
+      const box = document.createElement('div');
+      box.className = 'cell-box oen-extra-td';
+      box.addEventListener('dragover', e => { e.preventDefault(); if (canEdit()) box.classList.add('drop-over'); });
+      box.addEventListener('dragleave', () => box.classList.remove('drop-over'));
+      box.addEventListener('drop', e => {
+        e.preventDefault();
+        box.classList.remove('drop-over');
+        if (!canEdit()) return;
+        handleOenCarDrop(bushoCode, gyomuCode, rowNo, staffCode);
+      });
+      return box;
+    }
+
+    async function handleOenCarDrop(bushoCode, gyomuCode, rowNo, staffCode) {
+      if (!dragInfo || dragInfo.type !== 'car') { showMsg('ここには車両をドロップしてください', 'err'); return; }
+      const carCode = dragInfo.code;
+
+      if (syakenCarCodes.has(carCode)) {
+        showMsg(`この車はこの日は${syakenCarCodes.get(carCode)}のため使えません`, 'err');
+        return;
+      }
+      const carUsedElsewhere = banmenData.some(r => r.car_code === carCode);
+      if (carUsedElsewhere) {
+        const result = await showDialog(`この車番はすでに他の枠で使われています。\nそれでも入力しますか？`);
+        if (!result.ok) return;
+      }
+
+      const dateStr = getDateStr(currentDate);
+      const existing = banmenData.find(r =>
+        r.busho_code === bushoCode && r.gyomu_code === gyomuCode && r.row_no === rowNo
+      );
+
+      let error;
+      if (existing) {
+        ({ error } = await sb.from('shift_banmen').update({ driver: staffCode, car_code: carCode }).eq('id', existing.id));
+        if (!error) Object.assign(existing, { driver: staffCode, car_code: carCode });
+      } else {
+        const insert = { date: dateStr, busho_code: bushoCode, gyomu_code: gyomuCode, row_no: rowNo, driver: staffCode, car_code: carCode };
+        const res = await sb.from('shift_banmen').insert(insert).select().single();
+        error = res.error;
+        if (!error) banmenData.push(res.data);
+      }
+      if (error) { showMsg('保存に失敗しました: ' + error.message, 'err'); return; }
+
+      // 業務シフトにも反映（応援の人がこの枠の運転として確定したことを記録）
+      const newGyomuCode = await resolveOrCreateGyomuCode(bushoCode, gyomuCode, rowNo, 'driver');
+      if (newGyomuCode) await syncGyomuShift(staffCode, newGyomuCode);
+
+      showMsg('車番を設定しました', 'ok');
+      buildLeftPanel();
+      buildBoard();
+    }
+
     // ===== 業務シフト同期（盤面→shift_gyomu_shift）=====
     // staffCode: 対象社員コード
     // gyomuCode: 新しい業務コード（nullなら空欄にする）
@@ -2085,6 +2183,19 @@
       }
       if (error) {
         console.error('業務シフトの同期に失敗しました', error);
+        return;
+      }
+
+      // 左パネルの「今日の業務シフトに登録済みか」の判定（todayShiftStaffCodes）も、
+      // ここでの変更に合わせてその場で更新しておく。これを更新しないと、
+      // ×ボタンで外した直後は左リストに戻らず、日付を切り替えて読み込み直すまで
+      // 反映されない、という不具合になる。
+      const g = gyomuCode ? masters.gyomuMap[gyomuCode] : null;
+      const isPlainUnten = g && (g.gyomu_name === '運転' || g.gyomu_name === '助手');
+      if (gyomuCode && !isPlainUnten) {
+        todayShiftStaffCodes.add(staffCode);
+      } else {
+        todayShiftStaffCodes.delete(staffCode);
       }
     }
 
