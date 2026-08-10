@@ -2020,18 +2020,14 @@
       if (dragInfo.type === 'staff' && field !== 'smaho') {
         const newGyomuCode = await resolveOrCreateGyomuCode(bushoCode, gyomuCode, rowNo, field);
 
-        // 業務適性チェックのダイアログで「登録する」を選んでいた場合、ここで業務適性・所属適性に登録する
+        // 業務適性チェックのダイアログで「登録する」を選んでいた場合、ここで業務適性に登録する
+        // （所属適性は絞り込みに影響するため、ここでは登録しない。所属適性を登録したい場合は「所属適性」画面から行う）
         if (registerTekisei && newGyomuCode) {
           const { error: tekiseiErr } = await sb.from('shift_gyomu_tekisei')
             .insert({ staff_code: value, busho_code: bushoCode, gyomu_code: newGyomuCode });
           if (!tekiseiErr) {
             if (!tekiseiMap[value]) tekiseiMap[value] = [];
             tekiseiMap[value].push({ gyomu_code: newGyomuCode, busho_code: bushoCode });
-          }
-          const { data: existingBusho } = await sb.from('shift_busho_tekisei')
-            .select('id').eq('staff_code', value).eq('busho_code', bushoCode).maybeSingle();
-          if (!existingBusho) {
-            await sb.from('shift_busho_tekisei').insert({ staff_code: value, busho_code: bushoCode });
           }
         }
 

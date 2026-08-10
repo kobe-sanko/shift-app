@@ -318,19 +318,12 @@
           const result = await showDialog(`「${staffName}」は「${gyomuName}」の業務適性がありません。\nそれでも入力しますか？`, true);
           if (!result.ok) return;
           if (result.register) {
+            // 所属適性は絞り込みに影響するため、ここでは登録しない（業務適性のみ登録する）
             const bushoCode = masters.gyomuMap[gyomuCode]?.busho_code || null;
             const { error } = await sb.from('shift_gyomu_tekisei')
               .insert({ staff_code: staffCode, busho_code: bushoCode, gyomu_code: gyomuCode });
             if (!error) {
               tekiseiMap[staffCode] = [...tekisei, { staff_code: staffCode, busho_code: bushoCode, gyomu_code: gyomuCode }];
-            }
-            // 所属適性にまだ登録されていなければ、あわせて登録する
-            if (bushoCode) {
-              const { data: existingBusho } = await sb.from('shift_busho_tekisei')
-                .select('id').eq('staff_code', staffCode).eq('busho_code', bushoCode).maybeSingle();
-              if (!existingBusho) {
-                await sb.from('shift_busho_tekisei').insert({ staff_code: staffCode, busho_code: bushoCode });
-              }
             }
           }
         }
