@@ -74,6 +74,12 @@
       gap: 8px;
     }
 
+    /* スマホ用：所属で絞り込むプルダウン（PCでは非表示） */
+    .mobile-busho-filter { display: none; }
+    .mobile-busho-filter select {
+      width: 100%; font-size: 0.85rem; padding: 6px 8px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box;
+    }
+
     /* ===== スマホ表示：左パネルを消して縦一列に・見る専用なので操作ボタンも非表示 ===== */
     @media (max-width: 768px) {
       .left-panel { display: none; }
@@ -84,6 +90,7 @@
       .date-label { min-width: 78px; font-size: 0.8rem; white-space: nowrap; }
       .date-nav button { padding: 4px 6px; }
       .btn-complete { white-space: nowrap; flex-shrink: 0; font-size: 0.68rem; padding: 4px 6px; }
+      .mobile-busho-filter { display: block; padding: 6px 8px 0; }
       /* スマホは実機によって画面の高さの扱いが変わりやすいため、
          高さを固定計算せず、ページ全体が普通にスクロールする形にする */
       .main-layout { height: auto; }
@@ -304,6 +311,13 @@
     <button class="btn-top btn-config" onclick="location.href='banmen_config.html'">⚙ 設定</button>
   </div>
 
+  <!-- スマホ用：所属で絞り込むプルダウン（PCでは表示しない） -->
+  <div class="mobile-busho-filter" id="mobile-busho-filter">
+    <select id="mobile-busho-select" onchange="onMobileBushoFilterChange()">
+      <option value="">所属で絞り込み：全部</option>
+    </select>
+  </div>
+
   <div id="msg" class="msg"></div>
   <div id="loading" class="loading">読み込み中...</div>
   <div id="not-complete-notice" style="display:none;text-align:center;padding:60px 16px;color:#888;font-size:0.95rem;line-height:1.8;">
@@ -381,6 +395,8 @@
     let leftPanelBushoFilter = '';    // 左パネル上部の所属プルダウン（空欄なら絞り込みなし。社員・車両の両方に反映）
     let todayShiftStaffCodes = new Set(); // 今日の業務シフトに何らかの登録がある社員コード（盤面に自動配置されない種類の登録も含む）
     let leftPanelBushoSelectBuilt = false;
+    let mobileBushoFilter = '';       // スマホ表示：所属で絞り込むプルダウン（空欄なら絞り込みなし）
+    let mobileBushoSelectBuilt = false;
     let syakenCarCodes = new Map();  // この日、車検・修理などで使えない車のcar_code→理由（車検/修理/その他の自由記述）
     let senzokuBushoCode = null; // 「専属」所属のコード（浮いた人を一時的に置く所属。車両の関連判定や車検カードから除外する）
     let dialogResolve = null;
@@ -422,6 +438,36 @@
     function onLeftPanelBushoChange() {
       leftPanelBushoFilter = document.getElementById('left-panel-busho-select').value;
       buildLeftPanel();
+    }
+
+    // スマホ用：所属で絞り込むプルダウンに、今の盤面に実際にカードとして表示されている所属だけを追加する（初回だけ）
+    function buildMobileBushoSelect() {
+      if (mobileBushoSelectBuilt) return;
+      const sel = document.getElementById('mobile-busho-select');
+
+      // buildBoard()のカード集計と同じ条件（お休み・応援・車検カードは除く）で、盤面上の所属コードを拾う
+      const hyojiByBusho = {};
+      configData.forEach(c => {
+        if (c.sp_jun === 99 || c.sp_jun === 98 || c.sp_jun === 97) return;
+        if (!(c.busho_code in hyojiByBusho)) hyojiByBusho[c.busho_code] = c.busho_hyoji_jun || 0;
+      });
+
+      Object.keys(hyojiByBusho)
+        .sort((a, b) => hyojiByBusho[a] - hyojiByBusho[b])
+        .forEach(bushoCode => {
+          const b = masters.bushoMap[bushoCode];
+          const opt = document.createElement('option');
+          opt.value = bushoCode;
+          opt.textContent = b?.busho_name || bushoCode;
+          sel.appendChild(opt);
+        });
+      mobileBushoSelectBuilt = true;
+    }
+
+    // スマホ用プルダウンが変更されたとき：盤面をその所属だけに絞り込む
+    function onMobileBushoFilterChange() {
+      mobileBushoFilter = document.getElementById('mobile-busho-select').value;
+      buildBoard();
     }
 
     function getDateStr(d) {
@@ -528,6 +574,9 @@
       const senzokuBusho = Object.values(masters.bushoMap || {}).find(b => b.busho_name === '専属');
       senzokuBushoCode = senzokuBusho ? senzokuBusho.busho_code : null;
       if (senzokuBushoCode) boardBushoCodes.delete(senzokuBushoCode);
+
+      // スマホ用の所属絞り込みプルダウンには、実際に盤面カードとして表示されている所属だけを出す
+      buildMobileBushoSelect();
 
       // 業務コード→業務マスタのマップ
       const gyomuMap = {};
@@ -1030,14 +1079,18 @@
 
       // ===== スマホ表示：左パネルなし・SP順（busho_hyoji_jun）で縦一列 =====
       if (window.innerWidth <= 768) {
-        allCards.sort((a, b) => (a.hyoji || 0) - (b.hyoji || 0));
+        // 所属プルダウンで絞り込み中は、その所属のカードだけを表示する
+        const visibleCards = mobileBushoFilter
+          ? allCards.filter(c => c.type === 'busho' && c.bushoCode === mobileBushoFilter)
+          : allCards;
+        visibleCards.sort((a, b) => (a.hyoji || 0) - (b.hyoji || 0));
 
         grid.style.gridTemplateColumns = '1fr';
         grid.style.alignItems = 'stretch';
 
         const colDiv = document.createElement('div');
         colDiv.style.cssText = 'display:flex;flex-direction:column;gap:8px;';
-        allCards.forEach(c => {
+        visibleCards.forEach(c => {
           let card;
           if (c.type === 'busho') {
             const busho = masters.bushoMap[c.bushoCode];
