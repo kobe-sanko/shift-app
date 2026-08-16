@@ -102,14 +102,17 @@
       background: white; border-radius: 6px; position: relative;
       box-shadow: 0 1px 4px rgba(0,0,0,0.15); overflow: hidden;
     }
-    /* 定休日（曜日）で、かつ誰も配置されていないときに出す「お休み」リボン */
+    /* 定休日（曜日）や特別休業日で、かつ誰も配置されていないときに出す「お休み」リボン */
     .yasumi-ribbon {
       position: absolute; top: 11px; right: -30px; width: 116px;
       transform: rotate(45deg); background: #e74c3c; color: white;
       text-align: center; font-size: 0.7rem; font-weight: bold;
       padding: 3px 0; box-shadow: 0 1px 3px rgba(0,0,0,0.3); z-index: 5;
       letter-spacing: 3px; pointer-events: none;
+      white-space: nowrap; overflow: hidden;
     }
+    /* 特別休業日の名称が長いとき用（文字間隔を詰めて収まりやすくする） */
+    .yasumi-ribbon.long { letter-spacing: 0.5px; font-size: 0.62rem; }
     .busho-header {
       padding: 5px 10px; text-align: center; font-weight: bold;
       font-size: 0.9rem; color: white;
@@ -383,6 +386,7 @@
     let oenData = [];       // shift_banmen_oen
     let configData = [];    // shift_banmen_config
     let carQuotaMap = {};   // busho_code → その日の必要台数・助手あり必要台数（shift_car_quota）
+    let specialHolidayMap = {}; // busho_code → その日が特別休業日（正月休み・盆休みなど）に該当する場合の名称
     let staffRows = [];
     let carRows = [];
     let hakenRows = [];
@@ -512,7 +516,7 @@
       const yearMonth = getYearMonth(currentDate);
       const dayCol = getDayCol(currentDate);
 
-      const [staffRes, carRes, hakenRes, configRes, banmenRes, banmenHakenRes, oenRes, tekiseiRes, gyomuRes, gyomuShiftRes, bushoTekiseiRes, syakenRes, carQuotaRes, dayStatusRes] = await Promise.all([
+      const [staffRes, carRes, hakenRes, configRes, banmenRes, banmenHakenRes, oenRes, tekiseiRes, gyomuRes, gyomuShiftRes, bushoTekiseiRes, syakenRes, carQuotaRes, dayStatusRes, specialHolidayRes] = await Promise.all([
         sb.from('shift_staff').select('*').order('staff_code'),
         sb.from('shift_car').select('*').order('car_code'),
         sb.from('shift_haken').select('*').order('haken_name'),
@@ -527,6 +531,7 @@
         sb.from('shift_syaken').select('car_code, memo').eq('date', dateStr),
         sb.from('shift_car_quota').select('busho_code, need_car, need_jyoshu').eq('date', dateStr),
         sb.from('shift_day_status').select('is_complete').eq('date', dateStr).maybeSingle(),
+        sb.from('shift_special_holiday').select('busho_code, label').lte('start_date', dateStr).gte('end_date', dateStr),
       ]);
 
       // この間に別の日付に切り替えられていたら、この結果はもう使わない
@@ -538,6 +543,10 @@
 
       // その日の所属ごとの必要台数（テーブルがまだ無い場合はエラーになるので、その時は空扱いにする）
       carQuotaMap = Object.fromEntries((carQuotaRes.data || []).map(q => [q.busho_code, q]));
+
+      // その日、特別休業日（正月休み・盆休みなど）に該当する所属コード→名称のマップ
+      // （テーブルがまだ無い場合はエラーになるので、その時は空扱いにする）
+      specialHolidayMap = Object.fromEntries((specialHolidayRes.data || []).map(h => [h.busho_code, h.label || 'お休み']));
 
       // この日、車検・修理などで使えない車 → 理由のマップ
       syakenCarCodes = new Map((syakenRes.data || []).map(r => [r.car_code, r.memo || '車検']));
@@ -1168,16 +1177,21 @@
 
       // 今日がこの所属の「定休日（基本の曜日）」で、かつ誰も配置されていなければ「お休み」リボンを出す
       // （たまに定休日でも出勤することがあるので、誰かいれば表示しない＝登録自体は止めない）
+      //
+      // 正月休み・盆休みなどの特別休業日は、日付をはっきり指定して登録するものなので、
+      // その日にデータが残っていてもリボンを常に表示する
       const offWeekdays = (busho?.off_weekdays || '').split(',').filter(v => v !== '');
       const todayWd = String(currentDate.getDay());
       const isRegularOffToday = offWeekdays.includes(todayWd);
+      const specialHolidayLabel = specialHolidayMap[bushoCode];
       const isEmptyToday = !banmenData.some(r =>
         r.busho_code === bushoCode && (r.driver || r.jyoshu1 || r.jyoshu2 || r.car_code)
       );
-      if (isRegularOffToday && isEmptyToday) {
+      if (specialHolidayLabel || (isRegularOffToday && isEmptyToday)) {
+        const ribbonText = specialHolidayLabel || 'お休み';
         const ribbon = document.createElement('div');
-        ribbon.className = 'yasumi-ribbon';
-        ribbon.textContent = 'お休み';
+        ribbon.className = 'yasumi-ribbon' + (ribbonText.length > 2 ? ' long' : '');
+        ribbon.textContent = ribbonText;
         card.appendChild(ribbon);
       }
 
@@ -2050,11 +2064,14 @@
         );
         if (fromExisting) {
           const fromClearData = { [dragInfo.fromField]: null };
-          // driver移動の場合、元の行の車番もクリア＆移動先に引き継ぐ
+          // driver移動の場合、元の行の車番もクリアする。
+          // 移動先が「配送」の枠（車番欄がある枠）のときだけ、車番も一緒に引き継ぐ。
+          // お休み・倉庫・事務など車番欄がない枠に移動したときは、車番は引き継がずそのまま外す
+          // （引き継いでしまうと、車番だけがその枠に残り、他では使われていないのにどこにも表示されない「行方不明の車」になってしまうため）
           if (dragInfo.fromField === 'driver' && field === 'driver' && fromExisting.car_code) {
             fromClearData.car_code = null;
             // 移動先に車番を追加（移動先にまだ車番がなければ）
-            if (!existing?.car_code) {
+            if (gyomuCode === '配送' && !existing?.car_code) {
               const targetExisting = banmenData.find(r =>
                 r.busho_code === bushoCode && r.gyomu_code === gyomuCode && r.row_no === rowNo
               );

@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>特別休業日マスタ</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="common.js"></script>
+  <style>
+    body { font-family: sans-serif; margin: 0; padding: 10px; background: #f5f5f5; }
+    h1 { font-size: 1.2rem; text-align: center; margin: 6px 0; }
+    .back { display: table; text-align: center; margin: 4px auto 8px; color: #4a90e2; text-decoration: none; }
+    .desc { background: #e8f4fd; border-radius: 6px; padding: 10px 14px; margin: 0 auto 12px; max-width: 900px; font-size: 0.85rem; }
+    .msg { text-align: center; font-size: 0.85rem; padding: 6px; border-radius: 4px; margin-bottom: 8px; display: none; }
+    .msg.ok  { background: #d4edda; color: #155724; display: block; }
+    .msg.err { background: #fdecea; color: #c0392b; display: block; }
+    .form-box {
+      background: white; border-radius: 8px; padding: 14px; margin: 0 auto 16px; max-width: 900px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.1); display: flex; flex-direction: column; gap: 10px;
+    }
+    .form-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .form-row label { font-size: 0.8rem; color: #555; white-space: nowrap; }
+    .form-row input[type="text"] { font-size: 0.85rem; padding: 5px 8px; border: 1px solid #ccc; border-radius: 4px; width: 180px; }
+    .form-row input[type="date"] { font-size: 0.85rem; padding: 4px 6px; border: 1px solid #ccc; border-radius: 4px; }
+    .wd-check-label { font-size: 0.78rem; display: inline-flex; align-items: center; gap: 3px; padding: 3px 7px; border-radius: 4px; cursor: pointer; }
+    .busho-check-list { display: flex; flex-wrap: wrap; gap: 6px; }
+    .btn { font-size: 0.82rem; padding: 6px 16px; border: none; border-radius: 4px; cursor: pointer; color: white; }
+    .btn-add { background: #27ae60; }
+    .btn-del { background: none; border: none; color: #c0392b; cursor: pointer; font-size: 0.78rem; text-decoration: underline; }
+    .table-wrap { max-width: 900px; margin: 0 auto; }
+    table { border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,0.1); font-size: 0.85rem; width: 100%; }
+    th, td { padding: 7px 10px; text-align: center; border-bottom: 1px solid #eee; }
+    th { background: #eee; }
+    .chip { display: inline-block; padding: 2px 10px; border-radius: 10px; font-size: 0.78rem; font-weight: bold; }
+    .loading { text-align: center; padding: 20px; color: #888; }
+    .empty-msg { text-align: center; padding: 20px; color: #aaa; }
+  </style>
+</head>
+<body>
+  <h1>🎌 特別休業日マスタ</h1>
+  <a class="back" href="index.html">← メニューへ</a>
+  <div id="msg" class="msg"></div>
+
+  <div class="desc">
+    正月休みや盆休みなど、毎週の定休日とは別に、期間を決めてお休みにしたい日をここで登録します。登録した期間は、盤面のカードに「お休み」のリボン（名称を登録していればその名称）が表示されます。対象の所属は複数選べます。
+  </div>
+
+  <div class="form-box">
+    <div class="form-row">
+      <label>名称</label>
+      <input type="text" id="f_label" placeholder="例：正月休み">
+      <label style="margin-left:10px;">開始日</label>
+      <input type="date" id="f_start">
+      <label>終了日</label>
+      <input type="date" id="f_end">
+    </div>
+    <div class="form-row">
+      <label>対象所属</label>
+      <div class="busho-check-list" id="busho-check-list"></div>
+    </div>
+    <div class="form-row">
+      <button class="btn btn-add" onclick="addHoliday()">登録</button>
+      <span id="f-msg" style="font-size:0.78rem;color:#888;"></span>
+    </div>
+  </div>
+
+  <div id="loading" class="loading">読み込み中...</div>
+  <div class="table-wrap">
+    <table id="main-table" style="display:none">
+      <thead>
+        <tr>
+          <th>名称</th>
+          <th>期間</th>
+          <th>所属</th>
+          <th style="width:60px">削除</th>
+        </tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+    <div id="empty-msg" class="empty-msg" style="display:none">まだ登録されていません</div>
+  </div>
+
+  <script>
+    let masters = {};
+    let holidayRows = [];
+
+    async function init() {
+      masters = await loadMasters();
+      buildBushoChecklist();
+      lockMasterFormIfNeeded('#busho-check-list input, .btn-add, .btn-del');
+      await loadHolidays();
+      document.getElementById('loading').style.display = 'none';
+    }
+
+    function buildBushoChecklist() {
+      const wrap = document.getElementById('busho-check-list');
+      masters.bushos.filter(b => !b.busho_code.startsWith('9')).forEach(b => {
+        const label = document.createElement('label');
+        label.className = 'wd-check-label';
+        label.style.background = b.color_h;
+        label.style.color = getTextColor(b.color_h);
+        label.innerHTML = `<input type="checkbox" class="busho-check" value="${b.busho_code}">${b.busho_name}`;
+        wrap.appendChild(label);
+      });
+    }
+
+    async function loadHolidays() {
+      const { data, error } = await sb.from('shift_special_holiday').select('*').order('start_date');
+      if (error) { showMsg('データの読み込みに失敗しました: ' + error.message, 'err'); return; }
+      holidayRows = data || [];
+      renderTable();
+    }
+
+    function formatDate(str) {
+      if (!str || str.length !== 8) return str || '';
+      return `${str.slice(0,4)}/${str.slice(4,6)}/${str.slice(6,8)}`;
+    }
+
+    function renderTable() {
+      const tbody = document.getElementById('tbody');
+      tbody.innerHTML = '';
+      if (holidayRows.length === 0) {
+        document.getElementById('main-table').style.display = 'none';
+        document.getElementById('empty-msg').style.display = '';
+        return;
+      }
+      document.getElementById('main-table').style.display = '';
+      document.getElementById('empty-msg').style.display = 'none';
+
+      holidayRows.forEach(r => {
+        const busho = masters.bushoMap[r.busho_code];
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${r.label || '－'}</td>
+          <td>${formatDate(r.start_date)} 〜 ${formatDate(r.end_date)}</td>
+          <td><span class="chip" style="background:${busho?.color_h || '#999'};color:${getTextColor(busho?.color_h || '#999')}">${busho?.busho_name || r.busho_code}</span></td>
+          <td><button class="btn-del" onclick="deleteHoliday(${r.id})">削除</button></td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    async function addHoliday() {
+      if (!canEdit()) { showMsg('閲覧のみモードのため登録できません', 'err'); return; }
+      const label = document.getElementById('f_label').value.trim();
+      const startRaw = document.getElementById('f_start').value;
+      const endRaw = document.getElementById('f_end').value;
+      const bushoCodes = [...document.querySelectorAll('.busho-check:checked')].map(el => el.value);
+
+      if (!startRaw || !endRaw) { showFormMsg('開始日と終了日を入力してください'); return; }
+      const start = startRaw.replace(/-/g, '');
+      const end = endRaw.replace(/-/g, '');
+      if (start > end) { showFormMsg('終了日は開始日より後にしてください'); return; }
+      if (bushoCodes.length === 0) { showFormMsg('対象の所属を1つ以上選んでください'); return; }
+
+      const inserts = bushoCodes.map(busho_code => ({ busho_code, start_date: start, end_date: end, label: label || null }));
+      const { error } = await sb.from('shift_special_holiday').insert(inserts);
+      if (error) { showMsg('登録に失敗しました: ' + error.message, 'err'); return; }
+
+      document.getElementById('f_label').value = '';
+      document.getElementById('f_start').value = '';
+      document.getElementById('f_end').value = '';
+      document.querySelectorAll('.busho-check:checked').forEach(el => { el.checked = false; });
+      showMsg('登録しました', 'ok');
+      await loadHolidays();
+    }
+
+    async function deleteHoliday(id) {
+      if (!canEdit()) { showMsg('閲覧のみモードのため削除できません', 'err'); return; }
+      if (!confirm('この特別休業日を削除しますか？')) return;
+      const { error } = await sb.from('shift_special_holiday').delete().eq('id', id);
+      if (error) { showMsg('削除に失敗しました: ' + error.message, 'err'); return; }
+      showMsg('削除しました', 'ok');
+      await loadHolidays();
+    }
+
+    function showFormMsg(text) {
+      const el = document.getElementById('f-msg');
+      el.textContent = text;
+      el.style.color = '#c0392b';
+      setTimeout(() => { el.textContent = ''; }, 3000);
+    }
+
+    function showMsg(text, type) {
+      const el = document.getElementById('msg');
+      el.textContent = text;
+      el.className = `msg ${type}`;
+      setTimeout(() => { el.className = 'msg'; }, 3000);
+    }
+
+    init();
+  </script>
+</body>
+</html>
