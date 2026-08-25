@@ -17,6 +17,15 @@
     .msg { text-align: center; font-size: 0.85rem; padding: 6px; border-radius: 4px; margin-bottom: 8px; display: none; }
     .msg.ok  { background: #d4edda; color: #155724; display: block; }
     .msg.err { background: #fdecea; color: #c0392b; display: block; }
+    .copy-banner {
+      display: none; text-align: center; font-size: 0.82rem; padding: 7px 10px;
+      background: #eaf6ff; border: 1px solid #4a90e2; border-radius: 6px; margin-bottom: 8px;
+    }
+    .btn-copy-cancel {
+      margin-left: 8px; font-size: 0.75rem; padding: 3px 12px; border: none; border-radius: 4px;
+      background: #95a5a6; color: white; cursor: pointer;
+    }
+    body.paste-mode td.shift-td { cursor: copy; }
 
     table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,0.1); font-size: 0.82rem; table-layout: fixed; }
     th { background: #dde; padding: 7px 4px; text-align: center; border-bottom: 2px solid #bbc; }
@@ -71,6 +80,10 @@
   <h1 id="page-title">⚙️ ベース業務</h1>
   <a class="back" href="index.html">← メニューへ</a>
   <div id="msg" class="msg"></div>
+  <div id="copy-banner" class="copy-banner">
+    📋 <span id="copy-banner-text"></span> をコピー中です。貼り付けたいマスをクリックしてください（続けて何か所でもクリックできます）。
+    <button onclick="cancelCopy()" class="btn-copy-cancel">解除</button>
+  </div>
 
   <div class="filter-row" id="filter-row">
     <button class="filter-btn active" style="background:#555;color:white" onclick="filterTable('',this,'')">全員</button>
@@ -127,6 +140,7 @@
     let currentFilter = '';
     let dragGyomuCode = null;
     let dialogResolve = null;
+    let copiedCode = null; // コピー中の業務コード（右クリックでコピーし、クリックで貼り付ける）
 
     async function init() {
       masters = await loadMasters();
@@ -228,29 +242,68 @@
         const dayKey = td.dataset.key;
         const gyomuCode = dragGyomuCode;
         if (gyomuCode === undefined || gyomuCode === null) return;
+        await placeGyomu(staffCode, dayKey, gyomuCode);
+      });
 
-        if (gyomuCode === '') { await applyDrop(staffCode, dayKey, null); return; }
-        if (parseInt(gyomuCode) >= 900) { await applyDrop(staffCode, dayKey, gyomuCode); return; }
+      // 右クリック → そのマスの業務をコピー
+      tbody.addEventListener('contextmenu', e => {
+        const td = e.target.closest('td.shift-td');
+        if (!td) return;
+        e.preventDefault();
+        if (!canEdit()) return;
+        const staffCode = td.dataset.staff;
+        const dayKey = td.dataset.key;
+        const code = (baseMap[staffCode] || {})[dayKey + '_gyomu'];
+        if (!code || code === 'EMPTY') { showMsg('空のマスはコピーできません', 'err'); return; }
+        copiedCode = code;
+        showCopyBanner(getGyomuLabel(code));
+      });
+    }
 
-        const tekisei = tekiseiMap[staffCode] || [];
-        const hasTekisei = tekisei.includes(gyomuCode);
-        if (!hasTekisei) {
-          const staffName = staffRows.find(s => s.staff_code === staffCode)?.name || staffCode;
-          const gyomuName = masters.gyomuMap[gyomuCode]?.gyomu_name || gyomuCode;
-          const result = await showDialog(`「${staffName}」は「${gyomuName}」の業務適性がありません。\nそれでも入力しますか？`, true);
-          if (!result.ok) return;
-          if (result.register) {
-            // 所属適性は絞り込みに影響するため、ここでは登録しない（業務適性のみ登録する）
-            const bushoCode = masters.gyomuMap[gyomuCode]?.busho_code || null;
-            const { error } = await sb.from('shift_gyomu_tekisei')
-              .insert({ staff_code: staffCode, busho_code: bushoCode, gyomu_code: gyomuCode });
-            if (!error) {
-              tekiseiMap[staffCode] = [...tekisei, gyomuCode];
-            }
+    // ドラッグ＆ドロップ・貼り付け、共通の配置処理（業務適性チェックを含む）
+    async function placeGyomu(staffCode, dayKey, gyomuCode) {
+      if (gyomuCode === '') { await applyDrop(staffCode, dayKey, null); return; }
+      if (parseInt(gyomuCode) >= 900) { await applyDrop(staffCode, dayKey, gyomuCode); return; }
+
+      const tekisei = tekiseiMap[staffCode] || [];
+      const hasTekisei = tekisei.includes(gyomuCode);
+      if (!hasTekisei) {
+        const staffName = staffRows.find(s => s.staff_code === staffCode)?.name || staffCode;
+        const gyomuName = masters.gyomuMap[gyomuCode]?.gyomu_name || gyomuCode;
+        const result = await showDialog(`「${staffName}」は「${gyomuName}」の業務適性がありません。\nそれでも入力しますか？`, true);
+        if (!result.ok) return;
+        if (result.register) {
+          // 所属適性は絞り込みに影響するため、ここでは登録しない（業務適性のみ登録する）
+          const bushoCode = masters.gyomuMap[gyomuCode]?.busho_code || null;
+          const { error } = await sb.from('shift_gyomu_tekisei')
+            .insert({ staff_code: staffCode, busho_code: bushoCode, gyomu_code: gyomuCode });
+          if (!error) {
+            tekiseiMap[staffCode] = [...tekisei, gyomuCode];
           }
         }
-        await applyDrop(staffCode, dayKey, gyomuCode);
-      });
+      }
+      await applyDrop(staffCode, dayKey, gyomuCode);
+    }
+
+    // ===== コピー中の業務を貼り付けるための表示・操作 =====
+    function getGyomuLabel(code) {
+      if (!code || code === 'EMPTY') return '';
+      if (parseInt(code) >= 900) return KYUJITSU_MAP[code] || masters.bushoMap[code]?.busho_name || code;
+      const g = masters.gyomuMap[code];
+      if (g) return g.gyomu_name;
+      const b = masters.bushoMap[code];
+      if (b) return b.busho_name;
+      return code;
+    }
+    function showCopyBanner(label) {
+      document.getElementById('copy-banner-text').textContent = `「${label}」`;
+      document.getElementById('copy-banner').style.display = 'block';
+      document.body.classList.add('paste-mode');
+    }
+    function cancelCopy() {
+      copiedCode = null;
+      document.getElementById('copy-banner').style.display = 'none';
+      document.body.classList.remove('paste-mode');
     }
 
     // ドロップされた内容を、その場でデータベースに保存する（1曜日分だけ）
@@ -405,7 +458,7 @@
         tr.className = 'data-row';
         if (isHidden) tr.classList.add('hidden');
         if (s.staff_code === selectedCode) tr.classList.add('selected');
-        tr.onclick = () => toggleEdit(s);
+        tr.onclick = (e) => handleRowClick(e, s);
 
         let html = `<td>${s.staff_code}</td><td>${s.name || ''}</td>`;
         DAYS.forEach(d => {
@@ -445,6 +498,18 @@
           }
         }
       });
+    }
+
+    // 行クリック時の処理：コピー中ならそのマスに貼り付け、そうでなければ編集行を開閉する
+    async function handleRowClick(e, staff) {
+      if (copiedCode !== null) {
+        const td = e.target.closest('td.shift-td');
+        if (td && canEdit()) {
+          await placeGyomu(td.dataset.staff, td.dataset.key, copiedCode);
+        }
+        return;
+      }
+      toggleEdit(staff);
     }
 
     function toggleEdit(staff) {
