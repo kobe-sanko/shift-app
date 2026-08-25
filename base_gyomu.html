@@ -61,6 +61,7 @@
     }
     .gyomu-item:active { cursor: grabbing; opacity: 0.7; }
     .gyomu-item.no-tekisei { opacity: 0.5; border: 1px dashed #aaa; }
+    .gyomu-item.copy-active { outline: 3px solid #4a90e2; outline-offset: 1px; }
 
     .table-wrap { flex: 1; min-width: 0; }
     td.drop-over { background: #fffacd !important; outline: 2px dashed #f39c12; }
@@ -182,8 +183,10 @@
       emptyItem.className = 'gyomu-item';
       emptyItem.style.cssText = 'background:#eee;color:#888';
       emptyItem.textContent = '空白';
+      emptyItem.dataset.code = '';
       emptyItem.draggable = canEdit();
       emptyItem.addEventListener('dragstart', e => { dragGyomuCode = ''; e.dataTransfer.effectAllowed = 'copy'; });
+      emptyItem.addEventListener('contextmenu', e => { e.preventDefault(); if (canEdit()) selectCopySource('', '空白'); });
       panel.appendChild(emptyItem);
 
       // 業務一覧（プルダウンで選んだ所属だけに絞り込む。空欄なら全部）
@@ -201,8 +204,10 @@
         item.style.color = getTextColor(color);
         item.textContent = g.gyomu_name;
         item.title = hasTekisei ? g.gyomu_name : `${g.gyomu_name}（適性なし）`;
+        item.dataset.code = g.gyomu_code;
         item.draggable = canEdit();
         item.addEventListener('dragstart', e => { dragGyomuCode = g.gyomu_code; e.dataTransfer.effectAllowed = 'copy'; });
+        item.addEventListener('contextmenu', e => { e.preventDefault(); if (canEdit()) selectCopySource(g.gyomu_code, g.gyomu_name); });
         panel.appendChild(item);
       });
 
@@ -212,10 +217,14 @@
         item.className = 'gyomu-item';
         item.style.cssText = 'background:#e0e0e0;color:#c0392b';
         item.textContent = label;
+        item.dataset.code = code;
         item.draggable = canEdit();
         item.addEventListener('dragstart', e => { dragGyomuCode = code; e.dataTransfer.effectAllowed = 'copy'; });
+        item.addEventListener('contextmenu', e => { e.preventDefault(); if (canEdit()) selectCopySource(code, label); });
         panel.appendChild(item);
       });
+
+      highlightPaletteItem();
     }
 
     // ===== tbodyのドラッグ＆ドロップ（1回だけ設定） =====
@@ -255,8 +264,7 @@
         const dayKey = td.dataset.key;
         const code = (baseMap[staffCode] || {})[dayKey + '_gyomu'];
         if (!code || code === 'EMPTY') { showMsg('空のマスはコピーできません', 'err'); return; }
-        copiedCode = code;
-        showCopyBanner(getGyomuLabel(code));
+        selectCopySource(code, getGyomuLabel(code));
       });
     }
 
@@ -304,6 +312,19 @@
       copiedCode = null;
       document.getElementById('copy-banner').style.display = 'none';
       document.body.classList.remove('paste-mode');
+      highlightPaletteItem();
+    }
+    // 業務リストのクリック、またはマスの右クリックから、コピー元を選ぶ（共通処理）
+    function selectCopySource(code, label) {
+      copiedCode = code;
+      showCopyBanner(label || '空白');
+      highlightPaletteItem();
+    }
+    // 業務リストの中で、今コピー中のものを枠で囲んで分かりやすくする
+    function highlightPaletteItem() {
+      document.querySelectorAll('.gyomu-item').forEach(el => {
+        el.classList.toggle('copy-active', copiedCode !== null && el.dataset.code === copiedCode);
+      });
     }
 
     // ドロップされた内容を、その場でデータベースに保存する（1曜日分だけ）
