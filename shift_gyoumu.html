@@ -1310,7 +1310,6 @@
           if (isArrow) {
             cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: false };
             cell.font = { color: { argb: 'FF555555' }, size: 9 };
-            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD5E8D4' } };
           } else {
             // 縦書き風：1文字ずつ改行
             if (cell.value && typeof cell.value === 'string' && cell.value.length > 1) {
@@ -1326,9 +1325,8 @@
             cell.font = { color: { argb: 'FFCC0000' }, bold: true, size: 11 };
             cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE0E0E0' } };
           } else if (isArrow) {
-            // 矢印：薄い緑背景
+            // 矢印：休日以外は色を付けない（現場の要望のため）
             cell.font = { color: { argb: 'FF555555' }, size: 11 };
-            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD5E8D4' } };
           } else if (info.color) {
             cell.font = { bold: true, size: 11 };
             // 業務ごとの色：Excel出力2（矢印表示）だけは、休み以外は色を付けない（現場の要望のため）
