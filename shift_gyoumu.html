@@ -1218,7 +1218,14 @@
           return { name, color: 'FFE0E0E0', isKyu: true };
         }
         const g = masters.gyomuMap[code];
-        if (g) return { name: g.gyomu_name, color: g.color_h ? g.color_h.replace('#','FF') : null, isKyu: false };
+        if (g) {
+          // 画面の「表示：所属名/業務名」切り替えと同じルールで名前を決める
+          const isBanmenGyomu = /^(運転|助手|倉庫|事務)\d+$/.test(g.gyomu_name);
+          const name = (badgeLabelMode === 'busho' && isBanmenGyomu)
+            ? (masters.bushoMap[g.busho_code]?.busho_name || g.gyomu_name)
+            : g.gyomu_name;
+          return { name, color: g.color_h ? g.color_h.replace('#','FF') : null, isKyu: false };
+        }
         const b = masters.bushoMap[code];
         if (b) return { name: b.busho_name, color: b.color_h ? b.color_h.replace('#','FF') : null, isKyu: false };
         return { name: code, color: null, isKyu: false };
