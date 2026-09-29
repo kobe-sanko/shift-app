@@ -1330,8 +1330,11 @@
             cell.font = { color: { argb: 'FF555555' }, size: 11 };
             cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD5E8D4' } };
           } else if (info.color) {
-            // 業務ごとの色は塗らない（休みだけ色を付けたいという現場の要望のため）。文字だけ太字にする
             cell.font = { bold: true, size: 11 };
+            // 業務ごとの色：Excel出力2（矢印表示）だけは、休み以外は色を付けない（現場の要望のため）
+            if (!useArrow) {
+              cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: info.color } };
+            }
           } else {
             // 土日の色
             if (wd === 0) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF0F0' } };
