@@ -30,9 +30,12 @@
     table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,0.1); font-size: 0.82rem; table-layout: fixed; }
     th { background: #dde; padding: 7px 4px; text-align: center; border-bottom: 2px solid #bbc; }
     td { padding: 5px 3px; text-align: center; border-bottom: 1px solid #f0f0f0; cursor: pointer; overflow: hidden; }
-    td.day-cell { padding: 2px 2px; }
+    td.day-cell { padding: 2px 2px; vertical-align: top; }
+    .shift-td { display: flex; align-items: center; justify-content: center; }
     .shift-td.slot-a { border-bottom: 1px solid #e5e5e5; padding-bottom: 2px; margin-bottom: 2px; }
     .shift-td.slot-b { background: #fafcff; }
+    .shift-td:has(.slot-b-empty) { background: transparent; border: none; margin: 0; padding: 1px 2px; min-height: 11px; }
+    .badge.slot-b-empty { display: block; min-height: 7px; width: 100%; border-radius: 3px; background: #eee; }
     tr.data-row:hover td { background: #f0f8ff; }
     tr.selected td { background: #fff3cd !important; font-weight: bold; }
     tr.hidden { display: none; }
@@ -411,8 +414,12 @@
     // 900番台（休日・有休・健診・講習など）は所属マスタから動的に読み込む
     let KYUJITSU_MAP = {};
 
-    function getBadgeHtml(code) {
-      if (!code || code === 'EMPTY') return `<span class="badge empty">－</span>`;
+    // isSecondary=true（午後の2コマ目）で空欄のときは、ほとんどの人が使わない欄なので
+    // 「－」を出さず、目立たない薄い空欄にして見た目をすっきりさせる
+    function getBadgeHtml(code, isSecondary = false) {
+      if (!code || code === 'EMPTY') {
+        return `<span class="badge empty slot-b-empty"></span>`;
+      }
       // 900番台（休日など）→ 赤文字
       if (parseInt(code) >= 900) {
         const label = KYUJITSU_MAP[code] || masters.bushoMap[code]?.busho_name || code;
@@ -493,9 +500,11 @@
 
         let html = `<td>${s.staff_code}</td><td>${s.name || ''}</td>`;
         DAYS.forEach(d => {
+          // 午前の欄は普段通りの表示にする（空欄なら「－」）。こうすることで、
+          // 午後だけ業務が入っている日は、業務が自然と下側（午後の位置）に表示される
           html += `<td class="day-cell">
             <div class="shift-td slot-a" data-staff="${s.staff_code}" data-key="${d}">${getBadgeHtml(base[d + '_gyomu'])}</div>
-            <div class="shift-td slot-b" data-staff="${s.staff_code}" data-key="${d}_b">${getBadgeHtml(base[d + '_gyomu_b'])}</div>
+            <div class="shift-td slot-b" data-staff="${s.staff_code}" data-key="${d}_b">${getBadgeHtml(base[d + '_gyomu_b'], true)}</div>
           </td>`;
         });
         tr.innerHTML = html;
@@ -534,6 +543,24 @@
             btnTr.querySelectorAll('button').forEach(btn => btn.disabled = true);
           }
         }
+      });
+
+      // 同じ行の中に一つでも業務が入っていれば、空欄のグレー部分もその高さに揃える
+      requestAnimationFrame(equalizeRowSlotHeights);
+    }
+
+    function equalizeRowSlotHeights() {
+      document.querySelectorAll('tr.data-row').forEach(tr => {
+        ['slot-a', 'slot-b'].forEach(cls => {
+          const slots = tr.querySelectorAll('.shift-td.' + cls);
+          if (slots.length === 0) return;
+          slots.forEach(el => { el.style.minHeight = ''; });
+          let max = 0;
+          slots.forEach(el => { if (el.offsetHeight > max) max = el.offsetHeight; });
+          if (max > 0) {
+            slots.forEach(el => { el.style.minHeight = max + 'px'; });
+          }
+        });
       });
     }
 

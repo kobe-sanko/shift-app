@@ -61,7 +61,7 @@
   <script>
     let masters = {};
     let staffRows = [];
-    let oenRows = [];   // その月のshift_banmen_oen全件
+    let oenRows = [];   // 業務シフトから算出した応援実績（{date, staff_code, busho_code}の配列）
     let currentYM = '';
     let daysInMonth = 31;
     let currentFilter = '';
@@ -125,29 +125,63 @@
       const month = parseInt(currentYM.substring(4, 6));
       daysInMonth = new Date(year, month, 0).getDate();
 
-      const dateFrom = `${currentYM}01`;
-      const dateTo = `${currentYM}${String(daysInMonth).padStart(2, '0')}`;
-
-      const [staffRes, oenRes] = await Promise.all([
-        sb.from('shift_staff').select('staff_code, name').order('staff_code'),
-        sb.from('shift_banmen_oen').select('date, staff_code, busho_code')
-          .gte('date', dateFrom).lte('date', dateTo),
+      const [staffRes, shiftRes, gyomuRes] = await Promise.all([
+        sb.from('shift_staff').select('staff_code, name, busho_code').order('staff_code'),
+        sb.from('shift_gyomu_shift').select('*').eq('yearmonth', currentYM),
+        sb.from('shift_gyomu').select('gyomu_code, busho_code'),
       ]);
 
-      if (staffRes.error || oenRes.error) {
+      if (staffRes.error || shiftRes.error || gyomuRes.error) {
         showMsg('データの読み込みに失敗しました', 'err');
-        console.error(staffRes.error || oenRes.error);
+        console.error(staffRes.error || shiftRes.error || gyomuRes.error);
         return;
       }
 
       staffRows = staffRes.data || [];
-      oenRows = oenRes.data || [];
+      oenRows = buildOenRowsFromShift(staffRows, shiftRes.data || [], gyomuRes.data || []);
 
       buildHeader();
       renderTable();
 
       document.getElementById('loading').style.display = 'none';
       document.getElementById('table-wrap').style.display = 'block';
+    }
+
+    // ===== 業務シフトから「応援」実績を算出する =====
+    // 考え方：その日にやった業務の所属が、本人の所属（社員マスタのbusho_code）と違っていれば「応援」とみなす。
+    // 休日・有休・健診・講習（901〜のコード）は業務マスタに無いコードなので、自然に対象外になる。
+    function buildOenRowsFromShift(staffList, shiftRows, gyomuRows) {
+      const staffBushoMap = {};
+      staffList.forEach(s => { staffBushoMap[s.staff_code] = s.busho_code; });
+
+      const gyomuBushoMap = {};
+      gyomuRows.forEach(g => { gyomuBushoMap[g.gyomu_code] = g.busho_code; });
+
+      const seen = new Set(); // staff_code|date|busho_code の重複防止
+      const result = [];
+
+      shiftRows.forEach(row => {
+        const myBusho = staffBushoMap[row.staff_code];
+        if (!myBusho) return; // 社員マスタに無い（退職済みなど）場合は対象外
+
+        for (let d = 1; d <= daysInMonth; d++) {
+          const dayKey = `d${String(d).padStart(2, '0')}`;
+          [dayKey, dayKey + 'b'].forEach(key => {
+            const code = row[key];
+            if (!code || code === 'EMPTY') return;
+            const jobBusho = gyomuBushoMap[code];
+            if (!jobBusho || jobBusho === myBusho) return; // 自分の所属と同じ、または業務マスタに無いコードは対象外
+
+            const dateStr = `${currentYM}${String(d).padStart(2, '0')}`;
+            const dedupeKey = `${row.staff_code}|${dateStr}|${jobBusho}`;
+            if (seen.has(dedupeKey)) return;
+            seen.add(dedupeKey);
+            result.push({ staff_code: row.staff_code, date: dateStr, busho_code: jobBusho });
+          });
+        }
+      });
+
+      return result;
     }
 
     // ===== ヘッダー（日付列）構築 =====

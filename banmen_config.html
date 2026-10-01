@@ -218,7 +218,8 @@
       const specialItems = []; // sp_jun=99(お休み) or 98(応援) or 97(車検)
 
       configData.forEach(r => {
-        if (r.sp_jun === 99 || r.sp_jun === 98 || r.sp_jun === 97) {
+        if (r.sp_jun === 98) return; // 応援カードは廃止したので表示しない（保存すると自動的に消える）
+        if (r.sp_jun === 99 || r.sp_jun === 97) {
           specialItems.push(r);
           return;
         }

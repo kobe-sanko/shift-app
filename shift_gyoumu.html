@@ -93,10 +93,12 @@
     #syaken-row td { position: sticky; bottom: 0; background: #fff5f5; z-index: 2; }
     #syaken-row td.name-td { z-index: 3; }
     .shift-td { cursor: default; }
-    td.day-cell { padding: 0; }
+    td.day-cell { padding: 0; vertical-align: top; }
     .shift-td.slot-a { border-bottom: 1px solid #e5e5e5; }
     .shift-td.slot-b { background: #fafcff; }
-    .shift-td { padding: 2px 2px; }
+    .shift-td { padding: 2px 2px; display: flex; align-items: center; justify-content: center; }
+    .shift-td:has(.slot-b-empty) { min-height: 11px; }
+    .badge.slot-b-empty { display: block; min-height: 7px; width: 100%; border-radius: 3px; background: #eee; }
     tr:hover td { background: #f0f8ff; }
     tr:hover td.name-td { background: #f0f8ff; }
     tr.hidden { display: none; }
@@ -106,7 +108,7 @@
       min-width: 20px; min-height: 34px;
       writing-mode: vertical-rl; text-orientation: upright; letter-spacing: 1px;
     }
-    .badge.empty { color: #bbb; background: none; writing-mode: horizontal-tb; min-height: auto; }
+    .badge.empty { color: #aaa; background: #eee; writing-mode: horizontal-tb; min-height: auto; }
     th.sat { background: #d0e8ff; }
     th.sun { background: #ffd0d0; }
     td.sat-col { background: #f0f6ff; }
@@ -238,6 +240,7 @@
     let changed = {};
     let copiedCode = null; // コピー中の業務コード（右クリックでコピーし、クリックで貼り付ける）
     let changedCells = {};
+    let pendingOldValues = {}; // staffCode → key → 変更前の値（保存時に盤面同期の「元の値」として使う。ドラッグ＆ドロップはshiftMapを即座に書き換えてしまうため別で保持）
     let dragGyomuCode = null;
     let dialogResolve = null;
     let smahoData = [];      // shift_banmenのsmaho列データ（月分）
@@ -522,6 +525,7 @@
       selectedCode = null;
       changed = {};
       changedCells = {};
+      pendingOldValues = {};
       document.getElementById('btn-save').style.display = 'none';
       await loadData();
     }
@@ -659,8 +663,12 @@
     }
 
     // ===== バッジ表示 =====
-    function getBadgeHtml(code) {
-      if (!code || code === 'EMPTY') return `<span class="badge empty">－</span>`;
+    // 空欄のときは、ベース業務と同じように細長いグレーの枠にして、
+    // ドロップできる場所だとひと目で分かるようにする
+    function getBadgeHtml(code, isSecondary = false) {
+      if (!code || code === 'EMPTY') {
+        return `<span class="badge empty slot-b-empty"></span>`;
+      }
       // 900番台（休日など）
       if (parseInt(code) >= 900) {
         const label = KYUJITSU_MAP[code] || (masters.bushoMap[code]?.busho_name) || code;
@@ -675,7 +683,7 @@
         const color = g.color_h || '#ccc';
         // 盤面の配送・倉庫・事務表に使われる「運転1」「倉庫2」のような番号付きの業務は、
         // 色だけだと所属の判別がしにくいため、切り替えボタンで業務名／所属名を選べるようにする
-        const isBanmenGyomu = /^(運転|助手|倉庫|事務)\d+$/.test(g.gyomu_name);
+        const isBanmenGyomu = /^(運転|助手|倉庫|事務)\d*$/.test(g.gyomu_name);
         const label = (badgeLabelMode === 'busho' && isBanmenGyomu)
           ? (masters.bushoMap[g.busho_code]?.busho_name || g.gyomu_name)
           : g.gyomu_name;
@@ -729,6 +737,7 @@
         // データ行
         const tr = document.createElement('tr');
         tr.dataset.staffCode = s.staff_code;
+        tr.classList.add('data-row');
         if (isHidden) tr.classList.add('hidden');
         if (s.staff_code === selectedCode) tr.classList.add('selected');
 
@@ -737,9 +746,11 @@
           const key = `d${String(d).padStart(2,'0')}`;
           const keyB = key + 'b';
           const cls = getDayClass(d);
+          // 午前の欄は普段通りの表示にする（空欄なら「－」）。こうすることで、
+          // 午後だけ業務が入っている日は、業務が自然と下側（午後の位置）に表示される
           html += `<td class="day-cell ${cls}">
             <div class="shift-td slot-a" data-staff="${s.staff_code}" data-key="${key}">${getBadgeHtml(shift[key])}</div>
-            <div class="shift-td slot-b" data-staff="${s.staff_code}" data-key="${keyB}">${getBadgeHtml(shift[keyB])}</div>
+            <div class="shift-td slot-b" data-staff="${s.staff_code}" data-key="${keyB}">${getBadgeHtml(shift[keyB], true)}</div>
           </td>`;
         }
         tr.innerHTML = html;
@@ -807,8 +818,26 @@
       syakenTr.innerHTML = syakenHtml;
       tbody.appendChild(syakenTr);
 
+      // 業務名は縦書きのため、文字数によって業務ごとに高さが変わってしまう。
+      // 同じ行の中で一番高い業務に合わせて、その行の午前欄の高さを揃える。
+      // 描画が完了してから高さを測りたいので、次の描画のタイミングまで待ってから実行する
+      requestAnimationFrame(equalizeSlotAHeights);
+
       // 業務リスト更新
       buildGyomuList(selectedCode);
+    }
+
+    function equalizeSlotAHeights() {
+      document.querySelectorAll('tr.data-row').forEach(tr => {
+        const slots = tr.querySelectorAll('.shift-td.slot-a');
+        if (slots.length === 0) return;
+        slots.forEach(el => { el.style.minHeight = ''; });
+        let max = 0;
+        slots.forEach(el => { if (el.offsetHeight > max) max = el.offsetHeight; });
+        if (max > 0) {
+          slots.forEach(el => { el.style.minHeight = max + 'px'; });
+        }
+      });
     }
 
     // ===== ドロップダウン =====
@@ -900,8 +929,17 @@
       }
     }
 
+    // 変更前の値を記録しておく（盤面同期で「元の値」を正しく参照するため。2回目以降の変更では上書きしない）
+    function rememberOldValue(staffCode, key) {
+      if (!pendingOldValues[staffCode]) pendingOldValues[staffCode] = {};
+      if (pendingOldValues[staffCode][key] === undefined) {
+        pendingOldValues[staffCode][key] = (shiftMap[staffCode] || {})[key] || null;
+      }
+    }
+
     // ===== セル変更 =====
     function onCellChange(staffCode, key) {
+      rememberOldValue(staffCode, key);
       changed[staffCode] = true;
       if (!changedCells[staffCode]) changedCells[staffCode] = {};
       changedCells[staffCode][key] = true;
@@ -910,6 +948,7 @@
 
     // ===== ドラッグ＆ドロップ適用 =====
     function applyDrop(staffCode, key, gyomuCode) {
+      rememberOldValue(staffCode, key);
       if (!shiftMap[staffCode]) shiftMap[staffCode] = { yearmonth: currentYM, staff_code: staffCode };
       shiftMap[staffCode][key] = gyomuCode;
       changed[staffCode] = true;
@@ -986,11 +1025,35 @@
     }
 
     // ===== 保存 =====
+    // 業務シフトのセルを変更したときに、盤面（shift_banmen）に残っている古い配置も一緒に消す。
+    // 番号付きの具体的な業務（運転1・助手1など）から別の内容に変わった場合だけが対象
+    // （番号なしの「運転」「助手」はそもそも盤面に自動配置されないため対象外）。
+    async function syncBanmenOnShiftChange(staffCode, key, oldCode, newCode) {
+      if (oldCode === newCode) return;
+      if (!oldCode || oldCode === 'EMPTY') return;
+      const g = masters.gyomuMap[oldCode];
+      if (!g) return;
+      const m = (g.gyomu_name || '').match(/^(運転|助手)(\d+)$/);
+      if (!m) return;
+      const field = m[1] === '運転' ? 'driver' : 'jyoshu1';
+      const rowNo = parseInt(m[2], 10);
+      const d = parseInt(key.replace('b', '').slice(1), 10);
+      const dateStr = `${currentYM}${String(d).padStart(2, '0')}`;
+      const { data: row } = await sb.from('shift_banmen')
+        .select('id, driver, jyoshu1')
+        .eq('date', dateStr).eq('busho_code', g.busho_code).eq('gyomu_code', '配送').eq('row_no', rowNo)
+        .maybeSingle();
+      if (row && row[field] === staffCode) {
+        await sb.from('shift_banmen').update({ [field]: null }).eq('id', row.id);
+      }
+    }
+
     async function saveStaff(staffCode) {
       if (!canEdit()) { showMsg('閲覧のみモードのため変更できません', 'err'); return; }
       const current = shiftMap[staffCode] || {};
       const cellChanged = changedCells[staffCode] || {};
       const data = { yearmonth: currentYM, staff_code: staffCode };
+      const banmenSyncTargets = []; // { key, oldCode, newCode }
 
       for (let d = 1; d <= daysInMonth; d++) {
         const key = `d${String(d).padStart(2,'0')}`;
@@ -999,6 +1062,11 @@
             // ドロップダウンで実際に操作したセル
             const sel = document.getElementById(`sel_${staffCode}_${k}`);
             data[k] = sel ? (sel.value || null) : (current[k] || null);
+            // ドラッグ＆ドロップの場合はshiftMapがすでに新しい値に書き換わっているため、
+            // 記録しておいた「変更前の値」があればそちらを優先して使う
+            const pending = pendingOldValues[staffCode];
+            const oldCode = (pending && pending[k] !== undefined) ? pending[k] : (current[k] || null);
+            if (data[k] !== oldCode) banmenSyncTargets.push({ key: k, oldCode, newCode: data[k] });
           } else {
             // ドラッグ＆ドロップ変更 or 変更なし → shiftMapの値
             data[k] = current[k] || null;
@@ -1020,10 +1088,16 @@
       }
       if (error) { showMsg('保存に失敗しました: ' + error.message, 'err'); return; }
 
+      // 業務シフトの変更に合わせて、盤面に残っている古い配置があれば消す
+      for (const t of banmenSyncTargets) {
+        await syncBanmenOnShiftChange(staffCode, t.key, t.oldCode, t.newCode);
+      }
+
       showMsg('保存しました', 'ok');
       shiftMap[staffCode] = { ...current, ...data };
       delete changed[staffCode];
       delete changedCells[staffCode];
+      delete pendingOldValues[staffCode];
       if (Object.keys(changed).length === 0) document.getElementById('btn-save').style.display = 'none';
       renderTable();
     }
@@ -1244,7 +1318,7 @@
         const g = masters.gyomuMap[code];
         if (g) {
           // 画面の「表示：所属名/業務名」切り替えと同じルールで名前を決める
-          const isBanmenGyomu = /^(運転|助手|倉庫|事務)\d+$/.test(g.gyomu_name);
+          const isBanmenGyomu = /^(運転|助手|倉庫|事務)\d*$/.test(g.gyomu_name);
           const name = (badgeLabelMode === 'busho' && isBanmenGyomu)
             ? (masters.bushoMap[g.busho_code]?.busho_name || g.gyomu_name)
             : g.gyomu_name;
@@ -1323,10 +1397,11 @@
           } else {
             text = info.name;
           }
-          // 午後（2コマ目）があれば、改行して下の行に追加表示する（午前・午後を縦に並べる）
+          // 午後（2コマ目）があれば、改行して下の行に追加表示する（午前・午後を縦に並べる）。
+          // 午前が空欄で午後だけのときも「－」を入れて2行にし、午後だけの業務だと分かるようにする
           if (codeB && codeB !== 'EMPTY') {
             const infoB = getCodeInfo(codeB);
-            text = text ? `${text}\n${infoB.name}` : infoB.name;
+            text = `${text || '－'}\n${infoB.name}`;
           }
           rowData.push(text);
         }
