@@ -25,13 +25,14 @@
       margin-left: 8px; font-size: 0.75rem; padding: 3px 12px; border: none; border-radius: 4px;
       background: #95a5a6; color: white; cursor: pointer;
     }
-    body.paste-mode td.shift-td { cursor: copy; }
+    body.paste-mode .shift-td { cursor: copy; }
 
     table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,0.1); font-size: 0.82rem; table-layout: fixed; }
     th { background: #dde; padding: 7px 4px; text-align: center; border-bottom: 2px solid #bbc; }
     td { padding: 5px 3px; text-align: center; border-bottom: 1px solid #f0f0f0; cursor: pointer; overflow: hidden; }
-    td.slot-a { border-left: 2px solid #bbc; }
-    td.slot-b { background: #fafcff; }
+    td.day-cell { padding: 2px 2px; }
+    .shift-td.slot-a { border-bottom: 1px solid #e5e5e5; padding-bottom: 2px; margin-bottom: 2px; }
+    .shift-td.slot-b { background: #fafcff; }
     tr.data-row:hover td { background: #f0f8ff; }
     tr.selected td { background: #fff3cd !important; font-weight: bold; }
     tr.hidden { display: none; }
@@ -66,7 +67,7 @@
     .gyomu-item.copy-active { outline: 3px solid #4a90e2; outline-offset: 1px; }
 
     .table-wrap { flex: 1; min-width: 0; }
-    td.drop-over { background: #fffacd !important; outline: 2px dashed #f39c12; }
+    .drop-over { background: #fffacd !important; outline: 2px dashed #f39c12; }
 
     /* 確認ダイアログ */
     .dialog-overlay { display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.4); z-index:1000; align-items:center; justify-content:center; }
@@ -110,7 +111,7 @@
           <tr>
             <th style="width:90px">社員コード</th>
             <th style="width:120px">氏名</th>
-            <th colspan="2">日</th><th colspan="2">月</th><th colspan="2">火</th><th colspan="2">水</th><th colspan="2">木</th><th colspan="2">金</th><th colspan="2">土</th>
+            <th>日</th><th>月</th><th>火</th><th>水</th><th>木</th><th>金</th><th>土</th>
           </tr>
         </thead>
         <tbody id="tbody"></tbody>
@@ -239,18 +240,18 @@
     function initTbodyEvents() {
       const tbody = document.getElementById('tbody');
       tbody.addEventListener('dragover', e => {
-        const td = e.target.closest('td.shift-td');
+        const td = e.target.closest('.shift-td');
         if (!td) return;
         e.preventDefault();
-        document.querySelectorAll('td.drop-over').forEach(el => el.classList.remove('drop-over'));
+        document.querySelectorAll('.shift-td.drop-over').forEach(el => el.classList.remove('drop-over'));
         td.classList.add('drop-over');
       });
       tbody.addEventListener('dragleave', e => {
-        const td = e.target.closest('td.shift-td');
+        const td = e.target.closest('.shift-td');
         if (td) td.classList.remove('drop-over');
       });
       tbody.addEventListener('drop', async e => {
-        const td = e.target.closest('td.shift-td');
+        const td = e.target.closest('.shift-td');
         if (!td) return;
         e.preventDefault();
         td.classList.remove('drop-over');
@@ -264,7 +265,7 @@
 
       // 右クリック → そのマスの業務をコピー
       tbody.addEventListener('contextmenu', e => {
-        const td = e.target.closest('td.shift-td');
+        const td = e.target.closest('.shift-td');
         if (!td) return;
         e.preventDefault();
         if (!canEdit()) return;
@@ -492,8 +493,10 @@
 
         let html = `<td>${s.staff_code}</td><td>${s.name || ''}</td>`;
         DAYS.forEach(d => {
-          html += `<td class="shift-td slot-a" data-staff="${s.staff_code}" data-key="${d}">${getBadgeHtml(base[d + '_gyomu'])}</td>`;
-          html += `<td class="shift-td slot-b" data-staff="${s.staff_code}" data-key="${d}_b">${getBadgeHtml(base[d + '_gyomu_b'])}</td>`;
+          html += `<td class="day-cell">
+            <div class="shift-td slot-a" data-staff="${s.staff_code}" data-key="${d}">${getBadgeHtml(base[d + '_gyomu'])}</div>
+            <div class="shift-td slot-b" data-staff="${s.staff_code}" data-key="${d}_b">${getBadgeHtml(base[d + '_gyomu_b'])}</div>
+          </td>`;
         });
         tr.innerHTML = html;
         tbody.appendChild(tr);
@@ -505,8 +508,10 @@
 
           let editHtml = `<td colspan="2" style="text-align:left;padding-left:8px;font-size:0.8rem;color:#888">▲ 編集中</td>`;
           DAYS.forEach((d, i) => {
-            editHtml += `<td>${buildSelectHtml('sel_' + d, s.staff_code, base[d + '_gyomu'] || '')}</td>`;
-            editHtml += `<td>${buildSelectHtml('sel_' + d + '_b', s.staff_code, base[d + '_gyomu_b'] || '')}</td>`;
+            editHtml += `<td>
+              <div style="margin-bottom:2px">${buildSelectHtml('sel_' + d, s.staff_code, base[d + '_gyomu'] || '')}</div>
+              <div>${buildSelectHtml('sel_' + d + '_b', s.staff_code, base[d + '_gyomu_b'] || '')}</div>
+            </td>`;
           });
           if (isHidden) editTr.classList.add('hidden');
           editTr.innerHTML = editHtml;
@@ -516,7 +521,7 @@
           const btnTr = document.createElement('tr');
           btnTr.className = 'btn-row';
           btnTr.innerHTML = `
-            <td colspan="16" style="text-align:left">
+            <td colspan="9" style="text-align:left">
               <button class="btn-copy" onclick="copyFromSun()">日曜日を全曜日にコピー</button>
               <button class="btn-save" onclick="saveRow('${s.staff_code}')" style="margin-left:8px">保存</button>
             </td>`;
@@ -535,7 +540,7 @@
     // 行クリック時の処理：コピー中ならそのマスに貼り付け、そうでなければ編集行を開閉する
     async function handleRowClick(e, staff) {
       if (copiedCode !== null) {
-        const td = e.target.closest('td.shift-td');
+        const td = e.target.closest('.shift-td');
         if (td && canEdit()) {
           await placeGyomu(td.dataset.staff, td.dataset.key, copiedCode);
         }

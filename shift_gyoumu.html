@@ -30,7 +30,7 @@
       margin-left: 8px; font-size: 0.75rem; padding: 3px 12px; border: none; border-radius: 4px;
       background: #95a5a6; color: white; cursor: pointer;
     }
-    body.paste-mode td.shift-td { cursor: copy; }
+    body.paste-mode .shift-td { cursor: copy; }
 
     /* 車検・修理の車番をクリックしたときの吹き出し */
     .syaken-tooltip {
@@ -85,10 +85,6 @@
     /* border-collapse:collapseだとブラウザによってはposition:stickyのthが固定されないため、separateにしている */
     table { border-collapse: separate; border-spacing: 0; background: white; font-size: 0.75rem; white-space: nowrap; box-shadow: 0 1px 4px rgba(0,0,0,0.1); }
     th { background: #dde; padding: 4px 3px; text-align: center; border: 1px solid #ccc; min-width: 38px; position: sticky; top: 0; z-index: 2; }
-    th.day-group-start { border-left: 2px solid #999; }
-    td.slot-td { min-width: 30px; }
-    td.slot-a { border-left: 2px solid #999; }
-    td.slot-b { background: #fafcff; }
     th.name-th { min-width: 100px; position: sticky; left: 0; top: 0; z-index: 3; background: #dde; }
     td { padding: 3px 2px; text-align: center; border: 1px solid #eee; }
     td.name-td { position: sticky; left: 0; background: white; z-index: 1; padding: 3px 6px; min-width: 100px; font-size: 0.78rem; cursor: pointer; }
@@ -96,7 +92,11 @@
     /* 車検行：常に表の一番下に固定表示 */
     #syaken-row td { position: sticky; bottom: 0; background: #fff5f5; z-index: 2; }
     #syaken-row td.name-td { z-index: 3; }
-    td.shift-td { cursor: default; }
+    .shift-td { cursor: default; }
+    td.day-cell { padding: 0; }
+    .shift-td.slot-a { border-bottom: 1px solid #e5e5e5; }
+    .shift-td.slot-b { background: #fafcff; }
+    .shift-td { padding: 2px 2px; }
     tr:hover td { background: #f0f8ff; }
     tr:hover td.name-td { background: #f0f8ff; }
     tr.hidden { display: none; }
@@ -111,7 +111,7 @@
     th.sun { background: #ffd0d0; }
     td.sat-col { background: #f0f6ff; }
     td.sun-col { background: #fff0f0; }
-    td.drop-over { background: #fffacd !important; outline: 2px dashed #f39c12; }
+    .drop-over { background: #fffacd !important; outline: 2px dashed #f39c12; }
 
     /* 選択中の行 */
     tr.selected > td { background: #fff3cd !important; }
@@ -299,7 +299,7 @@
         if (e.target.closest('.syaken-chip')) return;
 
         if (copiedCode !== null) {
-          const td = e.target.closest('td.shift-td');
+          const td = e.target.closest('.shift-td');
           if (td && canEdit()) {
             await placeGyomu(td.dataset.staff, td.dataset.key, copiedCode);
           }
@@ -315,7 +315,7 @@
 
       // 右クリック → そのマスの業務をコピー
       tbody.addEventListener('contextmenu', e => {
-        const td = e.target.closest('td.shift-td');
+        const td = e.target.closest('.shift-td');
         if (!td) return;
         e.preventDefault();
         if (!canEdit()) return;
@@ -328,18 +328,18 @@
 
       // ドラッグ＆ドロップ
       tbody.addEventListener('dragover', e => {
-        const td = e.target.closest('td.shift-td');
+        const td = e.target.closest('.shift-td');
         if (!td) return;
         e.preventDefault();
-        document.querySelectorAll('td.drop-over').forEach(el => el.classList.remove('drop-over'));
+        document.querySelectorAll('.shift-td.drop-over').forEach(el => el.classList.remove('drop-over'));
         td.classList.add('drop-over');
       });
       tbody.addEventListener('dragleave', e => {
-        const td = e.target.closest('td.shift-td');
+        const td = e.target.closest('.shift-td');
         if (td) td.classList.remove('drop-over');
       });
       tbody.addEventListener('drop', async e => {
-        const td = e.target.closest('td.shift-td');
+        const td = e.target.closest('.shift-td');
         if (!td) return;
         e.preventDefault();
         if (!canEdit()) return; // 閲覧のみモードでは配置を変更できない
@@ -606,7 +606,7 @@
       for (let d = 1; d <= daysInMonth; d++) {
         const wd = new Date(year, month - 1, d).getDay();
         const cls = wd === 0 ? 'sun' : wd === 6 ? 'sat' : '';
-        html += `<th class="${cls} day-group-start" colspan="2">${d}<br><span style="font-size:0.65rem">${getWeekdayName(wd)}</span></th>`;
+        html += `<th class="${cls}">${d}<br><span style="font-size:0.65rem">${getWeekdayName(wd)}</span></th>`;
       }
       html += '</tr>';
       thead.innerHTML = html;
@@ -737,8 +737,10 @@
           const key = `d${String(d).padStart(2,'0')}`;
           const keyB = key + 'b';
           const cls = getDayClass(d);
-          html += `<td class="shift-td slot-td slot-a ${cls}" data-staff="${s.staff_code}" data-key="${key}">${getBadgeHtml(shift[key])}</td>`;
-          html += `<td class="shift-td slot-td slot-b ${cls}" data-staff="${s.staff_code}" data-key="${keyB}">${getBadgeHtml(shift[keyB])}</td>`;
+          html += `<td class="day-cell ${cls}">
+            <div class="shift-td slot-a" data-staff="${s.staff_code}" data-key="${key}">${getBadgeHtml(shift[key])}</div>
+            <div class="shift-td slot-b" data-staff="${s.staff_code}" data-key="${keyB}">${getBadgeHtml(shift[keyB])}</div>
+          </td>`;
         }
         tr.innerHTML = html;
         tbody.appendChild(tr);
@@ -756,8 +758,10 @@
             const id = `sel_${s.staff_code}_${key}`;
             const idB = `sel_${s.staff_code}_${keyB}`;
             const cls = getDayClass(d);
-            editHtml += `<td class="slot-a ${cls}">${buildSelectHtml(id, s.staff_code, shift[key] || '', key)}</td>`;
-            editHtml += `<td class="slot-b ${cls}">${buildSelectHtml(idB, s.staff_code, shift[keyB] || '', keyB)}</td>`;
+            editHtml += `<td class="${cls}">
+              <div style="margin-bottom:2px">${buildSelectHtml(id, s.staff_code, shift[key] || '', key)}</div>
+              <div>${buildSelectHtml(idB, s.staff_code, shift[keyB] || '', keyB)}</div>
+            </td>`;
           }
           editTr.innerHTML = editHtml;
           tbody.appendChild(editTr);
@@ -766,7 +770,7 @@
           btnTr.className = 'btn-row';
           if (isHidden) btnTr.classList.add('hidden');
           btnTr.innerHTML = `
-            <td colspan="${daysInMonth * 2 + 2}" style="text-align:left">
+            <td colspan="${daysInMonth + 2}" style="text-align:left">
               <button class="btn btn-create" style="background:#3498db" onclick="copyFromBase('${s.staff_code}')">ベース業務からコピー</button>
               <button class="btn" style="background:#e74c3c;margin-left:8px" onclick="clearAllStaff('${s.staff_code}')">全削除</button>
               <button class="btn btn-save" onclick="saveStaff('${s.staff_code}')" style="margin-left:8px">この社員を保存</button>
@@ -798,7 +802,7 @@
           const carAttr = String(c.label).replace(/"/g, '&quot;');
           return `<span class="syaken-chip" data-car="${carAttr}" data-reason="${reasonAttr}" style="background:${style.bg};color:${style.col};border-radius:3px;padding:0 3px;display:inline-block;cursor:pointer;">${c.label}</span>`;
         }).join('<br>');
-        syakenHtml += `<td colspan="2" class="${cls}" style="font-weight:bold;font-size:0.7rem">${label}</td>`;
+        syakenHtml += `<td class="${cls}" style="font-weight:bold;font-size:0.7rem">${label}</td>`;
       }
       syakenTr.innerHTML = syakenHtml;
       tbody.appendChild(syakenTr);
@@ -910,7 +914,7 @@
       shiftMap[staffCode][key] = gyomuCode;
       changed[staffCode] = true;
       document.getElementById('btn-save').style.display = '';
-      const td = document.querySelector(`td.shift-td[data-staff="${staffCode}"][data-key="${key}"]`);
+      const td = document.querySelector(`.shift-td[data-staff="${staffCode}"][data-key="${key}"]`);
       if (td) td.innerHTML = getBadgeHtml(gyomuCode);
     }
 
@@ -1319,10 +1323,10 @@
           } else {
             text = info.name;
           }
-          // 午後（2コマ目）があれば、/区切りで追加表示する
+          // 午後（2コマ目）があれば、改行して下の行に追加表示する（午前・午後を縦に並べる）
           if (codeB && codeB !== 'EMPTY') {
             const infoB = getCodeInfo(codeB);
-            text = text ? `${text}／${infoB.name}` : infoB.name;
+            text = text ? `${text}\n${infoB.name}` : infoB.name;
           }
           rowData.push(text);
         }
@@ -1345,16 +1349,17 @@
           const isArrow = useArrow && d > 0 && code && code === prevCode && !info.isKyu;
 
           if (isArrow) {
-            cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: false };
+            const hasBothSlots = typeof cell.value === 'string' && cell.value.includes('\n');
+            cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: hasBothSlots };
             cell.font = { color: { argb: 'FF555555' }, size: 9 };
           } else {
-            // 縦書き風：1文字ずつ改行（午前午後の両方が入っている日は、／区切りのまま横表示にする）
-            const hasBothSlots = typeof cell.value === 'string' && cell.value.includes('／');
+            // 縦書き風：1文字ずつ改行（午前午後の両方が入っている日は、すでに改行済みなのでそのまま横書きで表示する）
+            const hasBothSlots = typeof cell.value === 'string' && cell.value.includes('\n');
             if (cell.value && typeof cell.value === 'string' && cell.value.length > 1 && !hasBothSlots) {
               cell.value = cell.value.split('').join('\n');
             }
             cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
-            cell.font = { ...(cell.font || {}), size: hasBothSlots ? 8 : 10 };
+            cell.font = { ...(cell.font || {}), size: hasBothSlots ? 9 : 10 };
           }
           cell.border = { top:{style:'thin'}, bottom:{style:'thin'}, left:{style:'thin'}, right:{style:'thin'} };
 
