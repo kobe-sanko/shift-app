@@ -85,6 +85,10 @@
     /* border-collapse:collapseだとブラウザによってはposition:stickyのthが固定されないため、separateにしている */
     table { border-collapse: separate; border-spacing: 0; background: white; font-size: 0.75rem; white-space: nowrap; box-shadow: 0 1px 4px rgba(0,0,0,0.1); }
     th { background: #dde; padding: 4px 3px; text-align: center; border: 1px solid #ccc; min-width: 38px; position: sticky; top: 0; z-index: 2; }
+    th.day-group-start { border-left: 2px solid #999; }
+    td.slot-td { min-width: 30px; }
+    td.slot-a { border-left: 2px solid #999; }
+    td.slot-b { background: #fafcff; }
     th.name-th { min-width: 100px; position: sticky; left: 0; top: 0; z-index: 3; background: #dde; }
     td { padding: 3px 2px; text-align: center; border: 1px solid #eee; }
     td.name-td { position: sticky; left: 0; background: white; z-index: 1; padding: 3px 6px; min-width: 100px; font-size: 0.78rem; cursor: pointer; }
@@ -146,6 +150,7 @@
     <button class="btn btn-save pc-only-btn" onclick="saveAll()" id="btn-save" style="display:none">💾 保存</button>
     <button class="btn pc-only-btn" style="background:#1d6f42;" onclick="exportExcel(false)">📊 Excel出力</button>
     <button class="btn pc-only-btn" style="background:#1a5276;" onclick="exportExcel(true)">📊 Excel出力2</button>
+    <button class="btn pc-only-btn" style="background:#7f8c8d;" onclick="exportBlankExcel()">📋 空白シフト出力</button>
     <button class="btn pc-only-btn" style="background:#8e44ad;" onclick="openHyojiJunDialog()">📋 表示順設定</button>
     <button class="btn pc-only-btn" style="background:#16a085;" id="btn-badge-mode" onclick="toggleBadgeLabelMode()">🔀 表示：所属名</button>
   </div>
@@ -601,7 +606,7 @@
       for (let d = 1; d <= daysInMonth; d++) {
         const wd = new Date(year, month - 1, d).getDay();
         const cls = wd === 0 ? 'sun' : wd === 6 ? 'sat' : '';
-        html += `<th class="${cls}">${d}<br><span style="font-size:0.65rem">${getWeekdayName(wd)}</span></th>`;
+        html += `<th class="${cls} day-group-start" colspan="2">${d}<br><span style="font-size:0.65rem">${getWeekdayName(wd)}</span></th>`;
       }
       html += '</tr>';
       thead.innerHTML = html;
@@ -692,13 +697,14 @@
       return wd === 0 ? 'sun-col' : wd === 6 ? 'sat-col' : '';
     }
 
-    // 勤務日数を数える（休日は含めない。有休・健診は含める）
+    // 勤務日数を数える（休日は含めない。有休・健診は含める。午前午後どちらかに入っていれば1日とする）
     function countWorkDays(shift) {
       let count = 0;
       for (let d = 1; d <= daysInMonth; d++) {
         const key = `d${String(d).padStart(2,'0')}`;
         const val = shift[key];
-        if (val && val !== '901') count++;
+        const valB = shift[key + 'b'];
+        if ((val && val !== '901') || (valB && valB !== '901')) count++;
       }
       return count;
     }
@@ -729,8 +735,10 @@
         let html = `<td class="name-td">${s.name || ''}</td><td style="text-align:center;font-weight:bold;background:#fafafa">${countWorkDays(shift)}</td>`;
         for (let d = 1; d <= daysInMonth; d++) {
           const key = `d${String(d).padStart(2,'0')}`;
+          const keyB = key + 'b';
           const cls = getDayClass(d);
-          html += `<td class="shift-td ${cls}" data-staff="${s.staff_code}" data-key="${key}">${getBadgeHtml(shift[key])}</td>`;
+          html += `<td class="shift-td slot-td slot-a ${cls}" data-staff="${s.staff_code}" data-key="${key}">${getBadgeHtml(shift[key])}</td>`;
+          html += `<td class="shift-td slot-td slot-b ${cls}" data-staff="${s.staff_code}" data-key="${keyB}">${getBadgeHtml(shift[keyB])}</td>`;
         }
         tr.innerHTML = html;
         tbody.appendChild(tr);
@@ -744,9 +752,12 @@
           let editHtml = `<td class="name-td" style="font-size:0.72rem;color:#888">▲編集中</td><td></td>`;
           for (let d = 1; d <= daysInMonth; d++) {
             const key = `d${String(d).padStart(2,'0')}`;
+            const keyB = key + 'b';
             const id = `sel_${s.staff_code}_${key}`;
+            const idB = `sel_${s.staff_code}_${keyB}`;
             const cls = getDayClass(d);
-            editHtml += `<td class="${cls}">${buildSelectHtml(id, s.staff_code, shift[key] || '', key)}</td>`;
+            editHtml += `<td class="slot-a ${cls}">${buildSelectHtml(id, s.staff_code, shift[key] || '', key)}</td>`;
+            editHtml += `<td class="slot-b ${cls}">${buildSelectHtml(idB, s.staff_code, shift[keyB] || '', keyB)}</td>`;
           }
           editTr.innerHTML = editHtml;
           tbody.appendChild(editTr);
@@ -755,7 +766,7 @@
           btnTr.className = 'btn-row';
           if (isHidden) btnTr.classList.add('hidden');
           btnTr.innerHTML = `
-            <td colspan="${daysInMonth + 2}" style="text-align:left">
+            <td colspan="${daysInMonth * 2 + 2}" style="text-align:left">
               <button class="btn btn-create" style="background:#3498db" onclick="copyFromBase('${s.staff_code}')">ベース業務からコピー</button>
               <button class="btn" style="background:#e74c3c;margin-left:8px" onclick="clearAllStaff('${s.staff_code}')">全削除</button>
               <button class="btn btn-save" onclick="saveStaff('${s.staff_code}')" style="margin-left:8px">この社員を保存</button>
@@ -787,7 +798,7 @@
           const carAttr = String(c.label).replace(/"/g, '&quot;');
           return `<span class="syaken-chip" data-car="${carAttr}" data-reason="${reasonAttr}" style="background:${style.bg};color:${style.col};border-radius:3px;padding:0 3px;display:inline-block;cursor:pointer;">${c.label}</span>`;
         }).join('<br>');
-        syakenHtml += `<td class="${cls}" style="font-weight:bold;font-size:0.7rem">${label}</td>`;
+        syakenHtml += `<td colspan="2" class="${cls}" style="font-weight:bold;font-size:0.7rem">${label}</td>`;
       }
       syakenTr.innerHTML = syakenHtml;
       tbody.appendChild(syakenTr);
@@ -833,12 +844,14 @@
       if (!currentFilter) return false;
       const shift = shiftMap[s.staff_code] || {};
       const hasBusho = s.busho_code === currentFilter;
-      const hasGyomu = Array.from({length: daysInMonth}, (_, i) => {
-        const key = `d${String(i+1).padStart(2,'0')}`;
-        const code = shift[key];
+      const matchCode = (code) => {
         if (!code || code === 'EMPTY') return false;
         const g = masters.gyomuMap[code];
         return g ? g.busho_code === currentFilter : code === currentFilter;
+      };
+      const hasGyomu = Array.from({length: daysInMonth}, (_, i) => {
+        const key = `d${String(i+1).padStart(2,'0')}`;
+        return matchCode(shift[key]) || matchCode(shift[key + 'b']);
       }).some(Boolean);
       return !hasBusho && !hasGyomu;
     }
@@ -932,14 +945,16 @@
       const dayNames = ['sun','mon','tue','wed','thu','fri','sat'];
       for (let d = 1; d <= daysInMonth; d++) {
         const wd = new Date(year, month - 1, d).getDay();
-        const baseKey = dayNames[wd] + '_gyomu';
         const key = `d${String(d).padStart(2,'0')}`;
-        const sel = document.getElementById(`sel_${staffCode}_${key}`);
-        if (sel) {
-          sel.value = data[baseKey] || '';
-          if (!changedCells[staffCode]) changedCells[staffCode] = {};
-          changedCells[staffCode][key] = true;
-        }
+        const pairs = [[dayNames[wd] + '_gyomu', key], [dayNames[wd] + '_gyomu_b', key + 'b']];
+        pairs.forEach(([baseKey, k]) => {
+          const sel = document.getElementById(`sel_${staffCode}_${k}`);
+          if (sel) {
+            sel.value = data[baseKey] || '';
+            if (!changedCells[staffCode]) changedCells[staffCode] = {};
+            changedCells[staffCode][k] = true;
+          }
+        });
       }
       changed[staffCode] = true;
       document.getElementById('btn-save').style.display = '';
@@ -952,12 +967,14 @@
       if (!confirm('この社員の今月の業務を、すべて削除しますか？\n※保存するまでは確定しません')) return;
       for (let d = 1; d <= daysInMonth; d++) {
         const key = `d${String(d).padStart(2,'0')}`;
-        const sel = document.getElementById(`sel_${staffCode}_${key}`);
-        if (sel) {
-          sel.value = '';
-          if (!changedCells[staffCode]) changedCells[staffCode] = {};
-          changedCells[staffCode][key] = true;
-        }
+        [key, key + 'b'].forEach(k => {
+          const sel = document.getElementById(`sel_${staffCode}_${k}`);
+          if (sel) {
+            sel.value = '';
+            if (!changedCells[staffCode]) changedCells[staffCode] = {};
+            changedCells[staffCode][k] = true;
+          }
+        });
       }
       changed[staffCode] = true;
       document.getElementById('btn-save').style.display = '';
@@ -973,14 +990,16 @@
 
       for (let d = 1; d <= daysInMonth; d++) {
         const key = `d${String(d).padStart(2,'0')}`;
-        if (cellChanged[key]) {
-          // ドロップダウンで実際に操作したセル
-          const sel = document.getElementById(`sel_${staffCode}_${key}`);
-          data[key] = sel ? (sel.value || null) : (current[key] || null);
-        } else {
-          // ドラッグ＆ドロップ変更 or 変更なし → shiftMapの値
-          data[key] = current[key] || null;
-        }
+        [key, key + 'b'].forEach(k => {
+          if (cellChanged[k]) {
+            // ドロップダウンで実際に操作したセル
+            const sel = document.getElementById(`sel_${staffCode}_${k}`);
+            data[k] = sel ? (sel.value || null) : (current[k] || null);
+          } else {
+            // ドラッグ＆ドロップ変更 or 変更なし → shiftMapの値
+            data[k] = current[k] || null;
+          }
+        });
       }
 
       // 既存レコードがあるか確認してから、更新か追加かを判断する
@@ -1038,6 +1057,7 @@
           const wd = new Date(year, month - 1, d).getDay();
           const key = `d${String(d).padStart(2,'0')}`;
           data[key] = base[dayNames[wd] + '_gyomu'] || null;
+          data[key + 'b'] = base[dayNames[wd] + '_gyomu_b'] || null;
         }
         targetRecords.push(data);
       }
@@ -1280,21 +1300,31 @@
         const shift = shiftMap[s.staff_code];
         const rowData = [s.name];
         const codes = [];
+        const codesB = [];
         for (let d = 1; d <= days; d++) {
           const col = `d${String(d).padStart(2,'0')}`;
           codes.push(shift?.[col] || '');
+          codesB.push(shift?.[col + 'b'] || '');
         }
 
         for (let d = 0; d < days; d++) {
           const code = codes[d];
+          const codeB = codesB[d];
           const prevCode = d > 0 ? codes[d - 1] : null;
           const info = getCodeInfo(code);
           // 矢印表示：前日と同じ業務で休日でない場合は→
+          let text;
           if (useArrow && d > 0 && code && code === prevCode && !info.isKyu) {
-            rowData.push('→');
+            text = '→';
           } else {
-            rowData.push(info.name);
+            text = info.name;
           }
+          // 午後（2コマ目）があれば、/区切りで追加表示する
+          if (codeB && codeB !== 'EMPTY') {
+            const infoB = getCodeInfo(codeB);
+            text = text ? `${text}／${infoB.name}` : infoB.name;
+          }
+          rowData.push(text);
         }
 
         const dataRow = sheet.addRow(rowData);
@@ -1318,12 +1348,13 @@
             cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: false };
             cell.font = { color: { argb: 'FF555555' }, size: 9 };
           } else {
-            // 縦書き風：1文字ずつ改行
-            if (cell.value && typeof cell.value === 'string' && cell.value.length > 1) {
+            // 縦書き風：1文字ずつ改行（午前午後の両方が入っている日は、／区切りのまま横表示にする）
+            const hasBothSlots = typeof cell.value === 'string' && cell.value.includes('／');
+            if (cell.value && typeof cell.value === 'string' && cell.value.length > 1 && !hasBothSlots) {
               cell.value = cell.value.split('').join('\n');
             }
             cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
-            cell.font = { ...(cell.font || {}), size: 10 };
+            cell.font = { ...(cell.font || {}), size: hasBothSlots ? 8 : 10 };
           }
           cell.border = { top:{style:'thin'}, bottom:{style:'thin'}, left:{style:'thin'}, right:{style:'thin'} };
 
@@ -1379,6 +1410,95 @@
       a.click();
       URL.revokeObjectURL(url);
     }
+
+    // ===== 空白シフト出力（シフトを組む前に、みんなに希望を確認してもらうための白紙の表）=====
+    async function exportBlankExcel() {
+      if (!currentFilter) { showMsg('所属を選択してください', 'err'); return; }
+      const { year, month } = parseYearMonth(currentYM);
+      const days = daysInMonth;
+      const workbook = new ExcelJS.Workbook();
+      const sheetLabel = `${year}年${month}月`;
+      const bushoName = masters.bushoMap[currentFilter]?.busho_name || currentFilter;
+      const sheet = workbook.addWorksheet(`${sheetLabel} ${bushoName}`);
+      const weekNames = ['日','月','火','水','木','金','土'];
+
+      sheet.getColumn(1).width = 14;
+      for (let d = 1; d <= days; d++) sheet.getColumn(d + 1).width = 5.5;
+
+      const titleText = `${sheetLabel} シフト確認用（希望記入） - ${bushoName}`;
+      const titleRow = sheet.addRow([titleText, ...Array(days).fill('')]);
+      sheet.mergeCells(1, 1, 1, days + 1);
+      titleRow.getCell(1).font = { bold: true, size: 13 };
+      titleRow.getCell(1).alignment = { horizontal: 'center', vertical: 'middle' };
+      titleRow.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8F5E9' } };
+      titleRow.height = 22;
+
+      const hdrData = ['氏名'];
+      for (let d = 1; d <= days; d++) {
+        const wd = new Date(year, month - 1, d).getDay();
+        hdrData.push(`${d}\n${weekNames[wd]}`);
+      }
+      const headerRow = sheet.addRow(hdrData);
+      headerRow.height = 28;
+      headerRow.eachCell((cell, colNum) => {
+        cell.font = { bold: true, size: 9 };
+        cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD9D9D9' } };
+        cell.border = { top:{style:'thin'}, bottom:{style:'thin'}, left:{style:'thin'}, right:{style:'thin'} };
+        if (colNum > 1) {
+          const wd = new Date(year, month - 1, colNum - 1).getDay();
+          if (wd === 0) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFC0CB' } };
+          if (wd === 6) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFADD8E6' } };
+        }
+      });
+
+      // 対象社員（画面と同じ絞り込み・並び順。中身のマスは空欄のまま）
+      const targetStaffs = staffRows
+        .filter(s => !isFilterHidden(s))
+        .sort((a, b) => {
+          const junA = hyojiJunMap[currentFilter]?.[a.staff_code] ?? 9999;
+          const junB = hyojiJunMap[currentFilter]?.[b.staff_code] ?? 9999;
+          if (junA !== junB) return junA - junB;
+          return a.staff_code.localeCompare(b.staff_code);
+        });
+
+      targetStaffs.forEach(s => {
+        const rowData = [s.name, ...Array(days).fill('')];
+        const dataRow = sheet.addRow(rowData);
+        dataRow.height = 32;
+
+        const nameCell = dataRow.getCell(1);
+        nameCell.alignment = { horizontal: 'center', vertical: 'middle' };
+        nameCell.border = { top:{style:'thin'}, bottom:{style:'thin'}, left:{style:'thin'}, right:{style:'thin'} };
+
+        for (let d = 0; d < days; d++) {
+          const cell = dataRow.getCell(d + 2);
+          const wd = new Date(year, month - 1, d + 1).getDay();
+          cell.border = { top:{style:'thin'}, bottom:{style:'thin'}, left:{style:'thin'}, right:{style:'thin'} };
+          if (wd === 0) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF0F0' } };
+          if (wd === 6) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF0F0FF' } };
+        }
+      });
+
+      sheet.pageSetup = {
+        paperSize: 9,
+        orientation: 'landscape',
+        fitToPage: true,
+        fitToWidth: 1,
+        fitToHeight: 0,
+        margins: { left: 0.5, right: 0.5, top: 0.5, bottom: 0.5, header: 0.3, footer: 0.3 },
+      };
+
+      const buf = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `シフト確認用_${year}${String(month).padStart(2,'0')}_${bushoName}.xlsx`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
     // ===== 表示順設定 =====
     let hyojiJunDialogList = [];
     let hyojiJunSelectedIdx = null;

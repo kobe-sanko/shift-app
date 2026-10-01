@@ -30,6 +30,8 @@
     table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,0.1); font-size: 0.82rem; table-layout: fixed; }
     th { background: #dde; padding: 7px 4px; text-align: center; border-bottom: 2px solid #bbc; }
     td { padding: 5px 3px; text-align: center; border-bottom: 1px solid #f0f0f0; cursor: pointer; overflow: hidden; }
+    td.slot-a { border-left: 2px solid #bbc; }
+    td.slot-b { background: #fafcff; }
     tr.data-row:hover td { background: #f0f8ff; }
     tr.selected td { background: #fff3cd !important; font-weight: bold; }
     tr.hidden { display: none; }
@@ -108,7 +110,7 @@
           <tr>
             <th style="width:90px">社員コード</th>
             <th style="width:120px">氏名</th>
-            <th>日</th><th>月</th><th>火</th><th>水</th><th>木</th><th>金</th><th>土</th>
+            <th colspan="2">日</th><th colspan="2">月</th><th colspan="2">火</th><th colspan="2">水</th><th colspan="2">木</th><th colspan="2">金</th><th colspan="2">土</th>
           </tr>
         </thead>
         <tbody id="tbody"></tbody>
@@ -132,6 +134,12 @@
   <script>
     const DAYS = ['sun','mon','tue','wed','thu','fri','sat'];
     const DAY_LABELS = ['日','月','火','水','木','金','土'];
+
+    // dayKeyは画面上では 'sun'（午前＝1コマ目）/ 'sun_b'（午後＝2コマ目）のように使う。
+    // 実際のデータベースの列名（sun_gyomu / sun_gyomu_b）に変換する
+    function gyomuCol(dayKey) {
+      return dayKey.endsWith('_b') ? dayKey.slice(0, -2) + '_gyomu_b' : dayKey + '_gyomu';
+    }
 
     let masters = {};
     let staffRows = [];
@@ -262,7 +270,7 @@
         if (!canEdit()) return;
         const staffCode = td.dataset.staff;
         const dayKey = td.dataset.key;
-        const code = (baseMap[staffCode] || {})[dayKey + '_gyomu'];
+        const code = (baseMap[staffCode] || {})[gyomuCol(dayKey)];
         if (!code || code === 'EMPTY') { showMsg('空のマスはコピーできません', 'err'); return; }
         selectCopySource(code, getGyomuLabel(code));
       });
@@ -329,18 +337,19 @@
 
     // ドロップされた内容を、その場でデータベースに保存する（1曜日分だけ）
     async function applyDrop(staffCode, dayKey, gyomuCode) {
+      const col = gyomuCol(dayKey);
       const exists = baseMap[staffCode];
       let error;
       if (exists) {
-        ({ error } = await sb.from('shift_base_gyomu').update({ [dayKey + '_gyomu']: gyomuCode }).eq('staff_code', staffCode));
+        ({ error } = await sb.from('shift_base_gyomu').update({ [col]: gyomuCode }).eq('staff_code', staffCode));
       } else {
         const initData = { staff_code: staffCode };
-        DAYS.forEach(d => { initData[d + '_gyomu'] = d === dayKey ? gyomuCode : null; });
+        DAYS.forEach(d => { initData[d + '_gyomu'] = d === dayKey ? gyomuCode : null; initData[d + '_gyomu_b'] = (d + '_b') === dayKey ? gyomuCode : null; });
         ({ error } = await sb.from('shift_base_gyomu').insert(initData));
       }
       if (error) { showMsg('保存に失敗しました: ' + error.message, 'err'); return; }
       if (!baseMap[staffCode]) baseMap[staffCode] = { staff_code: staffCode };
-      baseMap[staffCode][dayKey + '_gyomu'] = gyomuCode;
+      baseMap[staffCode][col] = gyomuCode;
       showMsg('保存しました', 'ok');
       renderTable();
     }
@@ -462,15 +471,15 @@
         if (currentFilter) {
           const base = baseMap[s.staff_code] || {};
           const hasBusho = s.busho_code === currentFilter;
-          const hasGyomu = DAYS.some(d => {
-            const code = base[d + '_gyomu'];
+          const matchCode = (code) => {
             if (!code || code === 'EMPTY') return false;
             // 業務コードの場合：その業務の所属コードで判定
             const g = masters.gyomuMap[code];
             if (g) return g.busho_code === currentFilter;
             // 所属コードそのものの場合
             return code === currentFilter;
-          });
+          };
+          const hasGyomu = DAYS.some(d => matchCode(base[d + '_gyomu']) || matchCode(base[d + '_gyomu_b']));
           isHidden = !hasBusho && !hasGyomu;
         }
 
@@ -483,7 +492,8 @@
 
         let html = `<td>${s.staff_code}</td><td>${s.name || ''}</td>`;
         DAYS.forEach(d => {
-          html += `<td class="shift-td" data-staff="${s.staff_code}" data-key="${d}">${getBadgeHtml(base[d + '_gyomu'])}</td>`;
+          html += `<td class="shift-td slot-a" data-staff="${s.staff_code}" data-key="${d}">${getBadgeHtml(base[d + '_gyomu'])}</td>`;
+          html += `<td class="shift-td slot-b" data-staff="${s.staff_code}" data-key="${d}_b">${getBadgeHtml(base[d + '_gyomu_b'])}</td>`;
         });
         tr.innerHTML = html;
         tbody.appendChild(tr);
@@ -496,6 +506,7 @@
           let editHtml = `<td colspan="2" style="text-align:left;padding-left:8px;font-size:0.8rem;color:#888">▲ 編集中</td>`;
           DAYS.forEach((d, i) => {
             editHtml += `<td>${buildSelectHtml('sel_' + d, s.staff_code, base[d + '_gyomu'] || '')}</td>`;
+            editHtml += `<td>${buildSelectHtml('sel_' + d + '_b', s.staff_code, base[d + '_gyomu_b'] || '')}</td>`;
           });
           if (isHidden) editTr.classList.add('hidden');
           editTr.innerHTML = editHtml;
@@ -505,7 +516,7 @@
           const btnTr = document.createElement('tr');
           btnTr.className = 'btn-row';
           btnTr.innerHTML = `
-            <td colspan="9" style="text-align:left">
+            <td colspan="16" style="text-align:left">
               <button class="btn-copy" onclick="copyFromSun()">日曜日を全曜日にコピー</button>
               <button class="btn-save" onclick="saveRow('${s.staff_code}')" style="margin-left:8px">保存</button>
             </td>`;
@@ -560,9 +571,12 @@
 
     function copyFromSun() {
       const sunVal = document.getElementById('sel_sun').value;
+      const sunValB = document.getElementById('sel_sun_b').value;
       DAYS.forEach(d => {
         const sel = document.getElementById(`sel_${d}`);
         if (sel) sel.value = sunVal;
+        const selB = document.getElementById(`sel_${d}_b`);
+        if (selB) selB.value = sunValB;
       });
     }
 
@@ -572,6 +586,8 @@
       DAYS.forEach(d => {
         const sel = document.getElementById(`sel_${d}`);
         data[d + '_gyomu'] = sel ? (sel.value || null) : null;
+        const selB = document.getElementById(`sel_${d}_b`);
+        data[d + '_gyomu_b'] = selB ? (selB.value || null) : null;
       });
       const exists = baseMap[staffCode];
       let error;
