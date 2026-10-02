@@ -1373,10 +1373,56 @@
           return a.staff_code.localeCompare(b.staff_code);
         });
 
+      // 1つの日付セルに、見た目・色を設定する共通処理
+      // （午前午後がある日は、午前・午後それぞれ別のセルに対してこれを呼ぶことで、
+      // セルの境界線がそのまま午前午後の間の「線」になる）
+      function styleDayCell(cell, code, info, isArrow, wd) {
+        if (isArrow) {
+          cell.alignment = { horizontal: 'center', vertical: 'middle' };
+          cell.font = { color: { argb: 'FF555555' }, size: 9 };
+        } else {
+          // 縦書き風：1文字ずつ改行
+          if (cell.value && typeof cell.value === 'string' && cell.value.length > 1) {
+            cell.value = cell.value.split('').join('\n');
+          }
+          cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+          cell.font = { size: 10 };
+        }
+        cell.border = { top:{style:'thin'}, bottom:{style:'thin'}, left:{style:'thin'}, right:{style:'thin'} };
+
+        if (info.isKyu) {
+          // 休日・有休・健診：赤文字グレー背景
+          cell.font = { color: { argb: 'FFCC0000' }, bold: true, size: 11 };
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE0E0E0' } };
+        } else if (isArrow) {
+          // 矢印：休日以外は色を付けない（現場の要望のため）
+          cell.font = { color: { argb: 'FF555555' }, size: 11 };
+        } else if (info.color) {
+          cell.font = { bold: true, size: 11 };
+          // 業務ごとの色：Excel出力2（矢印表示）だけは、休み以外は色を付けない（現場の要望のため）
+          if (!useArrow) {
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: info.color } };
+          }
+        } else {
+          // 土日の色
+          if (wd === 0) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF0F0' } };
+          if (wd === 6) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF0F0FF' } };
+        }
+
+        // 遅番はオレンジ枠
+        if (chibanCodes.has(code)) {
+          cell.border = {
+            top:{style:'medium', color:{argb:'FFE67E22'}},
+            bottom:{style:'medium', color:{argb:'FFE67E22'}},
+            left:{style:'medium', color:{argb:'FFE67E22'}},
+            right:{style:'medium', color:{argb:'FFE67E22'}},
+          };
+        }
+      }
+
       // データ行
       targetStaffs.forEach(s => {
         const shift = shiftMap[s.staff_code];
-        const rowData = [s.name];
         const codes = [];
         const codesB = [];
         for (let d = 1; d <= days; d++) {
@@ -1385,88 +1431,58 @@
           codesB.push(shift?.[col + 'b'] || '');
         }
 
-        for (let d = 0; d < days; d++) {
-          const code = codes[d];
+        // 午前と別の午後業務がある日が1日でもあれば、この社員は2行（午前行・午後行）に分けて出力する。
+        // そうすることで、セルの境界線がそのまま午前午後の間の線になる
+        const dayInfos = codes.map((code, d) => {
           const codeB = codesB[d];
-          const prevCode = d > 0 ? codes[d - 1] : null;
           const info = getCodeInfo(code);
-          // 矢印表示：前日と同じ業務で休日でない場合は→
-          let text;
-          if (useArrow && d > 0 && code && code === prevCode && !info.isKyu) {
-            text = '→';
-          } else {
-            text = info.name;
-          }
-          // 午後（2コマ目）があれば、改行して下の行に追加表示する（午前・午後を縦に並べる）。
-          // 午前が空欄で午後だけのときも「－」を入れて2行にし、午後だけの業務だと分かるようにする
-          if (codeB && codeB !== 'EMPTY') {
-            const infoB = getCodeInfo(codeB);
-            text = `${text || '－'}\n${infoB.name}`;
-          }
-          rowData.push(text);
-        }
+          const infoB = (codeB && codeB !== 'EMPTY') ? getCodeInfo(codeB) : null;
+          const hasDistinctB = !!(infoB && infoB.name !== info.name);
+          return { code, codeB, info, infoB, hasDistinctB };
+        });
+        const needsTwoRows = dayInfos.some(di => di.hasDistinctB);
 
-        const dataRow = sheet.addRow(rowData);
-        dataRow.height = 55;
+        const rowDataA = [s.name];
+        const rowDataB = needsTwoRows ? [''] : null;
+        dayInfos.forEach((di, d) => {
+          const prevCode = d > 0 ? codes[d - 1] : null;
+          const isArrow = useArrow && d > 0 && di.code && di.code === prevCode && !di.info.isKyu;
+          const textA = isArrow ? '→' : di.info.name;
+          rowDataA.push(needsTwoRows && !textA ? '－' : textA);
+          if (needsTwoRows) rowDataB.push(di.hasDistinctB ? di.infoB.name : '');
+        });
 
-        // 氏名セル
-        const nameCell = dataRow.getCell(1);
+        const dataRowA = sheet.addRow(rowDataA);
+        const dataRowB = needsTwoRows ? sheet.addRow(rowDataB) : null;
+        dataRowA.height = 55;
+        if (dataRowB) dataRowB.height = 55;
+
+        // 氏名セル（2行に分けた場合は縦に結合する）
+        if (needsTwoRows) sheet.mergeCells(dataRowA.number, 1, dataRowB.number, 1);
+        const nameCell = dataRowA.getCell(1);
         nameCell.alignment = { horizontal: 'center', vertical: 'middle' };
         nameCell.border = { top:{style:'thin'}, bottom:{style:'thin'}, left:{style:'thin'}, right:{style:'thin'} };
 
         // 日付セルに色付け
-        for (let d = 0; d < days; d++) {
-          const cell = dataRow.getCell(d + 2);
-          const code = codes[d];
+        dayInfos.forEach((di, d) => {
+          const colIdx = d + 2;
           const wd = new Date(year, month - 1, d + 1).getDay();
-          const info = getCodeInfo(code);
           const prevCode = d > 0 ? codes[d - 1] : null;
-          const isArrow = useArrow && d > 0 && code && code === prevCode && !info.isKyu;
+          const isArrow = useArrow && d > 0 && di.code && di.code === prevCode && !di.info.isKyu;
 
-          if (isArrow) {
-            const hasBothSlots = typeof cell.value === 'string' && cell.value.includes('\n');
-            cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: hasBothSlots };
-            cell.font = { color: { argb: 'FF555555' }, size: 9 };
-          } else {
-            // 縦書き風：1文字ずつ改行（午前午後の両方が入っている日は、すでに改行済みなのでそのまま横書きで表示する）
-            const hasBothSlots = typeof cell.value === 'string' && cell.value.includes('\n');
-            if (cell.value && typeof cell.value === 'string' && cell.value.length > 1 && !hasBothSlots) {
-              cell.value = cell.value.split('').join('\n');
+          const cellA = dataRowA.getCell(colIdx);
+          styleDayCell(cellA, di.code, di.info, isArrow, wd);
+
+          if (needsTwoRows) {
+            if (di.hasDistinctB) {
+              const cellB = dataRowB.getCell(colIdx);
+              styleDayCell(cellB, di.codeB, di.infoB, false, wd);
+            } else {
+              // この日は午前のみ（または空欄）なので、午前午後2行分をまとめて1つのセルにする
+              sheet.mergeCells(dataRowA.number, colIdx, dataRowB.number, colIdx);
             }
-            cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
-            cell.font = { ...(cell.font || {}), size: hasBothSlots ? 9 : 10 };
           }
-          cell.border = { top:{style:'thin'}, bottom:{style:'thin'}, left:{style:'thin'}, right:{style:'thin'} };
-
-          if (info.isKyu) {
-            // 休日・有休・健診：赤文字グレー背景
-            cell.font = { color: { argb: 'FFCC0000' }, bold: true, size: 11 };
-            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE0E0E0' } };
-          } else if (isArrow) {
-            // 矢印：休日以外は色を付けない（現場の要望のため）
-            cell.font = { color: { argb: 'FF555555' }, size: 11 };
-          } else if (info.color) {
-            cell.font = { bold: true, size: 11 };
-            // 業務ごとの色：Excel出力2（矢印表示）だけは、休み以外は色を付けない（現場の要望のため）
-            if (!useArrow) {
-              cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: info.color } };
-            }
-          } else {
-            // 土日の色
-            if (wd === 0) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF0F0' } };
-            if (wd === 6) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF0F0FF' } };
-          }
-
-          // 遅番はオレンジ枠
-          if (chibanCodes.has(code)) {
-            cell.border = {
-              top:{style:'medium', color:{argb:'FFE67E22'}},
-              bottom:{style:'medium', color:{argb:'FFE67E22'}},
-              left:{style:'medium', color:{argb:'FFE67E22'}},
-              right:{style:'medium', color:{argb:'FFE67E22'}},
-            };
-          }
-        }
+        });
       });
 
       // A4横・1ページに収める印刷設定
