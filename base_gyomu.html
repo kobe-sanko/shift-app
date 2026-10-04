@@ -181,6 +181,11 @@
         opt.textContent = b.busho_name;
         sel.appendChild(opt);
       });
+      // 休日・有休・健診・講習だけに絞り込みたいとき用
+      const kyujitsuOpt = document.createElement('option');
+      kyujitsuOpt.value = '__KYUJITSU__';
+      kyujitsuOpt.textContent = '休みなど';
+      sel.appendChild(kyujitsuOpt);
     }
 
     // ===== 業務リスト（左側）=====
@@ -201,9 +206,10 @@
       emptyItem.addEventListener('contextmenu', e => { e.preventDefault(); if (canEdit()) selectCopySource('', '空白'); });
       panel.appendChild(emptyItem);
 
-      // 業務一覧（プルダウンで選んだ所属だけに絞り込む。空欄なら全部）
+      // 業務一覧（プルダウンで選んだ所属だけに絞り込む。空欄なら全部。
+      // 「休みなど」を選んだときは、通常の業務は出さず、下の休日などだけを表示する）
       const listMode = document.getElementById('gyomu-list-mode')?.value || '';
-      const gyomuTargets = (masters.gyomus || [])
+      const gyomuTargets = listMode === '__KYUJITSU__' ? [] : (masters.gyomus || [])
         .filter(g => g.is_active !== false)
         .filter(g => !listMode || g.busho_code === listMode)
         .sort((a, b) => a.gyomu_code.localeCompare(b.gyomu_code, undefined, { numeric: true }));

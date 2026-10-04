@@ -39,7 +39,8 @@
   <div id="msg" class="msg"></div>
 
   <div class="desc">
-    📋 所属ごとに、1か月分の「必要台数」と「そのうち助手あり台数」を日別に登録します。盤面では、この台数に届いていない行が赤枠で強調されます。
+    📋 所属ごとに、1か月分の「必要台数」と「そのうち助手あり台数」を日別に登録します。盤面では、この台数に届いていない行が赤枠で強調されます。<br>
+    🌙 「遅番台数」は、助手あり・助手なしそれぞれの上から何行分が遅番かを、日ごとに指定します（空欄や0なら遅番なし）。
   </div>
 
   <div class="top-bar">
@@ -58,6 +59,8 @@
         <tbody>
           <tr id="car-row"><td class="row-label">必要台数</td></tr>
           <tr id="jyoshu-row"><td class="row-label">助手あり台数</td></tr>
+          <tr id="night-jyoshu-row"><td class="row-label">🌙遅番台数（助手あり）</td></tr>
+          <tr id="night-muyoshu-row"><td class="row-label">🌙遅番台数（助手なし）</td></tr>
         </tbody>
       </table>
     </div>
@@ -154,14 +157,20 @@
 
       let carHtml = '<td class="row-label">必要台数</td>';
       let jyoshuHtml = '<td class="row-label">助手あり台数</td>';
+      let nightJyoshuHtml = '<td class="row-label">🌙遅番台数（助手あり）</td>';
+      let nightMuyoshuHtml = '<td class="row-label">🌙遅番台数（助手なし）</td>';
       for (let d = 1; d <= daysInMonth; d++) {
         const dateStr = `${currentYM}${String(d).padStart(2,'0')}`;
         const rec = byDay[dateStr];
         carHtml += `<td><input type="number" min="0" class="qty-input" id="car_${d}" value="${rec?.need_car ?? ''}"></td>`;
         jyoshuHtml += `<td><input type="number" min="0" class="qty-input" id="jyoshu_${d}" value="${rec?.need_jyoshu ?? ''}"></td>`;
+        nightJyoshuHtml += `<td><input type="number" min="0" class="qty-input" id="night_jyoshu_${d}" value="${rec?.night_jyoshu_count ?? ''}"></td>`;
+        nightMuyoshuHtml += `<td><input type="number" min="0" class="qty-input" id="night_muyoshu_${d}" value="${rec?.night_muyoshu_count ?? ''}"></td>`;
       }
       document.getElementById('car-row').innerHTML = carHtml;
       document.getElementById('jyoshu-row').innerHTML = jyoshuHtml;
+      document.getElementById('night-jyoshu-row').innerHTML = nightJyoshuHtml;
+      document.getElementById('night-muyoshu-row').innerHTML = nightMuyoshuHtml;
       document.getElementById('main-table').style.display = '';
       // 閲覧のみモードでは、新しく作られた入力欄もあわせて無効にする
       if (!canEdit()) {
@@ -181,18 +190,22 @@
         const dateStr = `${currentYM}${String(d).padStart(2,'0')}`;
         const carVal = document.getElementById(`car_${d}`).value;
         const jyoshuVal = document.getElementById(`jyoshu_${d}`).value;
+        const nightJyoshuVal = document.getElementById(`night_jyoshu_${d}`).value;
+        const nightMuyoshuVal = document.getElementById(`night_muyoshu_${d}`).value;
         const existing = byDay[dateStr];
 
-        if (carVal === '' && jyoshuVal === '') {
+        if (carVal === '' && jyoshuVal === '' && nightJyoshuVal === '' && nightMuyoshuVal === '') {
           if (existing) deletes.push(existing.id);
           continue;
         }
         const need_car = carVal === '' ? 0 : parseInt(carVal);
         const need_jyoshu = jyoshuVal === '' ? 0 : parseInt(jyoshuVal);
+        const night_jyoshu_count = nightJyoshuVal === '' ? 0 : parseInt(nightJyoshuVal);
+        const night_muyoshu_count = nightMuyoshuVal === '' ? 0 : parseInt(nightMuyoshuVal);
         if (existing) {
-          upserts.push({ id: existing.id, busho_code: currentBusho, date: dateStr, need_car, need_jyoshu });
+          upserts.push({ id: existing.id, busho_code: currentBusho, date: dateStr, need_car, need_jyoshu, night_jyoshu_count, night_muyoshu_count });
         } else {
-          upserts.push({ busho_code: currentBusho, date: dateStr, need_car, need_jyoshu });
+          upserts.push({ busho_code: currentBusho, date: dateStr, need_car, need_jyoshu, night_jyoshu_count, night_muyoshu_count });
         }
       }
 

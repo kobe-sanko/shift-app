@@ -62,6 +62,24 @@
     .ampm-badge { display: inline-block; font-size: 0.6rem; color: #fff; border-radius: 3px; padding: 0 3px; margin-right: 3px; line-height: 1.3; }
     .ampm-badge.am { background: #5b9bd5; }
     .ampm-badge.pm { background: #e67e22; }
+    .add-row-btn { font-size: 0.68rem; color: #2980b9; background: #eaf3fd; border: 1px dashed #4a90e2; border-radius: 4px; padding: 2px 8px; cursor: pointer; }
+    .add-row-btn:hover { background: #d8ebfd; }
+    .add-row-btn:disabled { opacity: 0.5; cursor: default; }
+    .add-row-btn-title { font-size: 0.68rem; color: inherit; background: rgba(255,255,255,0.35); border: 1px solid rgba(255,255,255,0.7); border-radius: 3px; padding: 0 5px; margin-left: 6px; cursor: pointer; }
+    .add-row-btn-title:hover { background: rgba(255,255,255,0.55); }
+    .add-row-btn-title:disabled { opacity: 0.4; cursor: default; }
+    .busho-header-name { display: block; text-align: center; }
+    .busho-header-right {
+      position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+      display: flex; align-items: center; gap: 4px;
+    }
+    .busho-collapse-mark { font-size: 0.7rem; opacity: 0.85; flex-shrink: 0; }
+    .busho-header-yasumi {
+      font-size: 0.68rem; font-weight: bold; color: #e74c3c; background: white;
+      border-radius: 3px; padding: 1px 6px; flex-shrink: 0; white-space: nowrap;
+    }
+    .busho-card.collapsed { opacity: 0.75; }
+    .busho-card.collapsed .busho-header { border-radius: 4px; }
     .list-item.car { border-left: 3px solid #e67e22; background: #fffbf0; }
     .list-item.haken { border-left: 3px solid #e91e9c; background: #fff0f8; }
 
@@ -106,12 +124,18 @@
       background: white; border-radius: 6px; position: relative;
       box-shadow: 0 1px 4px rgba(0,0,0,0.15); overflow: hidden;
     }
+    /* 上位部門（グループ）が設定されている所属は、左端に部門の色の帯を付けて、
+       同じ部門のカード同士がひと目で分かるようにする */
+    .busho-card.has-group { border-left: 6px solid var(--group-color, #888); }
+    .busho-header-group {
+      font-size: 0.62rem; opacity: 0.85; margin-left: 5px;
+    }
     /* 定休日（曜日）や特別休業日で、かつ誰も配置されていないときに出す「お休み」リボン */
     .yasumi-ribbon {
       position: absolute; top: 11px; right: -30px; width: 116px;
       transform: rotate(45deg); background: #e74c3c; color: white;
       text-align: center; font-size: 0.7rem; font-weight: bold;
-      padding: 3px 0; box-shadow: 0 1px 3px rgba(0,0,0,0.3); z-index: 5;
+      padding: 3px 0; box-shadow: 0 1px 3px rgba(0,0,0,0.3); z-index: 20;
       letter-spacing: 3px; pointer-events: none;
       white-space: nowrap; overflow: hidden;
     }
@@ -165,6 +189,8 @@
     .cell-box.quota-required { border: 2px solid #e74c3c; }
     /* 必要台数マスタで設定した台数に届いていない枠を目立たせる（未入力の問題箇所） */
     .cell-box.quota-missing { outline: 2px solid #e74c3c; outline-offset: -2px; }
+    /* 必要台数の範囲外で、「助手はいるのに運転手がいない」等の注意喚起。赤ではなく黄色で区別する */
+    .cell-box.advisory-missing { outline: 2px solid #f1c40f; outline-offset: -2px; }
     /* 必要台数を超えた枠に配置されている場合（研修などの目的）に、区別できるよう色を付ける */
     .cell-box.over-quota { background: #eaf2fb; border-color: #7fa8d9; }
     .cell-box.over-quota.filled { background: #d9e8fb; }
@@ -406,6 +432,38 @@
     let staffFilterMode = 'relevant'; // 'relevant'=関連のみ / 'all'=全員
     let carFilterMode = 'relevant';   // 'relevant'=関連のみ / 'all'=全車両
     let leftPanelBushoFilter = '';    // 左パネル上部の所属プルダウン（空欄なら絞り込みなし。社員・車両の両方に反映）
+    // 普段使わない所属を盤面から一時的に非表示にする設定（この端末のブラウザだけに保存。設定画面は触らない）
+    let hiddenBushoCodes = new Set();
+    try {
+      hiddenBushoCodes = new Set(JSON.parse(localStorage.getItem('banmen_hidden_bushos') || '[]'));
+    } catch (e) { hiddenBushoCodes = new Set(); }
+
+    // 上位部門（例：宅配）ごとに色を割り当てる（同じ部門のカードに同じ色の帯を付けるため）
+    let groupColorMap = {};
+    const GROUP_COLOR_PALETTE = ['#8e44ad', '#16a085', '#d35400', '#2980b9', '#c0392b', '#27ae60', '#f39c12', '#7f8c8d'];
+    function buildGroupColorMap() {
+      groupColorMap = {};
+      const groupNames = [...new Set((masters.bushos || []).map(b => b.group_name).filter(v => v))];
+      groupNames.forEach((g, i) => { groupColorMap[g] = GROUP_COLOR_PALETTE[i % GROUP_COLOR_PALETTE.length]; });
+    }
+
+    // 「ローソン1」「自転車1」のように、所属名＋数字で終わる業務名を自動で「運転」と同じ扱いにするための
+    // 正規表現を作る。対象は「盤面専用」にしている所属の名前（＝流通の下の5つなど）。
+    // これにより、今後6つ目の所属を登録しても、コードを書き直さず自動で対応できる。
+    function escapeRegex(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+    function buildDriverRolePattern() {
+      const extraNames = (masters.bushos || []).filter(b => b.is_banmen_only).map(b => b.busho_name);
+      const words = ['運転', '助手', ...extraNames].map(escapeRegex);
+      return new RegExp('^(' + words.join('|') + ')(\\d+)$');
+    }
+
+    // カードのタイトルをクリックして、その所属を畳んだり開いたりする（タイトルは常に残る）
+    function toggleBushoCollapse(bushoCode) {
+      if (hiddenBushoCodes.has(bushoCode)) hiddenBushoCodes.delete(bushoCode);
+      else hiddenBushoCodes.add(bushoCode);
+      localStorage.setItem('banmen_hidden_bushos', JSON.stringify([...hiddenBushoCodes]));
+      buildBoard();
+    }
     let todayShiftStaffCodes = new Set(); // 今日の業務シフトに何らかの登録がある社員コード（盤面に自動配置されない種類の登録も含む）
     let staffOtherBushoColor = {}; // staff_code → 自分の所属とは違う所属の業務が今日入っている場合、その所属の色（左パネルの名前の色付け用）
     let leftPanelBushoSelectBuilt = false;
@@ -415,12 +473,14 @@
     let senzokuBushoCode = null; // 「専属」所属のコード（浮いた人を一時的に置く所属。車両の関連判定や車検カードから除外する）
     let dialogResolve = null;
     let gyomuReverseMap = {}; // bushoCode|gyomuName → gyomu_code（業務シフト同期用）
+    let gyomuRoleMap = {};    // bushoCode|field|rowNo や bushoCode|倉庫 → gyomu_code（「ローソン1」のような独自名でも、役割から業務コードを見つけられるようにする）
     let currentDayCol = '';   // その日のd列名（d01〜d31）
     let currentLoadId = 0;    // 日付を素早く切り替えたときに、古い読み込みの結果を無視するための番号
 
     // ===== 初期化 =====
     async function init() {
       masters = await loadMasters();
+      buildGroupColorMap();
       buildLeftPanelBushoSelect();
       applyReadOnlyIfNeeded();
       window.addEventListener('resize', () => { updateCompleteBtn(); applyMobileLockIfNeeded(); });
@@ -550,7 +610,7 @@
         sb.from('shift_gyomu_shift').select(`staff_code, ${dayCol}, ${dayColB}`).eq('yearmonth', yearMonth),
         sb.from('shift_busho_tekisei').select('staff_code, busho_code'),
         sb.from('shift_syaken').select('car_code, memo').eq('date', dateStr),
-        sb.from('shift_car_quota').select('busho_code, need_car, need_jyoshu').eq('date', dateStr),
+        sb.from('shift_car_quota').select('busho_code, need_car, need_jyoshu, night_jyoshu_count, night_muyoshu_count').eq('date', dateStr),
         sb.from('shift_day_status').select('is_complete').eq('date', dateStr).maybeSingle(),
         sb.from('shift_special_holiday').select('busho_code, label').lte('start_date', dateStr).gte('end_date', dateStr),
       ]);
@@ -614,16 +674,36 @@
 
       // 業務シフト同期用：bushoCode|gyomuName → gyomu_code の逆引きマップを構築
       gyomuReverseMap = {};
+      gyomuRoleMap = {};
+      const driverRolePatternForMap = buildDriverRolePattern();
       (gyomuRes.data || []).forEach(g => {
         const key = g.busho_code + '|' + g.gyomu_name;
         gyomuReverseMap[key] = g.gyomu_code;
+        // 「ローソン1」のように、運転・助手以外の独自名でも、役割（driver/jyoshu1）＋行番号で引けるようにする
+        const roleMatch = (g.gyomu_name || '').match(driverRolePatternForMap);
+        if (roleMatch) {
+          const field = roleMatch[1] === '助手' ? 'jyoshu1' : 'driver';
+          gyomuRoleMap[g.busho_code + '|' + field + '|' + roleMatch[2]] = g.gyomu_code;
+        }
+        const storageMatch = (g.gyomu_name || '').match(/(倉庫|事務)$/);
+        if (storageMatch) {
+          gyomuRoleMap[g.busho_code + '|' + storageMatch[1]] = g.gyomu_code;
+        }
       });
       currentDayCol = dayCol;
 
-      // その日の業務シフト（社員コード→業務コード）
-      const dayShiftList = (gyomuShiftRes.data || [])
-        .map(r => ({ staff_code: r.staff_code, gyomu_code: r[dayCol] }))
-        .filter(r => r.gyomu_code && r.gyomu_code !== 'EMPTY');
+      // その日の業務シフト（社員コード→業務コード）。
+      // 午前（dayCol）だけでなく午後（dayColB）の登録も、盤面に反映する対象に含める。
+      // そうしないと、業務シフトで午後だけ登録した内容が盤面に自動で出てこなくなってしまう
+      const dayShiftList = [];
+      (gyomuShiftRes.data || []).forEach(r => {
+        if (r[dayCol] && r[dayCol] !== 'EMPTY') {
+          dayShiftList.push({ staff_code: r.staff_code, gyomu_code: r[dayCol], ampm: 'am' });
+        }
+        if (r[dayColB] && r[dayColB] !== 'EMPTY') {
+          dayShiftList.push({ staff_code: r.staff_code, gyomu_code: r[dayColB], ampm: 'pm' });
+        }
+      });
 
       // 今日の業務シフトに何か登録がある人 → 左パネルの社員リストで「未登録の人」だけを出すために使う。
       // ただし、番号のない「運転」「助手」（今日は働けるが、どこに配置するかまだ決まっていない人）は
@@ -762,15 +842,17 @@
       const soukoJimuGroups = {}; // key: busho_code|gyomu_name → 社員コード配列
 
       const KYUJITSU_MAP = buildKyujitsuMap(masters.bushos);
+      const driverRolePattern = buildDriverRolePattern();
 
-      dayShiftList.forEach(({ staff_code, gyomu_code }) => {
+      dayShiftList.forEach(({ staff_code, gyomu_code, ampm }) => {
         // 休日・有休・健診（901/902/903）→ お休みカードへ（この盤面に関連する所属の人だけ）
         if (KYUJITSU_MAP[gyomu_code]) {
           const staffObj = masters.staffMap[staff_code];
           if (!staffObj || !isStaffRelevant(staffObj)) return;
           const key = 'お休み|' + KYUJITSU_MAP[gyomu_code];
           if (!soukoJimuGroups[key]) soukoJimuGroups[key] = [];
-          soukoJimuGroups[key].push(staff_code);
+          // 午前・午後どちらにも同じ登録がある場合、重複して並べないようにする
+          if (!soukoJimuGroups[key].includes(staff_code)) soukoJimuGroups[key].push(staff_code);
           return;
         }
 
@@ -779,25 +861,44 @@
         const bushoCode = gyomu.busho_code;
         const gyomuName = gyomu.gyomu_name;
 
-        if (gyomuName === '倉庫' || gyomuName === '事務') {
-          // 番号なし → 社員コード順に詰める対象として集める
-          const key = bushoCode + '|' + gyomuName;
+        // 「倉庫」「事務」で終わる業務名（番号なし）は、社員コード順に詰める対象として集める。
+        // 「ローソン倉庫」のように所属名を頭に付けた名前でも、末尾が「倉庫」「事務」なら
+        // 同じ仕組みで自動配置できるようにする（盤面側はカテゴリ名「倉庫」「事務」だけを使う）
+        const storageMatch = gyomuName.match(/(倉庫|事務)$/);
+        if (storageMatch) {
+          const category = storageMatch[1];
+          const key = bushoCode + '|' + category;
           if (!soukoJimuGroups[key]) soukoJimuGroups[key] = [];
-          soukoJimuGroups[key].push(staff_code);
+          if (!soukoJimuGroups[key].includes(staff_code)) soukoJimuGroups[key].push(staff_code);
           return;
         }
 
-        // 運転1〜・助手1〜のような「数字で終わる」業務名のみ配送テーブルへ
-        const m = gyomuName.match(/^(運転|助手)(\d+)$/);
+        // 運転1〜・助手1〜のような「数字で終わる」業務名のみ配送テーブルへ。
+        // 「盤面専用」にしている所属（ローソン・自転車・クチーナ・DC&アルカ・ジャペルなど）の名前＋数字も、
+        // 運転と同じ扱い（配送テーブルの運転手欄に入る）をする。対象の所属一覧はマスタから自動で作る
+        const m = gyomuName.match(driverRolePattern);
         // 番号なしの「運転」「助手」は、今日は働けるがどこに配置するか決まっていない人。
         // 盤面には自動配置せず、左の社員リストに残して手動でドラッグしてもらう（所属名そのものなども同様に対象外）
         if (!m) return;
 
         const kindWord = m[1];
         const rowNo = parseInt(m[2], 10);
-        const field = kindWord === '運転' ? 'driver' : 'jyoshu1';
+        const field = kindWord === '助手' ? 'jyoshu1' : 'driver';
 
-        toInsert.push({ bushoCode, gyomuName: '配送', rowNo, field, staff_code });
+        toInsert.push({ bushoCode, gyomuName: '配送', rowNo, field, staff_code, ampm });
+      });
+
+      // 社員ごとに、今日配置される枠（busho+番号+運転／助手）が何か所あるかを数えておく。
+      // 2か所以上ある人だけ「午前／午後」のタグを付ける（1か所だけの人には付けない）
+      const staffSlotKeys = {}; // staff_code → Set(skey)
+      const entryAmpmByStaffSlot = {}; // staff_code|skey → 'am'/'pm'（午前・午後どちらから来た枠か）
+      toInsert.forEach(({ bushoCode, rowNo, field, staff_code, ampm }) => {
+        const skey = `${bushoCode}|${rowNo}|${field}`;
+        if (!staffSlotKeys[staff_code]) staffSlotKeys[staff_code] = new Set();
+        staffSlotKeys[staff_code].add(skey);
+        const ek = staff_code + '|' + skey;
+        // 同じ枠に午前・午後とも同じ業務が入っている（入力ミス等）場合は「午前」を優先する
+        if (!entryAmpmByStaffSlot[ek] || ampm === 'am') entryAmpmByStaffSlot[ek] = ampm;
       });
 
       // ----- 配送テーブルへの自動配置 -----
@@ -859,9 +960,12 @@
 
         // 重複なし：これまで通り自動配置する
         const staff_code = allCandidates[0];
+        // この人が今日2か所以上に配置される場合だけ、午前／午後のタグを付ける
+        const slotCount = staffSlotKeys[staff_code]?.size || 1;
+        const ampmTag = slotCount > 1 ? (entryAmpmByStaffSlot[staff_code + '|' + skey] || null) : null;
         if (existingRow) {
           if (!existingRow[field]) {
-            fieldUpdates.push({ id: existingRow.id, field, staff_code });
+            fieldUpdates.push({ id: existingRow.id, field, staff_code, ampm: ampmTag });
             if (field === 'driver' && !existingRow.car_code) {
               const linkedCar = getLinkedCar(staff_code);
               if (linkedCar) {
@@ -874,6 +978,9 @@
           const key = bushoCode + '|' + rowNo;
           if (!driverInserts[key]) driverInserts[key] = { busho_code: bushoCode, gyomu_code: '配送', row_no: rowNo };
           driverInserts[key][field] = staff_code;
+          if (['driver', 'jyoshu1', 'jyoshu2'].includes(field)) {
+            driverInserts[key][field + '_ampm'] = ampmTag;
+          }
           if (field === 'driver' && !driverInserts[key].car_code) {
             const linkedCar = getLinkedCar(staff_code);
             if (linkedCar) {
@@ -896,13 +1003,45 @@
       }
 
       // 既存行への補完update（空フィールドに人を追加）
-      for (const { id, field, staff_code } of fieldUpdates) {
-        const { error: updErr } = await sb.from('shift_banmen').update({ [field]: staff_code }).eq('id', id);
+      for (const { id, field, staff_code, ampm } of fieldUpdates) {
+        const updateData = { [field]: staff_code };
+        if (['driver', 'jyoshu1', 'jyoshu2'].includes(field)) {
+          updateData[field + '_ampm'] = ampm || null;
+        }
+        const { error: updErr } = await sb.from('shift_banmen').update(updateData).eq('id', id);
         if (updErr) {
           console.error('フィールド補完の更新に失敗しました', updErr);
         } else {
           const idx = banmenData.findIndex(r => r.id === id);
-          if (idx !== -1) banmenData[idx][field] = staff_code;
+          if (idx !== -1) Object.assign(banmenData[idx], updateData);
+        }
+      }
+
+      // 業務シフトには登録がないのに、盤面にだけ人が残っている枠を自動で片付ける
+      // （昔のテスト配置や消し忘れなど、何らかの理由で業務シフトと食い違ってしまったデータ）。
+      // 運転・助手（番号のある配送の枠）だけが対象。手でドラッグして置いた場合も必ず業務シフトに
+      // 同期されるので、業務シフトに記録がないということは、盤面側だけの古いデータということになる
+      const orphanClears = [];
+      banmenData.forEach(r => {
+        if (r.gyomu_code !== '配送') return;
+        ['driver', 'jyoshu1'].forEach(field => {
+          const staffCode = r[field];
+          if (!staffCode) return;
+          const skey = `${r.busho_code}|${r.row_no}|${field}`;
+          const keys = staffSlotKeys[staffCode];
+          if (!keys || !keys.has(skey)) {
+            orphanClears.push({ id: r.id, field });
+          }
+        });
+      });
+      for (const { id, field } of orphanClears) {
+        const { error: orphanErr } = await sb.from('shift_banmen')
+          .update({ [field]: null, [field + '_ampm']: null }).eq('id', id);
+        if (orphanErr) {
+          console.error('古いデータの片付けに失敗しました', orphanErr);
+        } else {
+          const idx = banmenData.findIndex(r => r.id === id);
+          if (idx !== -1) { banmenData[idx][field] = null; banmenData[idx][field + '_ampm'] = null; }
         }
       }
 
@@ -1110,6 +1249,7 @@
       });
 
       Object.entries(bushoGroups).forEach(([bushoCode, grp]) => {
+        // 普段使わない所属でもカード自体は消さず、タイトルだけ残して折りたたむので、ここでは除外しない
         allCards.push({ type: 'busho', bushoCode, col: grp.col, row: grp.row, hyoji: grp.hyoji, items: grp.items });
       });
 
@@ -1213,27 +1353,38 @@
     // ===== 所属カード =====
     function buildBushoCard(bushoCode, busho, configs) {
       const card = document.createElement('div');
-      card.className = 'busho-card';
+      const isCollapsed = hiddenBushoCodes.has(bushoCode);
+      const groupName = busho?.group_name || '';
+      const groupColor = groupName ? groupColorMap[groupName] : '';
+      card.className = 'busho-card' + (isCollapsed ? ' collapsed' : '') + (groupColor ? ' has-group' : '');
+      if (groupColor) card.style.setProperty('--group-color', groupColor);
 
       const color = busho?.color_h || '#888';
-      card.innerHTML = `<div class="busho-header" style="background:${color};color:${getTextColor(color)}">${busho?.busho_name || bushoCode}</div>`;
+      const header = document.createElement('div');
+      header.className = 'busho-header';
+      header.style.cssText = `background:${color};color:${getTextColor(color)};position:relative;cursor:pointer;`;
+      header.title = isCollapsed ? 'クリックで開く' : 'クリックで畳む（この端末だけ）';
+      header.onclick = () => toggleBushoCollapse(bushoCode);
+      const nameSpan = document.createElement('span');
+      nameSpan.className = 'busho-header-name';
+      nameSpan.textContent = busho?.busho_name || bushoCode;
+      if (groupName) {
+        const groupSpan = document.createElement('span');
+        groupSpan.className = 'busho-header-group';
+        groupSpan.textContent = groupName;
+        nameSpan.appendChild(groupSpan);
+      }
+      header.appendChild(nameSpan);
 
-      const body = document.createElement('div');
-      body.className = 'busho-body';
+      // お休みバッジ・＋1ボタン・三角は、まとめて右端に重ねて配置する（名前の中央位置をずらさないため）
+      const rightGroup = document.createElement('span');
+      rightGroup.className = 'busho-header-right';
 
-      // hyoji_jun順でブロックを並べる
-      configs.sort((a, b) => a.hyoji_jun - b.hyoji_jun).forEach(cfg => {
-        const block = buildGyomuBlock(bushoCode, cfg);
-        body.appendChild(block);
-      });
-
-      card.appendChild(body);
-
-      // 今日がこの所属の「定休日（基本の曜日）」で、かつ誰も配置されていなければ「お休み」リボンを出す
+      // 今日がこの所属の「定休日（基本の曜日）」で、かつ誰も配置されていなければ「お休み」をタイトルに出す
       // （たまに定休日でも出勤することがあるので、誰かいれば表示しない＝登録自体は止めない）
       //
       // 正月休み・盆休みなどの特別休業日は、日付をはっきり指定して登録するものなので、
-      // その日にデータが残っていてもリボンを常に表示する
+      // その日にデータが残っていても常に表示する
       const offWeekdays = (busho?.off_weekdays || '').split(',').filter(v => v !== '');
       const todayWd = String(currentDate.getDay());
       const isRegularOffToday = offWeekdays.includes(todayWd);
@@ -1242,11 +1393,49 @@
         r.busho_code === bushoCode && (r.driver || r.jyoshu1 || r.jyoshu2 || r.car_code)
       );
       if (specialHolidayLabel || (isRegularOffToday && isEmptyToday)) {
-        const ribbonText = specialHolidayLabel || 'お休み';
-        const ribbon = document.createElement('div');
-        ribbon.className = 'yasumi-ribbon' + (ribbonText.length > 2 ? ' long' : '');
-        ribbon.textContent = ribbonText;
-        card.appendChild(ribbon);
+        const yasumiBadge = document.createElement('span');
+        yasumiBadge.className = 'busho-header-yasumi';
+        yasumiBadge.textContent = specialHolidayLabel || 'お休み';
+        rightGroup.appendChild(yasumiBadge);
+      }
+
+      // 配送がある所属は、タイトルの右側・三角の左隣に「＋1」ボタンを置く
+      // （急に車が増えたときに、設定を触らずその場で枠を追加できる）
+      const haisoCfg = configs.find(c => c.gyomu_code === '配送');
+      if (haisoCfg) {
+        const existingRowNos = banmenData
+          .filter(r => r.busho_code === bushoCode && r.gyomu_code === '配送')
+          .map(r => r.row_no);
+        const effectiveRowCount = Math.max(haisoCfg.row_count || 0, ...existingRowNos, 0);
+        const addRowBtn = document.createElement('button');
+        addRowBtn.type = 'button';
+        addRowBtn.textContent = '＋1';
+        addRowBtn.title = 'この所属に、今日だけ枠を1つ追加します';
+        addRowBtn.className = 'add-row-btn-title';
+        addRowBtn.disabled = !canEdit();
+        addRowBtn.onclick = (e) => { e.stopPropagation(); addExtraHaisoRow(bushoCode, effectiveRowCount); };
+        rightGroup.appendChild(addRowBtn);
+      }
+
+      const toggleMark = document.createElement('span');
+      toggleMark.className = 'busho-collapse-mark';
+      toggleMark.textContent = isCollapsed ? '▶' : '▼';
+      rightGroup.appendChild(toggleMark);
+
+      header.appendChild(rightGroup);
+      card.appendChild(header);
+
+      if (!isCollapsed) {
+        const body = document.createElement('div');
+        body.className = 'busho-body';
+
+        // hyoji_jun順でブロックを並べる
+        configs.sort((a, b) => a.hyoji_jun - b.hyoji_jun).forEach(cfg => {
+          const block = buildGyomuBlock(bushoCode, cfg);
+          body.appendChild(block);
+        });
+
+        card.appendChild(body);
       }
 
       return card;
@@ -1259,10 +1448,14 @@
 
       const gyomuName = cfg.gyomu_code;
       const labelClass = gyomuName === '配送' ? 'haiso' : gyomuName === '倉庫' ? 'souko' : 'jimu';
-      block.innerHTML = `<div class="gyomu-label ${labelClass}">${gyomuName}</div>`;
+      const label = document.createElement('div');
+      label.className = `gyomu-label ${labelClass}`;
+      label.textContent = gyomuName;
+      block.appendChild(label);
 
       if (gyomuName === '配送') {
-        block.appendChild(buildHaisoTable(bushoCode, cfg));
+        const { table } = buildHaisoTable(bushoCode, cfg);
+        block.appendChild(table);
       } else {
         block.appendChild(buildPersonGrid(bushoCode, cfg));
       }
@@ -1274,7 +1467,6 @@
     function buildHaisoTable(bushoCode, cfg) {
       const rowCount = cfg.row_count || 0;
       const jyoshuCount = cfg.jyoshu_count || 0;
-      const osobanRow = cfg.osoban_row && cfg.osoban_row !== 'EMPTY' ? parseInt(cfg.osoban_row) : 0;
       const showSmaho = cfg.smaho_flg === true; // スマホ欄：smaho_flgがtrueの所属のみ
 
       const table = document.createElement('table');
@@ -1294,6 +1486,14 @@
       const quota = carQuotaMap[bushoCode];
       const needCar = quota?.need_car || 0;
       const needJyoshu = quota?.need_jyoshu || 0;
+      // 遅番（必要台数マスタで日ごとに指定）：助手ありグループの上からnightJyoshuCount行、
+      // 助手なしグループの上からnightMuyoshuCount行が遅番になる
+      const nightJyoshuCount = quota?.night_jyoshu_count || 0;
+      const nightMuyoshuCount = quota?.night_muyoshu_count || 0;
+      function isOsobanRow(row) {
+        if (row <= needJyoshu) return row <= nightJyoshuCount;
+        return (row - needJyoshu) <= nightMuyoshuCount;
+      }
 
       // 応援登録されている人（午後から）：まず空いている枠に入れて、入りきらない分だけ下に追加する
       // すでにこの所属・業務の運転として盤面に確定している人（車番を設定済みなど）は、
@@ -1328,12 +1528,18 @@
         return tr;
       }
 
-      for (let row = 1; row <= rowCount; row++) {
+      // 設定上の台数に加えて、すでに「＋1台」で追加されている枠があればそれも含めて表示する
+      const existingRowNos = banmenData
+        .filter(r => r.busho_code === bushoCode && r.gyomu_code === '配送')
+        .map(r => r.row_no);
+      const effectiveRowCount = Math.max(rowCount, ...existingRowNos, 0);
+
+      for (let row = 1; row <= effectiveRowCount; row++) {
         const rowData = banmenData.find(r =>
           r.busho_code === bushoCode && r.gyomu_code === '配送' && r.row_no === row
         );
 
-        const isOsoban = osobanRow > 0 && row === osobanRow;
+        const isOsoban = isOsobanRow(row);
 
         // この枠がまったく使われておらず、応援待ちの人がいれば、その枠に応援の人を表示する
         const isRowEmpty = !rowData || (!rowData.driver && !rowData.car_code);
@@ -1354,18 +1560,40 @@
         carBox.classList.add('car-cell');
         // 必要台数の範囲内の枠は、埋まっていても常に赤枠をつける
         if (row <= needCar) carBox.classList.add('quota-required');
-        // 運転手がいるのに車番が空いている枠は、必要台数の範囲外でも目立たせる
-        if ((row <= needCar || rowData?.driver) && !rowData?.car_code) carBox.classList.add('quota-missing');
+        // 必要台数が足りていない（範囲内なのに空欄）→ 赤。範囲外だが運転手がいるのに車番がない→ 注意として黄色
+        if (row <= needCar && !rowData?.car_code) {
+          carBox.classList.add('quota-missing');
+        } else if (row > needCar && rowData?.driver && !rowData?.car_code) {
+          carBox.classList.add('advisory-missing');
+        }
         if (isOverQuota) carBox.classList.add('over-quota');
         carTd.appendChild(carBox);
+        // 「＋1台」で追加した枠が、まだ何も入っていなければ、取り消せるように✕を出す
+        const isExtraRow = row > rowCount && rowData && rowData.id;
+        const isExtraRowEmpty = isExtraRow && !rowData.driver && !rowData.car_code && !rowData.jyoshu1 && !rowData.jyoshu2 && !rowData.smaho;
+        if (isExtraRowEmpty) {
+          carBox.style.position = 'relative';
+          const removeBtn = document.createElement('button');
+          removeBtn.type = 'button';
+          removeBtn.textContent = '✕';
+          removeBtn.title = 'この枠を削除';
+          removeBtn.style.cssText = 'position:absolute;top:-6px;right:-6px;width:14px;height:14px;line-height:12px;padding:0;font-size:0.6rem;border-radius:50%;border:1px solid #c0392b;color:#c0392b;background:white;cursor:pointer;';
+          removeBtn.disabled = !canEdit();
+          removeBtn.onclick = (e) => { e.stopPropagation(); removeExtraHaisoRow(rowData.id); };
+          carBox.appendChild(removeBtn);
+        }
         tr.appendChild(carTd);
 
         // 運転手セル
         const driverTd = document.createElement('td');
         const driverBox = makeCell('staff', bushoCode, '配送', row, 'driver', rowData?.driver, isOsoban, rowData?.driver_ampm);
         if (row <= needCar) driverBox.classList.add('quota-required');
-        // 助手がいるのに運転手が空いている枠は、必要台数の範囲外でも目立たせる
-        if ((row <= needCar || rowData?.jyoshu1) && !rowData?.driver) driverBox.classList.add('quota-missing');
+        // 必要台数が足りていない（範囲内なのに空欄）→ 赤。範囲外だが助手がいるのに運転手がいない→ 注意として黄色
+        if (row <= needCar && !rowData?.driver) {
+          driverBox.classList.add('quota-missing');
+        } else if (row > needCar && rowData?.jyoshu1 && !rowData?.driver) {
+          driverBox.classList.add('advisory-missing');
+        }
         if (isOverQuota) driverBox.classList.add('over-quota');
         driverTd.appendChild(driverBox);
         tr.appendChild(driverTd);
@@ -1393,10 +1621,32 @@
       }
 
       // 枠に入りきらなかった応援の人は、表の下に追加行として表示する（枠番は最後尾から続けて割り当てる）
-      let extraRowNo = rowCount + 1;
+      let extraRowNo = effectiveRowCount + 1;
       oenQueue.forEach(o => table.appendChild(appendOenRow(o, extraRowNo++)));
 
-      return table;
+      // 「＋1」ボタンは業務ラベル（タイトル）側に出すので、ここでは表と現在の台数だけを返す
+      return { table, effectiveRowCount };
+    }
+
+    // 「＋1台」ボタン：設定（banmen_config）には触れず、この日だけ枠を1つ追加する
+    async function addExtraHaisoRow(bushoCode, currentRowCount) {
+      if (!canEdit()) return;
+      const dateStr = getDateStr(currentDate);
+      const newRowNo = currentRowCount + 1;
+      const insert = { date: dateStr, busho_code: bushoCode, gyomu_code: '配送', row_no: newRowNo };
+      const res = await sb.from('shift_banmen').insert(insert).select().single();
+      if (res.error) { showMsg('枠の追加に失敗しました: ' + res.error.message, 'err'); return; }
+      banmenData.push(res.data);
+      buildBoard();
+    }
+
+    // 「＋1台」で追加したが結局使わなかった枠を削除する
+    async function removeExtraHaisoRow(id) {
+      if (!canEdit()) return;
+      const { error } = await sb.from('shift_banmen').delete().eq('id', id);
+      if (error) { showMsg('削除に失敗しました: ' + error.message, 'err'); return; }
+      banmenData = banmenData.filter(r => r.id !== id);
+      buildBoard();
     }
 
     // ===== スマホ欄の自動判定 =====
@@ -2215,6 +2465,26 @@
         await autoFillSmaho(bushoCode);
       }
 
+      // 「業務シフトの重複」の枠にドラッグして決めた場合：
+      // 選ばれなかった他の人たちにも、業務シフト側には同じ重複コードがまだ残っている。
+      // これを消しておかないと、盤面を開き直すたびにまた同じ重複として検出され、
+      // せっかく配置した内容ごと消されて、通知が何度でも復活してしまう。
+      if (dragInfo.type === 'staff') {
+        const matchingConflict = conflictQueue.find(c =>
+          c.bushoCode === bushoCode && c.rowNo === rowNo && c.field === field
+        );
+        if (matchingConflict) {
+          const resolvedGyomuCode = await resolveOrCreateGyomuCode(bushoCode, gyomuCode, rowNo, field);
+          if (resolvedGyomuCode) {
+            const yearMonth = getYearMonth(currentDate);
+            for (const otherCode of matchingConflict.staffCodes) {
+              if (otherCode === dragInfo.code) continue;
+              await clearDuplicateGyomuCode(otherCode, resolvedGyomuCode, yearMonth, currentDayCol);
+            }
+          }
+        }
+      }
+
       buildLeftPanel();
       buildBoard();
 
@@ -2380,6 +2650,33 @@
       }
     }
 
+    // ===== 重複していた業務コードの後片付け（盤面→shift_gyomu_shift）=====
+    // 「業務シフトの重複」で同じ業務コードを持っていた人のうち、今回選ばれなかった人の
+    // 該当の欄（午前または午後）だけを空にする。選ばれた人の欄や、別の業務コードが
+    // 入っている欄には触れない。
+    async function clearDuplicateGyomuCode(staffCode, gyomuCode, yearMonth, dayCol) {
+      const dayColB = dayCol + 'b';
+      const { data, error: selErr } = await sb.from('shift_gyomu_shift')
+        .select(`${dayCol}, ${dayColB}`)
+        .eq('staff_code', staffCode).eq('yearmonth', yearMonth).maybeSingle();
+      if (selErr || !data) return;
+      const updates = {};
+      if (data[dayCol] === gyomuCode) updates[dayCol] = null;
+      if (data[dayColB] === gyomuCode) updates[dayColB] = null;
+      if (Object.keys(updates).length === 0) return;
+      const { error: updErr } = await sb.from('shift_gyomu_shift').update(updates)
+        .eq('staff_code', staffCode).eq('yearmonth', yearMonth);
+      if (updErr) {
+        console.error('重複コードの後片付けに失敗しました', updErr);
+        return;
+      }
+      // 完全にどちらの欄にも何もなくなった場合は、左パネルの「配置待ち」表示からも外す
+      const stillHasOther =
+        (updates[dayCol] === undefined && data[dayCol]) ||
+        (updates[dayColB] === undefined && data[dayColB]);
+      if (!stillHasOther) todayShiftStaffCodes.delete(staffCode);
+    }
+
     // 色を白に近づけて薄くする（業務マスタの自動登録で使う。master_gyomu.htmlの「所属色から自動生成」と同じ計算）
     function lightenColor(hex, ratio) {
       const r = parseInt(hex.slice(1, 3), 16);
@@ -2412,7 +2709,12 @@
         return null;
       }
 
-      const existingCode = gyomuReverseMap[bushoCode + '|' + gyomuName];
+      // 「ローソン1」のように、運転・助手とは違う独自名で登録されている場合もあるので、
+      // 役割（driver/jyoshu1、または倉庫・事務）からも探す。見つからなければ、従来通りの名前（運転1など）でも探す
+      const roleKey = gyomuCode === '配送'
+        ? bushoCode + '|' + field + '|' + rowNo
+        : bushoCode + '|' + gyomuCode;
+      const existingCode = gyomuRoleMap[roleKey] || gyomuReverseMap[bushoCode + '|' + gyomuName];
       if (existingCode) return existingCode;
 
       // 業務マスタに該当がない → 盤面の配置内容からそのまま新規登録する
@@ -2489,7 +2791,16 @@
         row++;
 
         if (gyomuName === '配送') {
-          const osobanRow = cfg.osoban_row && cfg.osoban_row !== 'EMPTY' ? parseInt(cfg.osoban_row) : 0;
+          // 遅番（必要台数マスタで日ごとに指定）：助手ありグループの上からnightJyoshuCount行、
+          // 助手なしグループの上からnightMuyoshuCount行が遅番になる
+          const excelQuota = carQuotaMap[bushoCode];
+          const excelNeedJyoshu = excelQuota?.need_jyoshu || 0;
+          const excelNightJyoshuCount = excelQuota?.night_jyoshu_count || 0;
+          const excelNightMuyoshuCount = excelQuota?.night_muyoshu_count || 0;
+          function isOsobanRowExcel(r) {
+            if (r <= excelNeedJyoshu) return r <= excelNightJyoshuCount;
+            return (r - excelNeedJyoshu) <= excelNightMuyoshuCount;
+          }
           const showSmaho = cfg.smaho_flg === true;
 
           // ヘッダー行（遅番は列を分けず、車番セルの中に表示するので列数は増やさない）
@@ -2532,7 +2843,7 @@
               writeOenRow(oenQueue.shift());
               continue;
             }
-            const isOsoban = osobanRow > 0 && r === osobanRow;
+            const isOsoban = isOsobanRowExcel(r);
             // 遅番は車番の欄に余白があるので、車番の前に「遅」を入れる
             const carVal = isOsoban ? ('遅' + (rec?.car_code ? ' ' + rec.car_code : '')) : (rec?.car_code || '');
             const vals = [carVal, getStaffName(rec?.driver)];
@@ -2712,6 +3023,7 @@
       const bushoGroups = {};
       configData.forEach(c => {
         if (c.sp_jun === 99 || c.sp_jun === 98 || c.sp_jun === 97) return;
+        if (hiddenBushoCodes.has(c.busho_code)) return; // 盤面で畳んでいる（非表示にしている）所属は、エクセルにも出さない
         if (!bushoGroups[c.busho_code]) {
           bushoGroups[c.busho_code] = { col: (c.col_no || 0) + 1, row: (c.row_no || 0) + 1, hyoji: c.busho_hyoji_jun || 0, items: [] };
         }

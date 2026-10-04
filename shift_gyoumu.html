@@ -232,6 +232,23 @@
     let masters = {};
     let staffRows = [];
     let shiftMap = {};
+
+    // 「ローソン1」「自転車1」のように、所属名＋数字で終わる業務名を自動で「運転」と同じ扱いにするための
+    // 正規表現を作る。対象は「盤面専用」にしている所属の名前。6つ目の所属を登録しても、
+    // コードを書き直さず自動で対応できるようにするための仕組み
+    function escapeRegex(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+    function isBanmenGyomuName(name) {
+      const extraNames = (masters.bushos || []).filter(b => b.is_banmen_only).map(b => b.busho_name);
+      const words = ['運転', '助手', '倉庫', '事務', ...extraNames].map(escapeRegex);
+      const pattern = new RegExp('^(' + words.join('|') + ')\\d*$');
+      return pattern.test(name) || /(倉庫|事務)$/.test(name || '');
+    }
+    function driverRoleMatch(name) {
+      const extraNames = (masters.bushos || []).filter(b => b.is_banmen_only).map(b => b.busho_name);
+      const words = ['運転', '助手', ...extraNames].map(escapeRegex);
+      const pattern = new RegExp('^(' + words.join('|') + ')(\\d+)$');
+      return (name || '').match(pattern);
+    }
     let tekiseiMap = {};
     let currentYM = '';
     let currentFilter = '';
@@ -281,6 +298,11 @@
         opt.textContent = b.busho_name;
         sel.appendChild(opt);
       });
+      // 休日・有休・健診・講習だけに絞り込みたいとき用
+      const kyujitsuOpt = document.createElement('option');
+      kyujitsuOpt.value = '__KYUJITSU__';
+      kyujitsuOpt.textContent = '休みなど';
+      sel.appendChild(kyujitsuOpt);
     }
 
     // ===== tbodyのイベント（1回だけ設定） =====
@@ -479,9 +501,10 @@
       emptyItem.addEventListener('contextmenu', e => { e.preventDefault(); if (canEdit()) selectCopySource('', '空白'); });
       panel.appendChild(emptyItem);
 
-      // 業務一覧（プルダウンで選んだ所属だけに絞り込む。空欄なら全部）
+      // 業務一覧（プルダウンで選んだ所属だけに絞り込む。空欄なら全部。
+      // 「休みなど」を選んだときは、通常の業務は出さず、下の休日などだけを表示する）
       const listMode = document.getElementById('gyomu-list-mode')?.value || '';
-      const gyomuTargets = (masters.gyomus || [])
+      const gyomuTargets = listMode === '__KYUJITSU__' ? [] : (masters.gyomus || [])
         .filter(g => {
           if (listMode) return g.busho_code === listMode;
           return true;
@@ -683,7 +706,7 @@
         const color = g.color_h || '#ccc';
         // 盤面の配送・倉庫・事務表に使われる「運転1」「倉庫2」のような番号付きの業務は、
         // 色だけだと所属の判別がしにくいため、切り替えボタンで業務名／所属名を選べるようにする
-        const isBanmenGyomu = /^(運転|助手|倉庫|事務)\d*$/.test(g.gyomu_name);
+        const isBanmenGyomu = isBanmenGyomuName(g.gyomu_name);
         const label = (badgeLabelMode === 'busho' && isBanmenGyomu)
           ? (masters.bushoMap[g.busho_code]?.busho_name || g.gyomu_name)
           : g.gyomu_name;
@@ -1033,9 +1056,11 @@
       if (!oldCode || oldCode === 'EMPTY') return;
       const g = masters.gyomuMap[oldCode];
       if (!g) return;
-      const m = (g.gyomu_name || '').match(/^(運転|助手)(\d+)$/);
+      // 「盤面専用」にしている所属（ローソン・自転車・クチーナ・DC&アルカ・ジャペルなど）も、
+      // 運転と同じ扱い（配送テーブルの運転手欄）にする。対象の所属一覧はマスタから自動で作る
+      const m = driverRoleMatch(g.gyomu_name);
       if (!m) return;
-      const field = m[1] === '運転' ? 'driver' : 'jyoshu1';
+      const field = m[1] === '助手' ? 'jyoshu1' : 'driver';
       const rowNo = parseInt(m[2], 10);
       const d = parseInt(key.replace('b', '').slice(1), 10);
       const dateStr = `${currentYM}${String(d).padStart(2, '0')}`;
@@ -1318,7 +1343,7 @@
         const g = masters.gyomuMap[code];
         if (g) {
           // 画面の「表示：所属名/業務名」切り替えと同じルールで名前を決める
-          const isBanmenGyomu = /^(運転|助手|倉庫|事務)\d*$/.test(g.gyomu_name);
+          const isBanmenGyomu = isBanmenGyomuName(g.gyomu_name);
           const name = (badgeLabelMode === 'busho' && isBanmenGyomu)
             ? (masters.bushoMap[g.busho_code]?.busho_name || g.gyomu_name)
             : g.gyomu_name;

@@ -27,11 +27,17 @@
     th.sat { background: #d0e8ff; }
     th.sun { background: #ffd0d0; }
     td { padding: 3px 2px; text-align: center; border: 1px solid #eee; vertical-align: top; }
-    td.name-td { position: sticky; left: 0; background: white; z-index: 1; padding: 3px 6px; min-width: 90px; font-size: 0.78rem; text-align: left; }
+    td.name-td { position: sticky; left: 0; background: white; z-index: 1; padding: 3px 6px; min-width: 90px; font-size: 0.78rem; text-align: center; vertical-align: middle; }
     td.sat-col { background: #f0f6ff; }
     td.sun-col { background: #fff0f0; }
     tr.hidden { display: none; }
-    .badge { display: block; padding: 1px 4px; border-radius: 3px; font-size: 0.68rem; font-weight: bold; margin: 1px auto; }
+    .badge-wrap { display: flex; gap: 2px; justify-content: center; align-items: flex-start; }
+    .badge {
+      display: inline-flex; align-items: center; justify-content: center;
+      padding: 2px 1px; border-radius: 3px; font-size: 0.68rem; font-weight: bold;
+      min-width: 16px; min-height: 30px;
+      writing-mode: vertical-rl; text-orientation: upright; letter-spacing: 1px;
+    }
     .loading { text-align: center; padding: 30px; color: #888; font-size: 1rem; }
   </style>
 </head>
@@ -43,10 +49,13 @@
   <div class="top-bar">
     <select class="month-select" id="month-sel" onchange="loadData()"></select>
     <button class="btn" onclick="loadData()">表示</button>
+    <button class="btn" id="inner-move-toggle" style="background:#888" onclick="toggleInnerMove()">部門内異動も表示</button>
+    <button class="btn" id="badge-mode-toggle" style="background:#16a085" onclick="toggleBadgeMode()">🔀 表示：所属名</button>
   </div>
 
+  <div class="filter-row" id="group-filter-row"></div>
   <div class="filter-row" id="filter-row">
-    <button class="filter-btn active" style="background:#555;color:white" onclick="filterTable('', this)">全員</button>
+    <button class="filter-btn active" style="background:#555;color:white" onclick="filterTable(null, this)">全員</button>
   </div>
 
   <div class="loading" id="loading">読み込み中…</div>
@@ -64,7 +73,23 @@
     let oenRows = [];   // 業務シフトから算出した応援実績（{date, staff_code, busho_code}の配列）
     let currentYM = '';
     let daysInMonth = 31;
-    let currentFilter = '';
+    let currentFilter = null; // null = 全員。絞り込み中はbusho_codeの配列
+    let showInnerMove = false; // 上位部門が同じ所属同士の異動（部門内異動）も表示するかどうか
+    let badgeLabelMode = 'busho'; // 'busho'=所属名で表示 / 'gyomu'=業務名（運転1など）で表示
+
+    function toggleInnerMove() {
+      showInnerMove = !showInnerMove;
+      const btn = document.getElementById('inner-move-toggle');
+      btn.style.background = showInnerMove ? '#2980b9' : '#888';
+      renderTable();
+    }
+
+    function toggleBadgeMode() {
+      badgeLabelMode = badgeLabelMode === 'busho' ? 'gyomu' : 'busho';
+      document.getElementById('badge-mode-toggle').textContent =
+        badgeLabelMode === 'busho' ? '🔀 表示：所属名' : '🔀 表示：業務名';
+      renderTable();
+    }
 
     async function init() {
       masters = await loadMasters();
@@ -94,22 +119,40 @@
       }
     }
 
-    // ===== 所属フィルターボタン（900番台は除く）=====
+    // ===== 部門（上位グループ）・所属フィルターボタン（900番台は除く）=====
     function buildFilterButtons() {
+      const normalBushos = masters.bushos.filter(b => parseInt(b.busho_code) < 900);
+
+      // 上位部門（例：宅配）でまとめて絞り込むボタン
+      const groupRow = document.getElementById('group-filter-row');
+      const groupNames = [...new Set(normalBushos.map(b => b.group_name).filter(v => v))];
+      groupNames.forEach(groupName => {
+        const bushoCodes = normalBushos.filter(b => b.group_name === groupName).map(b => b.busho_code);
+        const btn = document.createElement('button');
+        btn.className = 'filter-btn';
+        btn.style.background = '#8e44ad';
+        btn.style.color = '#fff';
+        btn.textContent = `📦${groupName}`;
+        btn.onclick = () => filterTable(bushoCodes, btn);
+        groupRow.appendChild(btn);
+      });
+
+      // 所属ごとの絞り込みボタン（今まで通り。盤面専用の所属は、実際の所属登録には使われないのでボタンには出さない）
       const row = document.getElementById('filter-row');
-      masters.bushos.filter(b => parseInt(b.busho_code) < 900).forEach(b => {
+      normalBushos.filter(b => !b.is_banmen_only).forEach(b => {
         const btn = document.createElement('button');
         btn.className = 'filter-btn';
         btn.style.background = b.color_h || '#888';
         btn.style.color = getTextColor(b.color_h || '#888');
         btn.textContent = b.busho_name;
-        btn.onclick = () => filterTable(b.busho_code, btn);
+        btn.onclick = () => filterTable([b.busho_code], btn);
         row.appendChild(btn);
       });
     }
 
-    function filterTable(bushoCode, btn) {
-      currentFilter = bushoCode;
+    // bushoCodes: null（全員）または 絞り込み対象の所属コード配列
+    function filterTable(bushoCodes, btn) {
+      currentFilter = bushoCodes;
       document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
       if (btn) btn.classList.add('active');
       renderTable();
@@ -150,6 +193,7 @@
     // ===== 業務シフトから「応援」実績を算出する =====
     // 考え方：その日にやった業務の所属が、本人の所属（社員マスタのbusho_code）と違っていれば「応援」とみなす。
     // 休日・有休・健診・講習（901〜のコード）は業務マスタに無いコードなので、自然に対象外になる。
+    // 午前・午後の両方がその所属なら「1日応援」、片方だけなら（もう片方は自分の所属や空欄）「半日応援」とする。
     function buildOenRowsFromShift(staffList, shiftRows, gyomuRows) {
       const staffBushoMap = {};
       staffList.forEach(s => { staffBushoMap[s.staff_code] = s.busho_code; });
@@ -157,26 +201,41 @@
       const gyomuBushoMap = {};
       gyomuRows.forEach(g => { gyomuBushoMap[g.gyomu_code] = g.busho_code; });
 
-      const seen = new Set(); // staff_code|date|busho_code の重複防止
       const result = [];
+
+      // 所属コード→上位部門名（group_name）を引けるようにしておく
+      // 上位部門が同じ所属同士の異動は「応援」とはみなさない
+      const bushoGroupMap = {};
+      (masters.bushos || []).forEach(b => { bushoGroupMap[b.busho_code] = b.group_name || null; });
 
       shiftRows.forEach(row => {
         const myBusho = staffBushoMap[row.staff_code];
         if (!myBusho) return; // 社員マスタに無い（退職済みなど）場合は対象外
+        const myGroup = bushoGroupMap[myBusho];
 
         for (let d = 1; d <= daysInMonth; d++) {
           const dayKey = `d${String(d).padStart(2, '0')}`;
-          [dayKey, dayKey + 'b'].forEach(key => {
-            const code = row[key];
-            if (!code || code === 'EMPTY') return;
-            const jobBusho = gyomuBushoMap[code];
-            if (!jobBusho || jobBusho === myBusho) return; // 自分の所属と同じ、または業務マスタに無いコードは対象外
+          const codeA = row[dayKey];
+          const codeB = row[dayKey + 'b'];
+          const bushoA = (codeA && codeA !== 'EMPTY') ? gyomuBushoMap[codeA] : null;
+          const bushoB = (codeB && codeB !== 'EMPTY') ? gyomuBushoMap[codeB] : null;
 
-            const dateStr = `${currentYM}${String(d).padStart(2, '0')}`;
-            const dedupeKey = `${row.staff_code}|${dateStr}|${jobBusho}`;
-            if (seen.has(dedupeKey)) return;
-            seen.add(dedupeKey);
-            result.push({ staff_code: row.staff_code, date: dateStr, busho_code: jobBusho });
+          // 自分の所属とは違う、業務マスタに実在する所属だけを対象にする
+          const otherBushos = [...new Set([bushoA, bushoB].filter(b => b && b !== myBusho))];
+          if (otherBushos.length === 0) continue;
+
+          const dateStr = `${currentYM}${String(d).padStart(2, '0')}`;
+          otherBushos.forEach(bushoCode => {
+            const countSlots = [bushoA, bushoB].filter(b => b === bushoCode).length;
+            // その所属ではないもう片方の枠が、何か（自分の所属の業務など）で埋まっているかどうか
+            const otherSlotFilled = [bushoA, bushoB].some(b => b && b !== bushoCode);
+            const isHalfDay = countSlots === 1 && otherSlotFilled;
+            // 上位部門（group_name）が自分と同じ所属への異動は「部門内異動」として区別する
+            // （デフォルトでは応援一覧に出さず、ボタンで切り替えたときだけ表示する）
+            const isInnerMove = !!(myGroup && bushoGroupMap[bushoCode] === myGroup);
+            // 業務名表示（「運転1」など）に切り替えられるよう、実際に入っていた業務コードも覚えておく
+            const gyomuCode = bushoA === bushoCode ? codeA : codeB;
+            result.push({ staff_code: row.staff_code, date: dateStr, busho_code: bushoCode, gyomu_code: gyomuCode, isHalfDay, isInnerMove });
           });
         }
       });
@@ -212,9 +271,9 @@
       const tbody = document.getElementById('tbody');
       tbody.innerHTML = '';
 
-      // staff_code → 日付ごとの応援エントリー一覧
+      // staff_code → 日付ごとの応援エントリー一覧（「部門内異動も表示」がOFFのときは、部門内異動を除く）
       const byStaff = {};
-      oenRows.forEach(r => {
+      oenRows.filter(r => showInnerMove || !r.isInnerMove).forEach(r => {
         if (!byStaff[r.staff_code]) byStaff[r.staff_code] = {};
         if (!byStaff[r.staff_code][r.date]) byStaff[r.staff_code][r.date] = [];
         byStaff[r.staff_code][r.date].push(r);
@@ -228,26 +287,30 @@
         const staffName = staff?.name || staffCode;
         const dayMap = byStaff[staffCode];
 
-        // フィルター中：その所属の応援が1件もない社員は非表示
-        if (currentFilter) {
-          const hasMatch = Object.values(dayMap).some(list => list.some(e => e.busho_code === currentFilter));
-          if (!hasMatch) return;
-        }
+        // フィルター中：ボタンを押した人たちの「元々の所属」で絞り込む（応援先ではない）
+        if (currentFilter && !currentFilter.includes(staff?.busho_code)) return;
 
         let rowHtml = `<tr><td class="name-td">${staffName}</td>`;
         for (let d = 1; d <= daysInMonth; d++) {
           const dateStr = `${currentYM}${String(d).padStart(2, '0')}`;
-          let entries = dayMap[dateStr] || [];
-          if (currentFilter) entries = entries.filter(e => e.busho_code === currentFilter);
+          const entries = dayMap[dateStr] || [];
 
           const badges = entries.map(e => {
             const b = masters.bushoMap[e.busho_code];
             const color = b?.color_h || '#888';
-            const name = b?.busho_name || e.busho_code;
-            return `<span class="badge" style="background:${color};color:${getTextColor(color)}">${name}</span>`;
+            const bushoName = b?.busho_name || e.busho_code;
+            const gyomuName = masters.gyomuMap[e.gyomu_code]?.gyomu_name || bushoName;
+            const name = badgeLabelMode === 'gyomu' ? gyomuName : bushoName;
+            // 半日応援（午前午後の片方だけ）は、点線の外枠と「半」の1文字で区別する。
+            // 縦書きの中でもカッコは不格好になるので使わず、普通の漢字として名前の後ろに続ける
+            const halfStyle = e.isHalfDay ? 'outline:2px solid #555;outline-offset:-2px;' : '';
+            // 部門内異動は、色を薄くして普通の応援と見分けられるようにする
+            const innerStyle = e.isInnerMove ? 'opacity:0.55;' : '';
+            const label = e.isHalfDay ? `${name}・半` : name;
+            return `<span class="badge" style="background:${color};color:${getTextColor(color)};${halfStyle}${innerStyle}">${label}</span>`;
           }).join('');
 
-          rowHtml += `<td class="${getDayClass(d)}">${badges}</td>`;
+          rowHtml += `<td class="${getDayClass(d)}"><div class="badge-wrap">${badges}</div></td>`;
         }
         rowHtml += '</tr>';
         tbody.insertAdjacentHTML('beforeend', rowHtml);

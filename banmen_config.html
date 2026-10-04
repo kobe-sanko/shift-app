@@ -54,7 +54,6 @@
     .chip-配送 { background: #3498db; }
     .chip-倉庫 { background: #e67e22; }
     .chip-事務 { background: #9b59b6; }
-    .chip-chiban { background: #e74c3c; font-size: 0.72rem; }
     .item-actions { display: flex; gap: 4px; justify-content: flex-end; }
     .btn-move { background: #bbb; color: white; border: none; border-radius: 3px; padding: 3px 7px; cursor: pointer; font-size: 0.72rem; }
     .btn-move:hover { background: #888; }
@@ -96,7 +95,6 @@
               <option value="2">2人</option>
             </select>
           </div>
-          <div class="sub-group"><label>遅番行（0=なし）</label><input type="number" id="inp-配送-chiban" value="0" min="0" max="30"></div>
           <div class="sub-group"><label>📱スマホ欄</label>
             <select id="inp-配送-smaho">
               <option value="false">なし</option>
@@ -215,6 +213,7 @@
 
       // 所属ごとにまとめる（お休み・応援・車検は特殊扱い）
       const bushoGroups = {}; // busho_code → { items: [] }
+      const bushoOrder = []; // 所属コードが最初に出てきた順番（＝保存した表示順）を覚えておく
       const specialItems = []; // sp_jun=99(お休み) or 98(応援) or 97(車検)
 
       configData.forEach(r => {
@@ -223,7 +222,10 @@
           specialItems.push(r);
           return;
         }
-        if (!bushoGroups[r.busho_code]) bushoGroups[r.busho_code] = [];
+        if (!bushoGroups[r.busho_code]) {
+          bushoGroups[r.busho_code] = [];
+          bushoOrder.push(r.busho_code);
+        }
         bushoGroups[r.busho_code].push(r);
       });
 
@@ -232,7 +234,8 @@
         container.innerHTML = '<div class="empty-msg">まだ設定がありません。</div>';
       }
 
-      Object.entries(bushoGroups).forEach(([bushoCode, items]) => {
+      bushoOrder.forEach(bushoCode => {
+        const items = bushoGroups[bushoCode];
         const busho = masters.bushoMap[bushoCode];
         const bcolor = busho?.color_h || '#888';
         const bname = busho?.busho_name || bushoCode;
@@ -250,7 +253,6 @@
 
         const haisouRows   = haisou?.row_count ?? 0;
         const haisouHelper = haisou?.jyoshu_count ?? 0;
-        const chibanRow    = haisou?.osoban_row ?? '';
         const smahoFlg     = haisou?.smaho_flg ?? false;
         const sokoRows     = soko?.row_count ?? 0;
         const sokoCols     = soko?.jyoshu_count ?? 2;
@@ -260,7 +262,6 @@
         let chips = '';
         if (haisouRows > 0) {
           chips += `<span class="gyomu-chip chip-配送">配送:${haisouRows}台・助手${haisouHelper}人</span>`;
-          if (chibanRow > 0) chips += `<span class="gyomu-chip chip-chiban">🌙遅:${chibanRow}行</span>`;
           if (smahoFlg)  chips += `<span class="gyomu-chip" style="background:#e91e63">📱スマホあり</span>`;
         }
         if (sokoRows > 0) chips += `<span class="gyomu-chip chip-倉庫">倉庫:${sokoRows}人・${sokoCols}列</span>`;
@@ -272,7 +273,6 @@
         div.dataset.bushoColor   = bcolor;
         div.dataset.haisouRows   = haisouRows;
         div.dataset.haisouHelper = haisouHelper;
-        div.dataset.chiban       = chibanRow;
         div.dataset.smahoFlg     = smahoFlg;
         div.dataset.sokoRows     = sokoRows;
         div.dataset.sokoCols     = sokoCols;
@@ -367,7 +367,6 @@
       document.getElementById('sel-busho').value = editingBusho;
       document.getElementById('inp-配送-rows').value    = el.dataset.haisouRows || 0;
       document.getElementById('inp-配送-helpers').value = el.dataset.haisouHelper || 0;
-      document.getElementById('inp-配送-chiban').value  = el.dataset.chiban || 0;
       document.getElementById('inp-配送-smaho').value   = el.dataset.smahoFlg === 'true' ? 'true' : 'false';
       document.getElementById('inp-倉庫-rows').value    = el.dataset.sokoRows || 0;
       document.getElementById('inp-倉庫-cols').value    = el.dataset.sokoCols || 2;
@@ -394,7 +393,6 @@
       return {
         haisouRows:   parseInt(document.getElementById('inp-配送-rows').value) || 0,
         haisouHelper: parseInt(document.getElementById('inp-配送-helpers').value) || 0,
-        chibanRow:    parseInt(document.getElementById('inp-配送-chiban').value) || 0,
         smahoFlg:     document.getElementById('inp-配送-smaho').value === 'true',
         sokoRows:     parseInt(document.getElementById('inp-倉庫-rows').value) || 0,
         sokoCols:     parseInt(document.getElementById('inp-倉庫-cols').value) || 2,
@@ -434,7 +432,6 @@
       div.dataset.bushoColor   = bcolor;
       div.dataset.haisouRows   = v.haisouRows;
       div.dataset.haisouHelper = v.haisouHelper;
-      div.dataset.chiban       = v.chibanRow || '';
       div.dataset.smahoFlg     = v.smahoFlg;
       div.dataset.sokoRows     = v.sokoRows;
       div.dataset.sokoCols     = v.sokoCols;
@@ -471,7 +468,6 @@
       el.dataset.bushoColor   = bcolor;
       el.dataset.haisouRows   = v.haisouRows;
       el.dataset.haisouHelper = v.haisouHelper;
-      el.dataset.chiban       = v.chibanRow || '';
       el.dataset.smahoFlg     = v.smahoFlg;
       el.dataset.sokoRows     = v.sokoRows;
       el.dataset.sokoCols     = v.sokoCols;
@@ -492,7 +488,6 @@
       let chips = '';
       if (v.haisouRows > 0) {
         chips += `<span class="gyomu-chip chip-配送">配送:${v.haisouRows}台・助手${v.haisouHelper}人</span>`;
-        if (v.chibanRow > 0) chips += `<span class="gyomu-chip chip-chiban">🌙遅:${v.chibanRow}行</span>`;
         if (v.smahoFlg)      chips += `<span class="gyomu-chip" style="background:#e91e63">📱スマホあり</span>`;
       }
       if (v.sokoRows > 0) chips += `<span class="gyomu-chip chip-倉庫">倉庫:${v.sokoRows}人・${v.sokoCols}列</span>`;
@@ -520,6 +515,8 @@
       btn.closest('.config-item').remove();
     }
 
+    // ▲▼ボタン：このリストの中での表示位置だけを動かす（SP順の数字には触らない。
+    // SP順はスマホ表示の並びを決める別の数字なので、▲▼でリストを動かしても変えない）
     function moveItem(e, btn, dir) {
       e.stopPropagation();
       const item = btn.closest('.config-item');
@@ -533,31 +530,33 @@
 
     async function saveAll() {
       if (!canEdit()) { showMsg('閲覧のみモードのため保存できません', 'err'); return; }
+      // このリストの並び（▲▼で動かした通りの位置）が、そのまま保存される表示順になる
       const normalItems = [...document.querySelectorAll('#config-items .config-item:not(.special-item)')];
       const specialItems = [...document.querySelectorAll('#config-items .special-item')];
 
       const records = [];
       let hyojiJun = 0;
 
-      normalItems.forEach(el => {
+      normalItems.forEach((el, idx) => {
         const bc          = el.dataset.busho;
         const haisouRows  = parseInt(el.dataset.haisouRows) || 0;
         const haisouHelper= parseInt(el.dataset.haisouHelper) || 0;
-        const chibanRow   = el.dataset.chiban || '';
         const sokoRows    = parseInt(el.dataset.sokoRows) || 0;
         const sokoCols    = parseInt(el.dataset.sokoCols) || 2;
         const jimuRows    = parseInt(el.dataset.jimuRows) || 0;
         const jimuCols    = parseInt(el.dataset.jimuCols) || 2;
         const colNo       = (parseInt(el.querySelector('.inp-col')?.value) || 1) - 1;
         const rowNo       = (parseInt(el.querySelector('.inp-row')?.value) || 1) - 1;
-        const spJun       = parseInt(el.querySelector('.inp-sp')?.value) || 0;
+        // SP順（スマホ表示の並び順）は、このリストの並び順とは関係なく、
+        // 欄に入っている数字をそのまま使う
+        const spJunRaw    = parseFloat(el.querySelector('.inp-sp')?.value);
+        const spJun       = Number.isFinite(spJunRaw) ? spJunRaw : (idx + 1);
 
         const smahoFlg    = el.dataset.smahoFlg === 'true';
 
         if (haisouRows > 0) records.push({
           busho_code: bc, gyomu_code: '配送',
           row_count: haisouRows, jyoshu_count: haisouHelper,
-          osoban_row: chibanRow ? parseInt(chibanRow) : 0,
           hyoji_jun: hyojiJun++, col_no: colNo, row_no: rowNo,
           busho_hyoji_jun: spJun, col_width: 1, sp_jun: 1,
           smaho_flg: smahoFlg,

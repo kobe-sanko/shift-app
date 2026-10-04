@@ -60,6 +60,10 @@
         <label>所属名</label>
         <input type="text" id="f_name" placeholder="例：東京">
       </div>
+      <div class="form-cell" style="width:140px">
+        <label>上位部門（任意）</label>
+        <input type="text" id="f_group_name" placeholder="例：宅配">
+      </div>
       <div class="form-cell" style="width:50px">
         <label>色</label>
         <input type="color" id="f_color" value="#4a90e2" style="padding:1px;height:29px;cursor:pointer;">
@@ -105,6 +109,7 @@
       <tr>
         <th style="width:110px">所属コード</th>
         <th style="width:160px">所属名</th>
+        <th style="width:110px">上位部門</th>
         <th style="width:170px">色</th>
         <th style="width:80px">有効</th>
         <th style="width:120px">定休日</th>
@@ -160,6 +165,7 @@
         tr.innerHTML = `
           <td>${r.busho_code}</td>
           <td><span class="badge" style="${nameStyle}">${r.busho_name || ''}</span></td>
+          <td>${r.group_name || '－'}</td>
           <td><span class="badge" style="${colorStyle}">${color}</span></td>
           <td>${r.is_active ? '有効' : '無効'}</td>
           <td>${offText}</td>
@@ -174,6 +180,7 @@
       const color = r.color_h || '#cccccc';
       document.getElementById('f_code').value       = r.busho_code  || '';
       document.getElementById('f_name').value       = r.busho_name  || '';
+      document.getElementById('f_group_name').value = r.group_name  || '';
       document.getElementById('f_color').value      = color;
       document.getElementById('f_color_text').value = color.toUpperCase();
       document.getElementById('f_active').value     = r.is_active ? 'true' : 'false';
@@ -193,9 +200,11 @@
       if (!name) { showMsg('所属名を入力してください', 'err'); return; }
 
       const offWeekdays = [...document.querySelectorAll('.off-wd-check:checked')].map(c => c.value).join(',');
+      const groupName = document.getElementById('f_group_name').value.trim();
       const data = {
         busho_code: code,
         busho_name: name,
+        group_name: groupName || null,
         color_h:    color,
         is_active:  document.getElementById('f_active').value === 'true',
         off_weekdays: offWeekdays,
@@ -228,6 +237,7 @@
       selectedCode = null;
       document.getElementById('f_code').value       = '';
       document.getElementById('f_name').value       = '';
+      document.getElementById('f_group_name').value = '';
       document.getElementById('f_color_text').value = '';
       document.querySelectorAll('.off-wd-check').forEach(chk => { chk.checked = false; });
       document.getElementById('f_banmen_only').checked = false;
