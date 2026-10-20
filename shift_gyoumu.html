@@ -148,6 +148,9 @@
 
   <div class="top-bar">
     <select class="month-select" id="month-sel" onchange="onMonthChange()"></select>
+    <span style="font-size:0.82rem;">来月を</span>
+    <input type="number" id="extra-days-input" min="0" max="20" value="0" style="width:48px;padding:4px;border:1px solid #ccc;border-radius:4px;text-align:center;" onchange="onExtraDaysChange()">
+    <span style="font-size:0.82rem;">日 表示</span>
     <button class="btn btn-create pc-only-btn" id="btn-create-shift" onclick="createShift()" disabled>業務シフト作成（所属を選んでください）</button>
     <button class="btn btn-save pc-only-btn" onclick="saveAll()" id="btn-save" style="display:none">💾 保存</button>
     <button class="btn pc-only-btn" style="background:#1d6f42;" onclick="exportExcel(false)">📊 Excel出力</button>
@@ -267,6 +270,28 @@
     let hyojiJunMap = {};    // busho_code → { staff_code: jun } の表示順マップ
     let syakenByDay = {};    // d01〜d31 → その日使えない車番の配列
 
+    // ===== 来月の最初の数日分を、続けて同じ画面に表示する機能 =====
+    let extraDays = 0;       // 来月を何日分表示するか（年月ごとにshift_gyomu_extra_daysへ保存）
+    let nextYM = '';         // 来月の年月（例：202601）
+    let nextShiftMap = {};   // 来月分のshift_gyomu_shiftデータ（staff_code → レコード）
+
+    function getNextYearMonth(ym) {
+      const { year, month } = parseYearMonth(ym);
+      const d = new Date(year, month, 1); // monthは1〜12なので、そのまま渡すと翌月の1日になる
+      return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}`;
+    }
+    // 来月分の列かどうか（キーが「n」で始まるかどうかで判定。例：n01, n01b）
+    function isNextKey(key) { return key[0] === 'n'; }
+    // 来月分のキー（n01）を、実際のDBの列名（d01）に変換する
+    function toColKey(key) { return isNextKey(key) ? 'd' + key.slice(1) : key; }
+    // キーに応じて、今月分（shiftMap）か来月分（nextShiftMap）かを返す
+    function getMapFor(key) { return isNextKey(key) ? nextShiftMap : shiftMap; }
+    function getNextDayClass(d) {
+      const { year, month } = parseYearMonth(nextYM);
+      const wd = new Date(year, month - 1, d).getDay();
+      return wd === 0 ? 'sun-col' : wd === 6 ? 'sat-col' : '';
+    }
+
     // ===== 初期化 =====
     async function init() {
       currentYM = getCurrentYearMonth();
@@ -285,8 +310,20 @@
       if (canEdit()) return;
       showReadOnlyBannerIfNeeded();
       document.getElementById('btn-create-shift').disabled = true;
+      document.getElementById('extra-days-input').disabled = true;
       const saveBtn = document.getElementById('btn-save');
       if (saveBtn) saveBtn.disabled = true;
+    }
+
+    // 「来月を何日表示するか」が変更された時（年月ごとに保存する）
+    async function onExtraDaysChange() {
+      if (!canEdit()) return;
+      const val = parseInt(document.getElementById('extra-days-input').value) || 0;
+      const { year: nY, month: nM } = parseYearMonth(getNextYearMonth(currentYM));
+      extraDays = Math.max(0, Math.min(getDaysInMonth(nY, nM), val));
+      document.getElementById('extra-days-input').value = extraDays;
+      await sb.from('shift_gyomu_extra_days').upsert({ yearmonth: currentYM, extra_days: extraDays });
+      await loadData();
     }
 
     // 業務リストの絞り込みプルダウンに、全所属を追加する
@@ -346,7 +383,7 @@
         if (!canEdit()) return;
         const staffCode = td.dataset.staff;
         const key = td.dataset.key;
-        const code = (shiftMap[staffCode] || {})[key];
+        const code = (getMapFor(key)[staffCode] || {})[toColKey(key)];
         if (!code || code === 'EMPTY') { showMsg('空のマスはコピーできません', 'err'); return; }
         selectCopySource(code, getGyomuLabel(code));
       });
@@ -560,22 +597,41 @@
 
       const { year, month } = parseYearMonth(currentYM);
       daysInMonth = getDaysInMonth(year, month);
+      nextYM = getNextYearMonth(currentYM);
 
-      // その月の日付範囲
+      // 「来月を何日表示するか」の設定を取得（年月ごとに保存されている）
+      const { data: extraRow } = await sb.from('shift_gyomu_extra_days')
+        .select('extra_days').eq('yearmonth', currentYM).maybeSingle();
+      {
+        const { year: nY0, month: nM0 } = parseYearMonth(nextYM);
+        extraDays = Math.max(0, Math.min(getDaysInMonth(nY0, nM0), extraRow?.extra_days || 0));
+      }
+      document.getElementById('extra-days-input').value = extraDays;
+
+      // その月の日付範囲（来月分を表示する設定がある時は、スマホ担当・車検の範囲もそこまで広げる）
       const dateFrom = `${year}${String(month).padStart(2,'0')}01`;
       const dateTo   = `${year}${String(month).padStart(2,'0')}${String(daysInMonth).padStart(2,'0')}`;
+      let rangeTo = dateTo;
+      if (extraDays > 0) {
+        const { year: nY, month: nM } = parseYearMonth(nextYM);
+        const cappedExtra = Math.min(extraDays, getDaysInMonth(nY, nM));
+        rangeTo = `${nextYM}${String(cappedExtra).padStart(2,'0')}`;
+      }
 
-      const [staffRes, shiftRes, tekiseiRes, configRes, smahoRes, chibanRes, hyojiJunRes, syakenRes] = await Promise.all([
+      const [staffRes, shiftRes, tekiseiRes, configRes, smahoRes, chibanRes, hyojiJunRes, syakenRes, nextShiftRes] = await Promise.all([
         sb.from('shift_staff').select('staff_code,name,busho_code,car_code,retired,overtime_limit,is_admin,has_smaho').order('staff_code'),
         sb.from('shift_gyomu_shift').select('*').eq('yearmonth', currentYM),
         sb.from('shift_gyomu_tekisei').select('staff_code, gyomu_code, busho_code'),
         sb.from('shift_banmen_config').select('*').eq('smaho_flg', true).eq('gyomu_code', '配送'),
         sb.from('shift_banmen').select('date, busho_code, row_no, smaho')
-          .gte('date', dateFrom).lte('date', dateTo).not('smaho', 'is', null),
+          .gte('date', dateFrom).lte('date', rangeTo).not('smaho', 'is', null),
         sb.from('shift_banmen_config').select('busho_code, osoban_row').eq('gyomu_code', '配送').gt('osoban_row', 0),
         sb.from('shift_hyoji_jun').select('*'),
-        sb.from('shift_syaken').select('car_code, date, memo').gte('date', dateFrom).lte('date', dateTo),
+        sb.from('shift_syaken').select('car_code, date, memo').gte('date', dateFrom).lte('date', rangeTo),
+        extraDays > 0 ? sb.from('shift_gyomu_shift').select('*').eq('yearmonth', nextYM) : Promise.resolve({ data: [] }),
       ]);
+
+      nextShiftMap = Object.fromEntries((nextShiftRes.data || []).map(r => [r.staff_code, r]));
 
       staffRows = (staffRes.data || []).filter(s => !s.retired);
       shiftMap = Object.fromEntries((shiftRes.data || []).map(r => [r.staff_code, r]));
@@ -607,10 +663,13 @@
       });
 
       // 車検・修理（使えない車）：日付(yyyymmdd) → その日使えない車のリスト（表示名＋所属コード＋理由）
+      // 今月分は「d01」、来月の追加表示分は「n01」のようにキーを分ける（同じ日にちでも月が違うため）
       syakenByDay = {};
       (syakenRes.data || []).forEach(r => {
+        const ym = r.date.slice(0, 6);
         const day = parseInt(r.date.slice(6, 8));
-        const key = `d${String(day).padStart(2, '0')}`;
+        const prefix = ym === nextYM ? 'n' : 'd';
+        const key = `${prefix}${String(day).padStart(2, '0')}`;
         if (!syakenByDay[key]) syakenByDay[key] = [];
         const car = masters.carMap[r.car_code];
         const carLabel = car ? (car.car_no || car.car_code) : r.car_code;
@@ -634,6 +693,16 @@
         const wd = new Date(year, month - 1, d).getDay();
         const cls = wd === 0 ? 'sun' : wd === 6 ? 'sat' : '';
         html += `<th class="${cls}">${d}<br><span style="font-size:0.65rem">${getWeekdayName(wd)}</span></th>`;
+      }
+      // 来月の最初の数日分（設定されている場合）。見分けやすいよう背景色を変え、境目に太い線を入れる
+      if (extraDays > 0) {
+        const { year: nY, month: nM } = parseYearMonth(nextYM);
+        for (let d = 1; d <= extraDays; d++) {
+          const wd = new Date(nY, nM - 1, d).getDay();
+          const cls = wd === 0 ? 'sun' : wd === 6 ? 'sat' : '';
+          const borderStyle = d === 1 ? 'border-left:3px solid #8e44ad;' : '';
+          html += `<th class="${cls}" style="background:#f3e8ff;${borderStyle}">${nM}/${d}<br><span style="font-size:0.65rem">${getWeekdayName(wd)}</span></th>`;
+        }
       }
       html += '</tr>';
       thead.innerHTML = html;
@@ -776,6 +845,22 @@
             <div class="shift-td slot-b" data-staff="${s.staff_code}" data-key="${keyB}">${getBadgeHtml(shift[keyB], true)}</div>
           </td>`;
         }
+        // 来月の最初の数日分（設定されている場合）
+        if (extraDays > 0) {
+          const nextShift = nextShiftMap[s.staff_code] || {};
+          for (let d = 1; d <= extraDays; d++) {
+            const key = `n${String(d).padStart(2,'0')}`;
+            const keyB = key + 'b';
+            const origKey = `d${String(d).padStart(2,'0')}`;
+            const origKeyB = origKey + 'b';
+            const cls = getNextDayClass(d);
+            const borderStyle = d === 1 ? 'border-left:3px solid #8e44ad;' : '';
+            html += `<td class="day-cell ${cls}" style="background:#faf5ff;${borderStyle}">
+              <div class="shift-td slot-a" data-staff="${s.staff_code}" data-key="${key}">${getBadgeHtml(nextShift[origKey])}</div>
+              <div class="shift-td slot-b" data-staff="${s.staff_code}" data-key="${keyB}">${getBadgeHtml(nextShift[origKeyB], true)}</div>
+            </td>`;
+          }
+        }
         tr.innerHTML = html;
         tbody.appendChild(tr);
 
@@ -797,6 +882,23 @@
               <div>${buildSelectHtml(idB, s.staff_code, shift[keyB] || '', keyB)}</div>
             </td>`;
           }
+          if (extraDays > 0) {
+            const nextShift = nextShiftMap[s.staff_code] || {};
+            for (let d = 1; d <= extraDays; d++) {
+              const key = `n${String(d).padStart(2,'0')}`;
+              const keyB = key + 'b';
+              const origKey = `d${String(d).padStart(2,'0')}`;
+              const origKeyB = origKey + 'b';
+              const id = `sel_${s.staff_code}_${key}`;
+              const idB = `sel_${s.staff_code}_${keyB}`;
+              const cls = getNextDayClass(d);
+              const borderStyle = d === 1 ? 'border-left:3px solid #8e44ad;' : '';
+              editHtml += `<td class="${cls}" style="background:#faf5ff;${borderStyle}">
+                <div style="margin-bottom:2px">${buildSelectHtml(id, s.staff_code, nextShift[origKey] || '', key)}</div>
+                <div>${buildSelectHtml(idB, s.staff_code, nextShift[origKeyB] || '', keyB)}</div>
+              </td>`;
+            }
+          }
           editTr.innerHTML = editHtml;
           tbody.appendChild(editTr);
 
@@ -804,7 +906,7 @@
           btnTr.className = 'btn-row';
           if (isHidden) btnTr.classList.add('hidden');
           btnTr.innerHTML = `
-            <td colspan="${daysInMonth + 2}" style="text-align:left">
+            <td colspan="${daysInMonth + 2 + extraDays}" style="text-align:left">
               <button class="btn btn-create" style="background:#3498db" onclick="copyFromBase('${s.staff_code}')">ベース業務からコピー</button>
               <button class="btn" style="background:#e74c3c;margin-left:8px" onclick="clearAllStaff('${s.staff_code}')">全削除</button>
               <button class="btn btn-save" onclick="saveStaff('${s.staff_code}')" style="margin-left:8px">この社員を保存</button>
@@ -837,6 +939,21 @@
           return `<span class="syaken-chip" data-car="${carAttr}" data-reason="${reasonAttr}" style="background:${style.bg};color:${style.col};border-radius:3px;padding:0 3px;display:inline-block;cursor:pointer;">${c.label}</span>`;
         }).join('<br>');
         syakenHtml += `<td class="${cls}" style="font-weight:bold;font-size:0.7rem">${label}</td>`;
+      }
+      if (extraDays > 0) {
+        for (let d = 1; d <= extraDays; d++) {
+          const key = `n${String(d).padStart(2,'0')}`;
+          const cls = getNextDayClass(d);
+          const borderStyle = d === 1 ? 'border-left:3px solid #8e44ad;' : '';
+          const cars = (syakenByDay[key] || []).filter(c => !currentFilter || c.bushoCode === currentFilter);
+          const label = cars.map(c => {
+            const style = syakenReasonStyle(c.reason);
+            const reasonAttr = String(c.reason).replace(/"/g, '&quot;');
+            const carAttr = String(c.label).replace(/"/g, '&quot;');
+            return `<span class="syaken-chip" data-car="${carAttr}" data-reason="${reasonAttr}" style="background:${style.bg};color:${style.col};border-radius:3px;padding:0 3px;display:inline-block;cursor:pointer;">${c.label}</span>`;
+          }).join('<br>');
+          syakenHtml += `<td class="${cls}" style="font-weight:bold;font-size:0.7rem;background:#faf5ff;${borderStyle}">${label}</td>`;
+        }
       }
       syakenTr.innerHTML = syakenHtml;
       tbody.appendChild(syakenTr);
@@ -956,7 +1073,9 @@
     function rememberOldValue(staffCode, key) {
       if (!pendingOldValues[staffCode]) pendingOldValues[staffCode] = {};
       if (pendingOldValues[staffCode][key] === undefined) {
-        pendingOldValues[staffCode][key] = (shiftMap[staffCode] || {})[key] || null;
+        const map = getMapFor(key);
+        const col = toColKey(key);
+        pendingOldValues[staffCode][key] = (map[staffCode] || {})[col] || null;
       }
     }
 
@@ -972,8 +1091,10 @@
     // ===== ドラッグ＆ドロップ適用 =====
     function applyDrop(staffCode, key, gyomuCode) {
       rememberOldValue(staffCode, key);
-      if (!shiftMap[staffCode]) shiftMap[staffCode] = { yearmonth: currentYM, staff_code: staffCode };
-      shiftMap[staffCode][key] = gyomuCode;
+      const map = getMapFor(key);
+      const col = toColKey(key);
+      if (!map[staffCode]) map[staffCode] = { yearmonth: isNextKey(key) ? nextYM : currentYM, staff_code: staffCode };
+      map[staffCode][col] = gyomuCode;
       changed[staffCode] = true;
       document.getElementById('btn-save').style.display = '';
       const td = document.querySelector(`.shift-td[data-staff="${staffCode}"][data-key="${key}"]`);
@@ -1051,7 +1172,7 @@
     // 業務シフトのセルを変更したときに、盤面（shift_banmen）に残っている古い配置も一緒に消す。
     // 番号付きの具体的な業務（運転1・助手1など）から別の内容に変わった場合だけが対象
     // （番号なしの「運転」「助手」はそもそも盤面に自動配置されないため対象外）。
-    async function syncBanmenOnShiftChange(staffCode, key, oldCode, newCode) {
+    async function syncBanmenOnShiftChange(staffCode, key, oldCode, newCode, ym) {
       if (oldCode === newCode) return;
       if (!oldCode || oldCode === 'EMPTY') return;
       const g = masters.gyomuMap[oldCode];
@@ -1063,7 +1184,7 @@
       const field = m[1] === '助手' ? 'jyoshu1' : 'driver';
       const rowNo = parseInt(m[2], 10);
       const d = parseInt(key.replace('b', '').slice(1), 10);
-      const dateStr = `${currentYM}${String(d).padStart(2, '0')}`;
+      const dateStr = `${ym || currentYM}${String(d).padStart(2, '0')}`;
       const { data: row } = await sb.from('shift_banmen')
         .select('id, driver, jyoshu1')
         .eq('date', dateStr).eq('busho_code', g.busho_code).eq('gyomu_code', '配送').eq('row_no', rowNo)
@@ -1115,7 +1236,47 @@
 
       // 業務シフトの変更に合わせて、盤面に残っている古い配置があれば消す
       for (const t of banmenSyncTargets) {
-        await syncBanmenOnShiftChange(staffCode, t.key, t.oldCode, t.newCode);
+        await syncBanmenOnShiftChange(staffCode, t.key, t.oldCode, t.newCode, currentYM);
+      }
+
+      // 来月の最初の数日分（設定されている場合）も、あわせて保存する。
+      // 来月分は他の日のデータも入っている1行なので、変更した日だけ上書きし、それ以外はそのまま残す
+      if (extraDays > 0) {
+        const nextCurrent = nextShiftMap[staffCode] || {};
+        const data2 = { ...nextCurrent, yearmonth: nextYM, staff_code: staffCode };
+        delete data2.id;
+        const banmenSyncTargets2 = [];
+        for (let d = 1; d <= extraDays; d++) {
+          const key = `n${String(d).padStart(2,'0')}`;
+          [key, key + 'b'].forEach(k => {
+            const origK = toColKey(k);
+            if (cellChanged[k]) {
+              const sel = document.getElementById(`sel_${staffCode}_${k}`);
+              data2[origK] = sel ? (sel.value || null) : (nextCurrent[origK] || null);
+              const pending = pendingOldValues[staffCode];
+              const oldCode = (pending && pending[k] !== undefined) ? pending[k] : (nextCurrent[origK] || null);
+              if (data2[origK] !== oldCode) banmenSyncTargets2.push({ key: origK, oldCode, newCode: data2[origK] });
+            }
+          });
+        }
+
+        const { data: existing2 } = await sb.from('shift_gyomu_shift')
+          .select('yearmonth')
+          .eq('yearmonth', nextYM).eq('staff_code', staffCode).maybeSingle();
+
+        let error2;
+        if (existing2) {
+          ({ error: error2 } = await sb.from('shift_gyomu_shift').update(data2)
+            .eq('yearmonth', nextYM).eq('staff_code', staffCode));
+        } else {
+          ({ error: error2 } = await sb.from('shift_gyomu_shift').insert(data2));
+        }
+        if (error2) { showMsg('来月分の保存に失敗しました: ' + error2.message, 'err'); return; }
+
+        for (const t of banmenSyncTargets2) {
+          await syncBanmenOnShiftChange(staffCode, t.key, t.oldCode, t.newCode, nextYM);
+        }
+        nextShiftMap[staffCode] = { ...nextCurrent, ...data2 };
       }
 
       showMsg('保存しました', 'ok');
@@ -1182,8 +1343,47 @@
         if (error) { errorCount++; console.error(error); }
       }
 
-      if (errorCount > 0) {
-        showMsg(`一部の保存に失敗しました（${errorCount}件）。詳しくはブラウザのコンソールをご確認ください`, 'err');
+      // 来月の最初の数日分（設定されている場合）も、同じようにベース業務から作成する。
+      // 来月分は他の日のデータも入っている1行なので、既存の内容を保ったまま、その日数分だけ上書きする
+      let nextErrorCount = 0;
+      if (extraDays > 0) {
+        const { year: nY, month: nM } = parseYearMonth(nextYM);
+        const { data: existingNextRows } = await sb.from('shift_gyomu_shift')
+          .select('*').eq('yearmonth', nextYM);
+        const existingNextMap = Object.fromEntries((existingNextRows || []).map(r => [r.staff_code, r]));
+
+        const nextTargetRecords = [];
+        for (const base of (baseData || [])) {
+          if (currentFilter) {
+            const staff = staffRows.find(s => s.staff_code === base.staff_code);
+            if (!staff || staff.busho_code !== currentFilter) continue;
+          }
+          const existing = existingNextMap[base.staff_code] || {};
+          const data = { ...existing, yearmonth: nextYM, staff_code: base.staff_code };
+          delete data.id;
+          for (let d = 1; d <= extraDays; d++) {
+            const wd = new Date(nY, nM - 1, d).getDay();
+            const key = `d${String(d).padStart(2,'0')}`;
+            data[key] = base[dayNames[wd] + '_gyomu'] || null;
+            data[key + 'b'] = base[dayNames[wd] + '_gyomu_b'] || null;
+          }
+          nextTargetRecords.push(data);
+        }
+
+        for (const rec of nextTargetRecords) {
+          let error;
+          if (existingNextMap[rec.staff_code]) {
+            ({ error } = await sb.from('shift_gyomu_shift').update(rec)
+              .eq('yearmonth', nextYM).eq('staff_code', rec.staff_code));
+          } else {
+            ({ error } = await sb.from('shift_gyomu_shift').insert(rec));
+          }
+          if (error) { nextErrorCount++; console.error(error); }
+        }
+      }
+
+      if (errorCount > 0 || nextErrorCount > 0) {
+        showMsg(`一部の保存に失敗しました（${errorCount + nextErrorCount}件）。詳しくはブラウザのコンソールをご確認ください`, 'err');
       } else {
         showMsg(`「${scopeLabel}」のシフトを作成しました（${targetRecords.length}件）`, 'ok');
       }
@@ -1213,10 +1413,21 @@
 
       // 当月末の次の土曜日まで延ばす
       const lastOfMonth = new Date(year, month, 0);
-      const endDate = new Date(lastOfMonth);
+      let endDate = new Date(lastOfMonth);
       const lastDayOfWeek = lastOfMonth.getDay();
       if (lastDayOfWeek !== 6) {
         endDate.setDate(lastOfMonth.getDate() + (6 - lastDayOfWeek));
+      }
+
+      // 来月の最初の数日分を表示する設定になっている場合は、そこまで（＋その週の土曜日まで）延ばす
+      if (extraDays > 0) {
+        const { year: nY, month: nM } = parseYearMonth(nextYM);
+        const extraEndDate = new Date(nY, nM - 1, extraDays);
+        if (extraEndDate > endDate) {
+          const wd = extraEndDate.getDay();
+          if (wd !== 6) extraEndDate.setDate(extraEndDate.getDate() + (6 - wd));
+          endDate = extraEndDate;
+        }
       }
 
       // 表示する全日付リストを生成
@@ -1316,10 +1527,30 @@
       document.getElementById('smaho-section').style.display = '';
     }
 
+    // 今月（＋設定されていれば来月の最初の数日分）の列情報を1つの配列にまとめる。
+    // Excel出力・空白シフト出力の両方で、同じ考え方で列を扱えるようにするための共通処理
+    function buildDayDefs() {
+      const { year, month } = parseYearMonth(currentYM);
+      const defs = [];
+      for (let d = 1; d <= daysInMonth; d++) {
+        const wd = new Date(year, month - 1, d).getDay();
+        defs.push({ label: `${d}`, wd, map: shiftMap, col: `d${String(d).padStart(2,'0')}`, isNext: false });
+      }
+      if (extraDays > 0) {
+        const { year: nY, month: nM } = parseYearMonth(nextYM);
+        for (let d = 1; d <= extraDays; d++) {
+          const wd = new Date(nY, nM - 1, d).getDay();
+          defs.push({ label: `${nM}/${d}`, wd, map: nextShiftMap, col: `d${String(d).padStart(2,'0')}`, isNext: true });
+        }
+      }
+      return defs;
+    }
+
     // ===== Excel出力（業務シフト）=====
     async function exportExcel(useArrow) {
       const { year, month } = parseYearMonth(currentYM);
-      const days = daysInMonth;
+      const dayDefs = buildDayDefs();
+      const days = dayDefs.length;
       const workbook = new ExcelJS.Workbook();
       const sheetLabel = `${year}年${month}月`;
       const bushoName = currentFilter
@@ -1369,10 +1600,7 @@
 
       // ヘッダー行（氏名・日付\n曜日）
       const hdrData = ['氏名'];
-      for (let d = 1; d <= days; d++) {
-        const wd = new Date(year, month - 1, d).getDay();
-        hdrData.push(`${d}\n${weekNames[wd]}`);
-      }
+      dayDefs.forEach(dd => hdrData.push(`${dd.label}\n${weekNames[dd.wd]}`));
       const headerRow = sheet.addRow(hdrData);
       headerRow.height = 28;
       headerRow.eachCell((cell, colNum) => {
@@ -1381,9 +1609,11 @@
         cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD9D9D9' } };
         cell.border = { top:{style:'thin'}, bottom:{style:'thin'}, left:{style:'thin'}, right:{style:'thin'} };
         if (colNum > 1) {
-          const wd = new Date(year, month - 1, colNum - 1).getDay();
-          if (wd === 0) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFC0CB' } };
-          if (wd === 6) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFADD8E6' } };
+          const dd = dayDefs[colNum - 2];
+          if (dd.wd === 0) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFC0CB' } };
+          if (dd.wd === 6) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFADD8E6' } };
+          // 来月分の列は、画面と同じように薄紫で見分けられるようにする
+          if (dd.isNext) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF3E8FF' } };
         }
       });
 
@@ -1447,14 +1677,13 @@
 
       // データ行
       targetStaffs.forEach(s => {
-        const shift = shiftMap[s.staff_code];
         const codes = [];
         const codesB = [];
-        for (let d = 1; d <= days; d++) {
-          const col = `d${String(d).padStart(2,'0')}`;
-          codes.push(shift?.[col] || '');
-          codesB.push(shift?.[col + 'b'] || '');
-        }
+        dayDefs.forEach(dd => {
+          const row = dd.map[s.staff_code];
+          codes.push(row?.[dd.col] || '');
+          codesB.push(row?.[dd.col + 'b'] || '');
+        });
 
         // 午前と別の午後業務がある日が1日でもあれば、この社員は2行（午前行・午後行）に分けて出力する。
         // そうすることで、セルの境界線がそのまま午前午後の間の線になる
@@ -1491,7 +1720,7 @@
         // 日付セルに色付け
         dayInfos.forEach((di, d) => {
           const colIdx = d + 2;
-          const wd = new Date(year, month - 1, d + 1).getDay();
+          const wd = dayDefs[d].wd;
           const prevCode = d > 0 ? codes[d - 1] : null;
           const isArrow = useArrow && d > 0 && di.code && di.code === prevCode && !di.info.isKyu;
 
@@ -1536,7 +1765,8 @@
     async function exportBlankExcel() {
       if (!currentFilter) { showMsg('所属を選択してください', 'err'); return; }
       const { year, month } = parseYearMonth(currentYM);
-      const days = daysInMonth;
+      const dayDefs = buildDayDefs();
+      const days = dayDefs.length;
       const workbook = new ExcelJS.Workbook();
       const sheetLabel = `${year}年${month}月`;
       const bushoName = masters.bushoMap[currentFilter]?.busho_name || currentFilter;
@@ -1555,10 +1785,7 @@
       titleRow.height = 22;
 
       const hdrData = ['氏名'];
-      for (let d = 1; d <= days; d++) {
-        const wd = new Date(year, month - 1, d).getDay();
-        hdrData.push(`${d}\n${weekNames[wd]}`);
-      }
+      dayDefs.forEach(dd => hdrData.push(`${dd.label}\n${weekNames[dd.wd]}`));
       const headerRow = sheet.addRow(hdrData);
       headerRow.height = 28;
       headerRow.eachCell((cell, colNum) => {
@@ -1567,9 +1794,10 @@
         cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD9D9D9' } };
         cell.border = { top:{style:'thin'}, bottom:{style:'thin'}, left:{style:'thin'}, right:{style:'thin'} };
         if (colNum > 1) {
-          const wd = new Date(year, month - 1, colNum - 1).getDay();
-          if (wd === 0) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFC0CB' } };
-          if (wd === 6) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFADD8E6' } };
+          const dd = dayDefs[colNum - 2];
+          if (dd.wd === 0) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFC0CB' } };
+          if (dd.wd === 6) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFADD8E6' } };
+          if (dd.isNext) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF3E8FF' } };
         }
       });
 
@@ -1594,10 +1822,11 @@
 
         for (let d = 0; d < days; d++) {
           const cell = dataRow.getCell(d + 2);
-          const wd = new Date(year, month - 1, d + 1).getDay();
+          const wd = dayDefs[d].wd;
           cell.border = { top:{style:'thin'}, bottom:{style:'thin'}, left:{style:'thin'}, right:{style:'thin'} };
           if (wd === 0) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF0F0' } };
           if (wd === 6) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF0F0FF' } };
+          if (dayDefs[d].isNext) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFAF5FF' } };
         }
       });
 
