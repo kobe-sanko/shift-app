@@ -194,6 +194,9 @@
       const { data, error } = await sb.from(table).select('*');
       if (error) throw error;
 
+      // パスワードは、Excelへの書き出しには絶対に含めない
+      if (data) data.forEach(row => { delete row.password; });
+
       const wb = new ExcelJS.Workbook();
       const sheet = wb.addWorksheet(label);
       if (data && data.length > 0) {

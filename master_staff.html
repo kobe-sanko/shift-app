@@ -67,6 +67,10 @@
         <label>氏名</label>
         <input type="text" id="f_name">
       </div>
+      <div class="form-cell" style="width:120px">
+        <label>パスワード</label>
+        <input type="text" id="f_password" placeholder="変更時のみ入力">
+      </div>
       <div class="form-cell" style="width:110px">
         <label>所属</label>
         <select id="f_busho" onchange="buildCarSelect(this.value)"><option value="">-- 未選択 --</option></select>
@@ -187,7 +191,10 @@
     }
 
     async function loadRows() {
-      const { data, error } = await sb.from('shift_staff').select('*').order('staff_code');
+      // パスワードはここで取得しない（一覧や編集フォームに表示しない。変更したい時だけ新しい値を入力する）
+      const { data, error } = await sb.from('shift_staff')
+        .select('staff_code,name,busho_code,car_code,retired,overtime_limit,is_admin,has_smaho')
+        .order('staff_code');
       if (error) { showMsg('データの読み込みに失敗しました', 'err'); return; }
       rows = data || [];
       renderTable();
@@ -236,6 +243,7 @@
       selectedCode = r.staff_code;
       document.getElementById('f_code').value     = r.staff_code || '';
       document.getElementById('f_name').value     = r.name || '';
+      document.getElementById('f_password').value = ''; // パスワードは表示しない。変更する時だけ入力する
       document.getElementById('f_busho').value    = r.busho_code || '';
       buildCarSelect(r.busho_code || '');
       document.getElementById('f_car').value      = r.car_code || '';
@@ -269,6 +277,12 @@
         is_admin:       document.getElementById('f_is_admin').value === 'true',
         has_smaho:      document.getElementById('f_has_smaho').value === 'true',
       };
+      // パスワードは「入力があった時だけ」更新する（空欄なら今の値を変えない）
+      // ただし新規登録の時だけ、未入力でもPC権限がある人には社員コードを初期パスワードにする（本人が最初のログイン時に変更できる）
+      // PC権限がない人はログイン自体が不要なので、パスワードは設定しない
+      const pwInput = document.getElementById('f_password').value.trim();
+      if (pwInput) data.password = pwInput;
+      else if (mode === 'add' && data.is_admin) data.password = code;
       // 同じ車両が別の在籍社員にすでに登録されていないかチェック
       if (data.car_code) {
         const carConflict = rows.find(r => r.car_code === data.car_code && r.staff_code !== code && !r.retired);
@@ -291,6 +305,7 @@
         showMsg('更新しました', 'ok');
       }
       selectedCode = code;
+      document.getElementById('f_password').value = '';
       await loadRows();
     }
 
@@ -315,6 +330,7 @@
       selectedCode = null;
       document.getElementById('f_code').value = '';
       document.getElementById('f_name').value = '';
+      document.getElementById('f_password').value = '';
       await loadRows();
     }
 

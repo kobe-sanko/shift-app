@@ -42,6 +42,7 @@
     .c-kintai   { background: #1a5276; }
     .c-parking  { background: #6c3483; }
     .c-import   { background: #1a6a3a; }
+    .c-login    { background: #34495e; }
     @media (max-width: 768px) {
       .pc-only { display: none; }
       .sp-show { display: block; }
@@ -56,6 +57,26 @@
     <h1>📅 シフト管理システム</h1>
     <a class="btn-manual" href="manual.pdf" target="_blank">📖 マニュアル</a>
   </div>
+
+  <!-- ログインしていない人向け：簡易メニュー -->
+  <div id="guest-view">
+    <div class="section">
+      <div class="section-title">🖥️ 運用</div>
+      <div class="btn-grid">
+        <a href="banmen.html" class="menu-btn c-banmen">盤面</a>
+        <a href="shift_gyoumu.html" class="menu-btn c-shift">業務シフト</a>
+        <a href="chusyajo.html" class="menu-btn c-parking">🅿️ 駐車場状況</a>
+      </div>
+    </div>
+    <div class="section">
+      <div class="btn-grid">
+        <a href="login.html" class="menu-btn c-login">🔐 ログイン</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- ログイン済みの人向け：すべてのメニュー -->
+  <div id="full-view" style="display:none">
 
   <!-- スマホ専用メニュー -->
   <div class="section sp-show">
@@ -112,5 +133,15 @@
       <a href="import.html" class="menu-btn c-import">データインポート</a>
     </div>
   </div>
+
+  </div><!-- /full-view -->
+
+  <script>
+    // ログインしているかどうかで、見せる画面を切り替える
+    if (typeof getAuth === 'function' && getAuth()) {
+      document.getElementById('guest-view').style.display = 'none';
+      document.getElementById('full-view').style.display = '';
+    }
+  </script>
 </body>
 </html>

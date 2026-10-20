@@ -400,7 +400,7 @@
 
     async function loadRows() {
       const [staffRes, baseRes, tekiseiRes] = await Promise.all([
-        sb.from('shift_staff').select('*').order('staff_code'),
+        sb.from('shift_staff').select('staff_code,name,busho_code,car_code,retired,overtime_limit,is_admin,has_smaho').order('staff_code'),
         sb.from('shift_base_gyomu').select('*'),
         sb.from('shift_gyomu_tekisei').select('staff_code, gyomu_code'),
       ]);

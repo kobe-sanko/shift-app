@@ -566,7 +566,7 @@
       const dateTo   = `${year}${String(month).padStart(2,'0')}${String(daysInMonth).padStart(2,'0')}`;
 
       const [staffRes, shiftRes, tekiseiRes, configRes, smahoRes, chibanRes, hyojiJunRes, syakenRes] = await Promise.all([
-        sb.from('shift_staff').select('*').order('staff_code'),
+        sb.from('shift_staff').select('staff_code,name,busho_code,car_code,retired,overtime_limit,is_admin,has_smaho').order('staff_code'),
         sb.from('shift_gyomu_shift').select('*').eq('yearmonth', currentYM),
         sb.from('shift_gyomu_tekisei').select('staff_code, gyomu_code, busho_code'),
         sb.from('shift_banmen_config').select('*').eq('smaho_flg', true).eq('gyomu_code', '配送'),

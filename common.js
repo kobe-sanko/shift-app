@@ -7,9 +7,15 @@
 // ============================================================
 (function () {
   const isLoginPage = /\/login\.html$/.test(location.pathname) || location.pathname.endsWith('login.html');
+
+  // ログインしなくても見られる画面（トップメニュー・盤面・業務シフト・駐車場状況）
+  const publicPages = ['login.html', 'index.html', '', 'banmen.html', 'shift_gyoumu.html', 'chusyajo.html'];
+  const currentPage = location.pathname.split('/').pop();
+  const isPublicPage = publicPages.includes(currentPage);
+
   const authRaw = localStorage.getItem('shiftAppAuth');
 
-  if (!isLoginPage && !authRaw) {
+  if (!isPublicPage && !authRaw) {
     location.href = 'login.html';
     return;
   }
@@ -141,7 +147,8 @@ async function loadMasters() {
   const [bushoRes, gyomuRes, staffRes, carRes] = await Promise.all([
     sb.from('shift_busho').select('*').order('busho_code'),
     sb.from('shift_gyomu').select('*').order('gyomu_code'),
-    sb.from('shift_staff').select('*').order('staff_code'),
+    // パスワードは、ここでは絶対に取得しない（この一覧はログインしていない画面でも使われるため）
+    sb.from('shift_staff').select('staff_code,name,busho_code,car_code,retired,overtime_limit,is_admin,has_smaho').order('staff_code'),
     sb.from('shift_car').select('*').order('car_code'),
   ]);
   // 車番は文字としての並びだと3桁・4桁が混ざるため、数字として並べ直す

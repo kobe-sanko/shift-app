@@ -18,40 +18,126 @@
   </style>
 </head>
 <body>
-  <div class="box">
+  <div class="box" id="login-box">
     <h1>📅 シフト管理システム</h1>
     <input type="text" id="code" placeholder="社員コードを入力" inputmode="numeric" autofocus onkeydown="if(event.key==='Enter') doLogin()">
+    <input type="password" id="pw" placeholder="パスワードを入力" onkeydown="if(event.key==='Enter') doLogin()">
     <button id="btn" onclick="doLogin()">ログイン</button>
     <div class="err" id="err">社員コードが見つかりません</div>
   </div>
 
+  <!-- 初期パスワード（社員コードと同じ）でログインした時に、変更を促す画面 -->
+  <div class="box" id="change-box" style="display:none">
+    <h1>🔑 パスワードの変更</h1>
+    <p style="font-size:0.8rem; color:#555; margin-top:0;">今のパスワードは社員コードのままです。<br>安全のため、新しいパスワードに変更してください。</p>
+    <input type="password" id="new-pw1" placeholder="新しいパスワード" onkeydown="if(event.key==='Enter') doChangePassword()">
+    <input type="password" id="new-pw2" placeholder="新しいパスワード（確認）" onkeydown="if(event.key==='Enter') doChangePassword()">
+    <button id="change-btn" onclick="doChangePassword()">変更してログイン</button>
+    <div class="err" id="change-err"></div>
+    <a href="#" id="skip-link" style="display:block; margin-top:12px; font-size:0.8rem; color:#4a90e2;">あとで変更する（このままログイン）</a>
+  </div>
+
   <script>
+    let pendingAuthData = null; // 初期パスワードでログイン成功した人のデータ（変更画面で使う）
+
+    function enterApp(data) {
+      if (!data) return;
+      // 誰でもログインできる。PC権限（is_admin）は、各画面での「作成・修正できるかどうか」の判定に使う
+      localStorage.setItem('shiftAppAuth', JSON.stringify({ code: data.staff_code, name: data.name, isAdmin: !!data.is_admin }));
+      location.href = 'index.html';
+    }
+
     async function doLogin() {
       const code = document.getElementById('code').value.trim();
+      const pw = document.getElementById('pw').value;
       const err = document.getElementById('err');
       const btn = document.getElementById('btn');
       err.style.display = 'none';
-      err.textContent = '社員コードが見つかりません';
       if (!code) return;
 
       btn.disabled = true;
       btn.textContent = '確認中…';
       const { data, error } = await sb.from('shift_staff')
-        .select('staff_code, name, retired, is_admin')
+        .select('staff_code, name, retired, is_admin, password')
         .eq('staff_code', code)
         .maybeSingle();
       btn.disabled = false;
       btn.textContent = 'ログイン';
 
       if (error || !data || data.retired) {
+        err.textContent = '社員コードが見つかりません';
         err.style.display = 'block';
         return;
       }
 
-      // 誰でもログインできる。PC権限（is_admin）は、各画面での「作成・修正できるかどうか」の判定に使う
-      localStorage.setItem('shiftAppAuth', JSON.stringify({ code: data.staff_code, name: data.name, isAdmin: !!data.is_admin }));
-      location.href = 'index.html';
+      if (!data.password) {
+        err.textContent = 'パスワードが未設定です。管理者に設定を依頼してください';
+        err.style.display = 'block';
+        return;
+      }
+
+      if (pw !== data.password) {
+        err.textContent = 'パスワードが正しくありません';
+        err.style.display = 'block';
+        return;
+      }
+
+      // 初期パスワード（社員コードと同じ）のままなら、変更画面に進む
+      if (data.password === data.staff_code) {
+        pendingAuthData = data;
+        document.getElementById('login-box').style.display = 'none';
+        document.getElementById('change-box').style.display = '';
+        document.getElementById('new-pw1').focus();
+        return;
+      }
+
+      enterApp(data);
     }
+
+    async function doChangePassword() {
+      const pw1 = document.getElementById('new-pw1').value;
+      const pw2 = document.getElementById('new-pw2').value;
+      const err = document.getElementById('change-err');
+      const btn = document.getElementById('change-btn');
+      err.style.display = 'none';
+
+      if (!pw1) {
+        err.textContent = '新しいパスワードを入力してください';
+        err.style.display = 'block';
+        return;
+      }
+      if (pw1 === pendingAuthData.staff_code) {
+        err.textContent = '社員コードと同じパスワードは使えません';
+        err.style.display = 'block';
+        return;
+      }
+      if (pw1 !== pw2) {
+        err.textContent = '確認用のパスワードが一致しません';
+        err.style.display = 'block';
+        return;
+      }
+
+      btn.disabled = true;
+      btn.textContent = '変更中…';
+      const { error } = await sb.from('shift_staff')
+        .update({ password: pw1 })
+        .eq('staff_code', pendingAuthData.staff_code);
+      btn.disabled = false;
+      btn.textContent = '変更してログイン';
+
+      if (error) {
+        err.textContent = '変更に失敗しました: ' + error.message;
+        err.style.display = 'block';
+        return;
+      }
+
+      enterApp(pendingAuthData);
+    }
+
+    document.getElementById('skip-link').onclick = (e) => {
+      e.preventDefault();
+      enterApp(pendingAuthData);
+    };
   </script>
 </body>
 </html>

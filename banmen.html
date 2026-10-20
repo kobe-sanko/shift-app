@@ -184,16 +184,16 @@
     .cell-box.drop-over { background: #fffacd !important; border: 2px dashed #f39c12 !important; }
     .cell-box.filled { background: #fff8e0; border: 1px solid #ccc; }
     .cell-box.osoban { border: 2px solid #1b4f72 !important; background: #eaf4fc; }
+    /* 左パネルの「午前に配置／午後に配置」ボタン：選んでいる方だけ色を付ける */
+    .ampm-btn { flex: 1; padding: 3px 0; border: 1px solid #ccc; border-radius: 4px; background: white; cursor: pointer; }
+    .ampm-btn.active { background: #e67e22; color: white; border-color: #e67e22; font-weight: bold; }
     .cell-box.car-cell { background: #fff8f0; min-width: 40px; padding: 1px 2px; }
     /* 必要台数マスタで設定した範囲の枠は、埋まっていても常に赤枠をつける */
     .cell-box.quota-required { border: 2px solid #e74c3c; }
-    /* 必要台数マスタで設定した台数に届いていない枠を目立たせる（未入力の問題箇所） */
-    .cell-box.quota-missing { outline: 2px solid #e74c3c; outline-offset: -2px; }
-    /* 必要台数の範囲外で、「助手はいるのに運転手がいない」等の注意喚起。赤ではなく黄色で区別する */
-    .cell-box.advisory-missing { outline: 2px solid #f1c40f; outline-offset: -2px; }
-    /* 必要台数を超えた枠に配置されている場合（研修などの目的）に、区別できるよう色を付ける */
-    .cell-box.over-quota { background: #eaf2fb; border-color: #7fa8d9; }
-    .cell-box.over-quota.filled { background: #d9e8fb; }
+    /* 必要台数マスタで設定した台数に届いていない枠を目立たせる（未入力の問題箇所）：赤背景 */
+    .cell-box.quota-missing { background: #e74c3c !important; outline: 2px solid #c0392b; outline-offset: -2px; }
+    /* 必要台数を超えた枠に何か入っている場合（研修などの目的、または本来置くべきでない場所）は、すべて黄色で統一 */
+    .cell-box.over-quota { background: #f4d03f !important; border-color: #d4ac0d; }
     /* スマホ欄は運転・助手欄より控えめに（同じ名前が並んでも目立ちすぎないように） */
     .cell-box[data-field="smaho"] { font-size: 0.62rem; color: #999; background: #fdeef2; min-height: 20px; white-space: nowrap; overflow: hidden; }
     .cell-box[data-field="smaho"] span { white-space: nowrap; }
@@ -391,10 +391,10 @@
       </div>
       <div class="list-section staff-section">
         <div class="list-section-title" id="staff-list-title" onclick="toggleStaffFilter()" style="cursor:pointer;" title="クリックで全員表示と切り替え">👤 社員</div>
-        <label style="display:block;font-size:0.68rem;color:#666;padding:2px 4px;cursor:pointer;">
-          <input type="checkbox" id="show-used-staff-toggle" onclick="event.stopPropagation(); toggleShowUsedStaff();" style="vertical-align:middle;">
-          配置済みも表示（午前午後の2か所目を置くとき）
-        </label>
+        <div style="display:flex;gap:4px;padding:2px 4px;font-size:0.72rem;">
+          <button type="button" id="ampm-am-btn" class="ampm-btn" onclick="event.stopPropagation(); setAmpmMode('am');">午前に配置</button>
+          <button type="button" id="ampm-pm-btn" class="ampm-btn" onclick="event.stopPropagation(); setAmpmMode('pm');">午後に配置</button>
+        </div>
         <div class="list-scroll"><div id="staff-list"></div></div>
       </div>
       <div class="list-section car-section">
@@ -598,7 +598,7 @@
       const dayColB = dayCol + 'b';
 
       const [staffRes, carRes, hakenRes, configRes, banmenRes, banmenHakenRes, oenRes, tekiseiRes, gyomuRes, gyomuShiftRes, bushoTekiseiRes, syakenRes, carQuotaRes, dayStatusRes, specialHolidayRes] = await Promise.all([
-        sb.from('shift_staff').select('*').order('staff_code'),
+        sb.from('shift_staff').select('staff_code,name,busho_code,car_code,retired,overtime_limit,is_admin,has_smaho').order('staff_code'),
         sb.from('shift_car').select('*').order('car_code'),
         sb.from('shift_haken').select('*').order('haken_name'),
         sb.from('shift_banmen_config').select('*').order('hyoji_jun'),
@@ -752,9 +752,13 @@
       applyMobileLockIfNeeded();
 
       // 盤面が表示されたあとで、重複していた枠があればその場で配置先を選べる通知を出す
-      // （スマホでまだ確定していない日を隠しているときは、通知も出さない）
-      if (conflicts && conflicts.length > 0 && !(isMobileWidth() && !dayIsComplete)) {
-        showConflictResolver(conflicts, loadId);
+      // （スマホでまだ確定していない日を隠しているときは、新しい通知は出さない）。
+      // 前の日付の重複通知がそのまま残らないよう、重複がない日・出さない日でも必ずリセットする
+      const shouldShowConflicts = !(isMobileWidth() && !dayIsComplete);
+      showConflictResolver(shouldShowConflicts ? (conflicts || []) : [], loadId);
+      if (conflicts && conflicts.length > 0 && shouldShowConflicts) {
+        // 重複で配置待ちになっている人を、左の社員リストにも表示されるようにする
+        buildLeftPanel();
       }
     }
 
@@ -905,10 +909,10 @@
       const driverInserts = {}; // 新規insert用: key: bushoCode|rowNo
       const fieldUpdates = [];  // 既存行への補完update用: { id, field, staff_code }
 
-      // すでにこの日の盤面で使われている車を集めておく（自動配置で重複させないため）
-      const carsAssignedToday = new Set(
-        banmenData.filter(r => r.car_code).map(r => r.car_code)
-      );
+      // すでにこの日の盤面で使われている車を集めておく（自動配置で重複させないため）。
+      // どの社員が使っているかも覚えておき、同じ人の午前・午後の別の枠であれば使い回せるようにする
+      const carsAssignedToday = new Map(); // car_code → 使っている社員コード
+      banmenData.forEach(r => { if (r.car_code) carsAssignedToday.set(r.car_code, r.driver || null); });
 
       // 運転者の社員コード→車番（社員マスタに紐づく車両）を引けるようにしておく
       function getLinkedCar(staffCode) {
@@ -919,7 +923,8 @@
         // その車番をそのまま盤面に出してしまわないようにする
         if (!carRows.some(c => c.car_code === car)) return null;
         if (syakenCarCodes.has(car)) return null; // 車検などで使えない車は自動セットしない
-        if (carsAssignedToday.has(car)) return null; // すでに他の人にこの日割り当て済みの車は重複させない
+        const holder = carsAssignedToday.get(car);
+        if (holder !== undefined && holder !== staffCode) return null; // 他の人がすでに使っている車は重複させない
         return car;
       }
 
@@ -970,7 +975,7 @@
               const linkedCar = getLinkedCar(staff_code);
               if (linkedCar) {
                 fieldUpdates.push({ id: existingRow.id, field: 'car_code', staff_code: linkedCar });
-                carsAssignedToday.add(linkedCar);
+                carsAssignedToday.set(linkedCar, staff_code);
               }
             }
           }
@@ -985,7 +990,7 @@
             const linkedCar = getLinkedCar(staff_code);
             if (linkedCar) {
               driverInserts[key].car_code = linkedCar;
-              carsAssignedToday.add(linkedCar);
+              carsAssignedToday.set(linkedCar, staff_code);
             }
           }
         }
@@ -1098,10 +1103,14 @@
       return tekisei ? tekisei.has(bushoCode) : false;
     }
 
-    // すでに盤面に配置されている人を、左のリストにも表示するかどうか（午前午後の2か所目を置くときだけON）
-    let showUsedStaff = false;
-    function toggleShowUsedStaff() {
-      showUsedStaff = document.getElementById('show-used-staff-toggle').checked;
+    // 「午前に配置」「午後に配置」ボタン：選んでいる間は、配置先が自動で午前／午後になり、
+    // すでに配置済みの人も左リストに表示される（2か所目を選びやすくするため）。
+    // もう一度同じボタンを押すと解除され、いつも通りの自動判定に戻る
+    let ampmMode = null; // null（通常）/ 'am' / 'pm'
+    function setAmpmMode(mode) {
+      ampmMode = (ampmMode === mode) ? null : mode;
+      document.getElementById('ampm-am-btn').classList.toggle('active', ampmMode === 'am');
+      document.getElementById('ampm-pm-btn').classList.toggle('active', ampmMode === 'pm');
       buildLeftPanel();
     }
 
@@ -1134,6 +1143,11 @@
       // 配置済みのstaff_code（非表示にはせず、見た目で分かるようにするために使う）
       const usedStaff = getUsedStaffSet();
 
+      // 「業務シフトの重複」でまだ配置先が決まっていない人は、業務シフトには登録があっても
+      // 左のリストから消さずに残す（通知のチップだけでなく、左リストからもドラッグできるように）
+      const conflictStaffCodes = new Set();
+      conflictQueue.forEach(c => c.staffCodes.forEach(code => conflictStaffCodes.add(code)));
+
       const usedCars = new Set(banmenData.filter(r => r.car_code).map(r => r.car_code));
       const usedHaken = new Set();
       hakenData.forEach(r => { if (r.haken_name) usedHaken.add(r.haken_name + '_' + r.renban); });
@@ -1146,8 +1160,8 @@
         // 今日の業務シフトに登録済みの人は非表示。
         // すでに盤面に配置されている人も、「配置済みも表示」がONのとき以外は非表示にする
         // （誰がまだ残っているか分かりやすくするため。2か所目に置きたいときだけONにする）
-        if (usedStaff.has(s.staff_code) && !showUsedStaff) return;
-        if (todayShiftStaffCodes.has(s.staff_code) && !usedStaff.has(s.staff_code)) return;
+        if (usedStaff.has(s.staff_code) && !ampmMode) return;
+        if (todayShiftStaffCodes.has(s.staff_code) && !usedStaff.has(s.staff_code) && !conflictStaffCodes.has(s.staff_code)) return;
         if (leftPanelBushoFilter) {
           if (!isStaffInBusho(s, leftPanelBushoFilter)) return;
         } else if (staffFilterMode === 'relevant' && !isStaffRelevant(s)) {
@@ -1157,7 +1171,7 @@
         const isUsed = usedStaff.has(s.staff_code);
         // 配置済みの人は非表示にせず、薄く表示して「もう一か所配置できる」ことが分かるようにする
         el.className = 'list-item staff' + (isUsed ? ' staff-used' : '');
-        el.textContent = (s.name || s.staff_code) + (isUsed ? '（配置済み）' : '');
+        el.textContent = s.name || s.staff_code;
         // 自分の所属とは違う所属の業務が今日すでに入っている場合、名前をその所属の色にする
         // （盤面に自動配置されて「配置済み」表示になっている人にも、分かるように色をつける）
         const otherColor = staffOtherBushoColor[s.staff_code];
@@ -1550,9 +1564,11 @@
 
         const tr = document.createElement('tr');
 
-        // 必要台数を超えた枠に配置されている（研修などの目的で置かれた）行かどうか
-        const isOverQuota = needCar > 0 && row > needCar && (rowData?.driver || rowData?.car_code);
-        const isOverQuotaJyoshu = needJyoshu > 0 && row > needJyoshu && rowData?.jyoshu1;
+        // 必要台数を超えた枠は、自分自身（車番・運転・助手それぞれ）に何か入っているときだけ黄色にする。
+        // 空いたままの枠には付けない（行の他の欄が埋まっていても付けない）
+        const isOverQuotaCar = needCar > 0 && row > needCar && !!rowData?.car_code;
+        const isOverQuotaDriver = needCar > 0 && row > needCar && !!rowData?.driver;
+        const isOverQuotaJyoshu = needJyoshu > 0 && row > needJyoshu && !!rowData?.jyoshu1;
 
         // 車番セル
         const carTd = document.createElement('td');
@@ -1560,13 +1576,11 @@
         carBox.classList.add('car-cell');
         // 必要台数の範囲内の枠は、埋まっていても常に赤枠をつける
         if (row <= needCar) carBox.classList.add('quota-required');
-        // 必要台数が足りていない（範囲内なのに空欄）→ 赤。範囲外だが運転手がいるのに車番がない→ 注意として黄色
+        // 必要台数が足りていない（範囲内なのに空欄）→ 赤
         if (row <= needCar && !rowData?.car_code) {
           carBox.classList.add('quota-missing');
-        } else if (row > needCar && rowData?.driver && !rowData?.car_code) {
-          carBox.classList.add('advisory-missing');
         }
-        if (isOverQuota) carBox.classList.add('over-quota');
+        if (isOverQuotaCar) carBox.classList.add('over-quota');
         carTd.appendChild(carBox);
         // 「＋1台」で追加した枠が、まだ何も入っていなければ、取り消せるように✕を出す
         const isExtraRow = row > rowCount && rowData && rowData.id;
@@ -1588,13 +1602,11 @@
         const driverTd = document.createElement('td');
         const driverBox = makeCell('staff', bushoCode, '配送', row, 'driver', rowData?.driver, isOsoban, rowData?.driver_ampm);
         if (row <= needCar) driverBox.classList.add('quota-required');
-        // 必要台数が足りていない（範囲内なのに空欄）→ 赤。範囲外だが助手がいるのに運転手がいない→ 注意として黄色
+        // 必要台数が足りていない（範囲内なのに空欄）→ 赤
         if (row <= needCar && !rowData?.driver) {
           driverBox.classList.add('quota-missing');
-        } else if (row > needCar && rowData?.jyoshu1 && !rowData?.driver) {
-          driverBox.classList.add('advisory-missing');
         }
-        if (isOverQuota) driverBox.classList.add('over-quota');
+        if (isOverQuotaDriver) driverBox.classList.add('over-quota');
         driverTd.appendChild(driverBox);
         tr.appendChild(driverTd);
 
@@ -1602,7 +1614,10 @@
         for (let j = 1; j <= jyoshuCount; j++) {
           const jTd = document.createElement('td');
           const jField = j === 1 ? 'jyoshu1' : 'jyoshu2';
-          const jBox = makeCell('staff', bushoCode, '配送', row, jField, rowData?.[jField], isOsoban, rowData?.[jField + '_ampm']);
+          // 助手なしの行（必要な助手あり台数の範囲外）は、そもそも助手の枠がないので、
+          // 遅番の青枠はここには付けない（運転・車番だけに付ける）
+          const jIsOsoban = j === 1 && isOsoban && row <= needJyoshu;
+          const jBox = makeCell('staff', bushoCode, '配送', row, jField, rowData?.[jField], jIsOsoban, rowData?.[jField + '_ampm']);
           if (j === 1 && row <= needJyoshu) jBox.classList.add('quota-required');
           if (j === 1 && row <= needJyoshu && !rowData?.jyoshu1) jBox.classList.add('quota-missing');
           if (j === 1 && isOverQuotaJyoshu) jBox.classList.add('over-quota');
@@ -2197,8 +2212,19 @@
     }
 
     // ドラッグで配置が完了したときに、そのカードを通知から取り除く（handleDropの最後から呼ばれる）
-    function advanceConflictIfMatches(staffType, staffCode) {
+    function advanceConflictIfMatches(staffType, staffCode, bushoCode, rowNo, field) {
       if (staffType !== 'staff' || conflictQueue.length === 0) return;
+      // ドロップ先が、ちょうど重複していたその枠と同じなら、座席はもう埋まったということなので、
+      // 他の候補も含めてその枠の重複をまるごと解消する（座席は1つしかないため）
+      const beforeLen = conflictQueue.length;
+      conflictQueue = conflictQueue.filter(c =>
+        !(c.bushoCode === bushoCode && c.rowNo === rowNo && c.field === field)
+      );
+      if (conflictQueue.length !== beforeLen) {
+        renderConflictDialog();
+        return;
+      }
+      // 枠が一致しない場所に配置された場合は、従来通りその人だけを候補から外す
       let changed = false;
       conflictQueue.forEach(c => {
         const idx = c.staffCodes.indexOf(staffCode);
@@ -2257,14 +2283,19 @@
       }
 
       // すでに他の枠に配置済みの社員を、別の枠にも配置しようとしている場合は確認する（午前午後で別の業務につく場合など）。
-      // 2つ目の配置は「午後」、最初からあった方は「午前」として自動的に区別する
+      // 左の「午前に配置／午後に配置」ボタンを選んでいるときは、確認せずそのままそちらのタグで配置する。
+      // 選んでいないときは、2つ目の配置は「午後」、最初からあった方は「午前」として自動的に区別する
       let newAmpm = null;
       if (dragInfo.type === 'staff' && acceptType === 'staff') {
-        const usedStaff = getUsedStaffSet();
-        if (usedStaff.has(dragInfo.code)) {
-          const result = await showDialog(`「${dragInfo.name}」はすでに別の枠に配置されています。\n続けてここにも配置しますか？（最初の枠が午前、こちらが午後として扱われます）`);
-          if (!result.ok) return;
-          newAmpm = 'pm';
+        if (ampmMode) {
+          newAmpm = ampmMode;
+        } else {
+          const usedStaff = getUsedStaffSet();
+          if (usedStaff.has(dragInfo.code)) {
+            const result = await showDialog(`「${dragInfo.name}」はすでに別の枠に配置されています。\n続けてここにも配置しますか？（最初の枠が午前、こちらが午後として扱われます）`);
+            if (!result.ok) return;
+            newAmpm = 'pm';
+          }
         }
       }
 
@@ -2332,9 +2363,10 @@
         const staff = staffRows.find(s => s.staff_code === dragInfo.code);
         const linkedCar = staff?.car_code;
         const currentCarCode = existing?.car_code;
-        // すでに他の行でこの車が使われていないか確認（重複防止）
+        // すでに他の行でこの車が使われていないか確認（重複防止）。
+        // ただし、同じ人の午前・午後の別の枠で使っているだけなら、同じ車を使い回せるようにする
         const carUsedElsewhere = linkedCar && banmenData.some(r =>
-          r.car_code === linkedCar && r.id !== existing?.id
+          r.car_code === linkedCar && r.id !== existing?.id && r.driver !== dragInfo.code
         );
         // すでに車番欄が埋まっておらず、他で使われておらず、車検などでも使えなければ自動セット
         if (linkedCar && linkedCar !== 'EMPTY' && !currentCarCode && !carUsedElsewhere && !syakenCarCodes.has(linkedCar)) {
@@ -2489,7 +2521,7 @@
       buildBoard();
 
       // 業務シフトの重複通知で「配置待ち」だった人が、今のドラッグで配置されたら通知を1件進める
-      advanceConflictIfMatches(dragInfo.type, dragInfo.code);
+      advanceConflictIfMatches(dragInfo.type, dragInfo.code, bushoCode, rowNo, field);
     }
 
     async function clearCell(e, btn) {
@@ -2846,14 +2878,27 @@
             const isOsoban = isOsobanRowExcel(r);
             // 遅番は車番の欄に余白があるので、車番の前に「遅」を入れる
             const carVal = isOsoban ? ('遅' + (rec?.car_code ? ' ' + rec.car_code : '')) : (rec?.car_code || '');
-            const vals = [carVal, getStaffName(rec?.driver)];
-            for (let j = 1; j <= jyoshuCount; j++) vals.push(getStaffName(rec?.[j === 1 ? 'jyoshu1' : 'jyoshu2']));
-            if (showSmaho) vals.push(getStaffName(rec?.smaho));
+            // 午前・午後は、名前の後ろに同じ形のかっこで囲んで区別する（印刷してモノクロになっても分かるように）
+            function withAmpmMark(text, ampm) {
+              if (!text) return '';
+              if (ampm === 'am') return text + ' 【前】';
+              if (ampm === 'pm') return text + ' 【後】';
+              return text;
+            }
+            const vals = [
+              { text: carVal },
+              { text: withAmpmMark(getStaffName(rec?.driver), rec?.driver_ampm) },
+            ];
+            for (let j = 1; j <= jyoshuCount; j++) {
+              const jf = j === 1 ? 'jyoshu1' : 'jyoshu2';
+              vals.push({ text: withAmpmMark(getStaffName(rec?.[jf]), rec?.[jf + '_ampm']) });
+            }
+            if (showSmaho) vals.push({ text: getStaffName(rec?.smaho) });
 
             const osobanBorder = { style: 'thick', color: { argb: 'FF1B4F72' } };
-            vals.forEach((v, i) => {
+            vals.forEach((entry, i) => {
               const cell = sheet.getCell(row, col0 + i);
-              cell.value = v;
+              cell.value = entry.text;
               cell.alignment = { horizontal: 'center', vertical: 'middle' };
               cell.border = isOsoban
                 ? { top: osobanBorder, bottom: osobanBorder, left: osobanBorder, right: osobanBorder }
@@ -2862,7 +2907,13 @@
                 cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEAF4FC' } };
               }
               if (i === 0 && isOsoban) {
-                cell.font = { bold: true, color: { argb: 'FF1B4F72' } };
+                cell.font = { color: { argb: 'FF1B4F72' } };
+              }
+              // 運転・助手欄は、【午前】【午後】のタグが付くと文字数が増えて
+              // はみ出すことがあるので、実際の文字数に合わせて列幅を広げる
+              if (i >= 1) {
+                const neededWidth = excelTextWidth(entry.text) + 2;
+                sheet.getColumn(col0 + i).width = Math.max(sheet.getColumn(col0 + i).width || 0, neededWidth);
               }
             });
             row++;
@@ -3136,6 +3187,16 @@
       if (!code) return '';
       const s = staffRows.find(s => s.staff_code === code);
       return s?.name || code;
+    }
+    // Excel出力用：文字列の見た目の幅を概算する（全角は2、半角は1として数える）。
+    // 列幅をこの文字数に合わせて自動で広げるために使う
+    function excelTextWidth(str) {
+      if (!str) return 0;
+      let width = 0;
+      for (const ch of str) {
+        width += /[^\x00-\xff]/.test(ch) ? 2 : 1;
+      }
+      return width;
     }
     async function recreate() {
       if (!canEdit()) { showMsg('閲覧のみモードのため再作成できません', 'err'); return; }
