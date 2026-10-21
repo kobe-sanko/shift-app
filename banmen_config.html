@@ -62,11 +62,17 @@
     .empty-msg { text-align: center; padding: 20px; color: #aaa; font-size: 0.85rem; }
     .special-item { background: #f9f9f9; }
     .loading { text-align: center; padding: 20px; color: #888; }
+    .board-tab { padding: 6px 16px; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85rem; font-weight: bold; background: #ddd; color: #555; }
+    .board-tab.active { background: #4a90e2; color: white; }
   </style>
 </head>
 <body>
   <h1>⚙️ 盤面レイアウト設定</h1>
-  <a class="back" href="banmen.html">← 盤面へ戻る</a>
+  <a class="back" id="back-link" href="banmen.html">← 盤面へ戻る</a>
+  <div class="board-tabs" id="board-tabs" style="display:flex;justify-content:center;gap:6px;margin-bottom:10px;">
+    <button type="button" class="board-tab" id="board-tab-1" onclick="switchBoard(1)">盤面1の設定</button>
+    <button type="button" class="board-tab" id="board-tab-2" onclick="switchBoard(2)">盤面2の設定</button>
+  </div>
   <div id="msg" class="msg"></div>
 
   <div class="desc">
@@ -155,13 +161,36 @@
     let masters = {};
     let configData = []; // Supabaseから読み込んだ生データ
     let editingBusho = null; // 編集中の所属コード
+    let currentBoard = 1; // 盤面1／盤面2のどちらを設定しているか
 
     async function init() {
+      const params = new URLSearchParams(location.search);
+      currentBoard = params.get('board') === '2' ? 2 : 1;
+      updateBoardTabs();
       masters = await loadMasters();
       buildBushoSelect();
       buildYasumiBushoChecks();
       lockMasterFormIfNeeded('.add-box input, .add-box select, .add-box button');
       await loadConfig();
+    }
+
+    function switchBoard(n) {
+      if (n === currentBoard) return;
+      currentBoard = n;
+      updateBoardTabs();
+      const url = new URL(location.href);
+      url.searchParams.set('board', String(n));
+      history.replaceState(null, '', url);
+      cancelEdit();
+      document.getElementById('loading').style.display = 'block';
+      document.getElementById('config-list').style.display = 'none';
+      loadConfig();
+    }
+
+    function updateBoardTabs() {
+      document.getElementById('board-tab-1').classList.toggle('active', currentBoard === 1);
+      document.getElementById('board-tab-2').classList.toggle('active', currentBoard === 2);
+      document.getElementById('back-link').href = 'banmen.html?board=' + currentBoard;
     }
 
     function buildBushoSelect() {
@@ -197,7 +226,7 @@
     }
 
     async function loadConfig() {
-      const { data, error } = await sb.from('shift_banmen_config').select('*').order('hyoji_jun');
+      const { data, error } = await sb.from('shift_banmen_config').select('*').eq('board_no', currentBoard).order('hyoji_jun');
       if (error) { showMsg('読み込みに失敗しました: ' + error.message, 'err'); return; }
       configData = data || [];
       renderList();
@@ -555,21 +584,21 @@
         const smahoFlg    = el.dataset.smahoFlg === 'true';
 
         if (haisouRows > 0) records.push({
-          busho_code: bc, gyomu_code: '配送',
+          busho_code: bc, gyomu_code: '配送', board_no: currentBoard,
           row_count: haisouRows, jyoshu_count: haisouHelper,
           hyoji_jun: hyojiJun++, col_no: colNo, row_no: rowNo,
           busho_hyoji_jun: spJun, col_width: 1, sp_jun: 1,
           smaho_flg: smahoFlg,
         });
         if (sokoRows > 0) records.push({
-          busho_code: bc, gyomu_code: '倉庫',
+          busho_code: bc, gyomu_code: '倉庫', board_no: currentBoard,
           row_count: sokoRows, jyoshu_count: sokoCols,
           osoban_row: 0,
           hyoji_jun: hyojiJun++, col_no: colNo, row_no: rowNo,
           busho_hyoji_jun: spJun, col_width: 1, sp_jun: 1,
         });
         if (jimuRows > 0) records.push({
-          busho_code: bc, gyomu_code: '事務',
+          busho_code: bc, gyomu_code: '事務', board_no: currentBoard,
           row_count: jimuRows, jyoshu_count: jimuCols,
           osoban_row: 0,
           hyoji_jun: hyojiJun++, col_no: colNo, row_no: rowNo,
@@ -590,7 +619,7 @@
         const displayOrder = Number.isFinite(displayOrderVal) ? displayOrderVal : 999;
         records.push({
           busho_code: spJun === 99 ? 'お休み' : spJun === 98 ? '応援' : '車検',
-          gyomu_code: '特殊',
+          gyomu_code: '特殊', board_no: currentBoard,
           row_count: ncols, jyoshu_count: 0, osoban_row: 0,
           hyoji_jun: hyojiJun++, col_no: colNo, row_no: rowNo,
           busho_hyoji_jun: displayOrder, col_width: ncols, sp_jun: spJun,
@@ -598,8 +627,8 @@
         });
       });
 
-      // 全削除してから再insert
-      const { error: delErr } = await sb.from('shift_banmen_config').delete().neq('id', 0);
+      // この盤面（盤面1 または 盤面2）の分だけ全削除してから再insert（もう一方の盤面の設定は消さない）
+      const { error: delErr } = await sb.from('shift_banmen_config').delete().eq('board_no', currentBoard);
       if (delErr) { showMsg('保存に失敗しました（削除エラー）: ' + delErr.message, 'err'); return; }
 
       if (records.length > 0) {

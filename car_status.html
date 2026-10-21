@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>車両使用状況</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="common.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: sans-serif; margin: 0 auto; padding: 10px; background: #f5f5f5; max-width: 900px; }
+    h1 { font-size: 1.2rem; text-align: center; margin: 8px 0; }
+    .back { display: block; text-align: center; margin-bottom: 8px; color: #4a90e2; text-decoration: none; }
+    .date-nav { display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 12px; }
+    .date-nav button { background: #444; color: white; border: none; border-radius: 4px; padding: 5px 12px; cursor: pointer; font-size: 1rem; }
+    .date-nav button:hover { background: #666; }
+    .date-label { font-size: 1.05rem; font-weight: bold; min-width: 170px; text-align: center; }
+    .date-nav input[type="date"] { position: absolute; opacity: 0; width: 0; height: 0; }
+
+    .summary-row { display: flex; justify-content: center; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
+    .summary-chip { padding: 6px 16px; border-radius: 20px; font-size: 0.9rem; font-weight: bold; color: white; }
+    .summary-used    { background: #27ae60; }
+    .summary-unused  { background: #95a5a6; }
+    .summary-syaken  { background: #e67e22; }
+
+    .filter-row { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin-bottom: 14px; }
+    .filter-btn { padding: 4px 12px; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85rem; }
+    .filter-btn.active { outline: 3px solid #333; font-weight: bold; }
+
+    .legend { display: flex; justify-content: center; gap: 16px; font-size: 0.78rem; color: #666; margin-bottom: 14px; flex-wrap: wrap; }
+    .legend span { display: inline-flex; align-items: center; gap: 4px; }
+    .legend-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+
+    .busho-group { background: white; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.1); margin-bottom: 14px; overflow: hidden; }
+    .busho-group-title { padding: 8px 12px; font-weight: bold; font-size: 0.9rem; }
+    .car-grid { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 12px; }
+    .car-chip {
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      min-width: 64px; padding: 8px 6px; border-radius: 8px; font-size: 0.82rem; font-weight: bold;
+      border: 2px solid transparent;
+    }
+    .car-chip .car-no { font-size: 0.95rem; }
+    .car-chip .car-state { font-size: 0.68rem; font-weight: normal; margin-top: 2px; }
+    .car-chip.used   { background: #eafaf0; border-color: #27ae60; color: #1e7e42; }
+    .car-chip.unused { background: #f2f2f2; border-color: #bbb; color: #777; }
+    .car-chip.syaken { background: #fdf0e0; border-color: #e67e22; color: #a85c00; }
+
+    .loading { text-align: center; padding: 20px; color: #888; }
+    .empty-msg { text-align: center; padding: 20px; color: #aaa; }
+  </style>
+</head>
+<body>
+  <h1>🚗 車両使用状況</h1>
+  <a class="back" href="index.html">← メニューへ</a>
+
+  <div class="date-nav">
+    <button onclick="changeDate(-1)">◀</button>
+    <span class="date-label" id="date-label">読込中...</span>
+    <button onclick="changeDate(1)">▶</button>
+    <button onclick="document.getElementById('date-picker').showPicker()" style="background:#444;">📅</button>
+    <input type="date" id="date-picker" onchange="onDatePicked(this.value)">
+  </div>
+
+  <div class="summary-row" id="summary-row"></div>
+
+  <div class="legend">
+    <span><span class="legend-dot" style="background:#27ae60"></span>使用中</span>
+    <span><span class="legend-dot" style="background:#bbb"></span>未使用</span>
+    <span><span class="legend-dot" style="background:#e67e22"></span>車検・修理中</span>
+  </div>
+
+  <div class="filter-row" id="filter-row">
+    <button class="filter-btn active" style="background:#555;color:white" onclick="filterBusho('',this)">全部</button>
+  </div>
+
+  <div id="loading" class="loading">読み込み中...</div>
+  <div id="body-area" style="display:none"></div>
+
+  <script>
+    let masters = {};
+    let currentDate = new Date();
+    let carRows = [];
+    let usedCarCodes = new Set();     // その日、盤面（配送）で使われている車のcar_code
+    let syakenCarCodes = new Map();   // その日、車検・修理などで使えない車のcar_code→理由
+    let currentFilter = '';
+
+    function getDateStr(d) {
+      return `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;
+    }
+    function getDateLabel(d) {
+      const wds = ['日','月','火','水','木','金','土'];
+      return `${d.getFullYear()}年${d.getMonth()+1}月${d.getDate()}日（${wds[d.getDay()]}）`;
+    }
+    function changeDate(delta) {
+      currentDate.setDate(currentDate.getDate() + delta);
+      loadData();
+    }
+    function onDatePicked(str) {
+      if (!str) return;
+      const [y, m, d] = str.split('-').map(Number);
+      currentDate = new Date(y, m - 1, d);
+      loadData();
+    }
+
+    async function init() {
+      masters = await loadMasters();
+      buildFilterButtons();
+      await loadData();
+    }
+
+    function buildFilterButtons() {
+      const row = document.getElementById('filter-row');
+      masters.bushos.filter(b => !b.busho_code.startsWith('9')).forEach(b => {
+        const btn = document.createElement('button');
+        btn.className = 'filter-btn';
+        btn.style.background = b.color_h;
+        btn.style.color = getTextColor(b.color_h);
+        btn.textContent = b.busho_name;
+        btn.onclick = () => filterBusho(b.busho_code, btn);
+        row.appendChild(btn);
+      });
+    }
+
+    function filterBusho(bushoCode, btn) {
+      currentFilter = bushoCode;
+      document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+      if (btn) btn.classList.add('active');
+      renderBody();
+    }
+
+    async function loadData() {
+      document.getElementById('loading').style.display = 'block';
+      document.getElementById('body-area').style.display = 'none';
+
+      const dateStr = getDateStr(currentDate);
+      document.getElementById('date-label').textContent = getDateLabel(currentDate);
+
+      // 盤面1・盤面2どちらの所属も区別せず、その日のすべての配置データから「使われている車」を集める
+      const [carRes, banmenRes, syakenRes] = await Promise.all([
+        sb.from('shift_car').select('*').eq('is_active', true),
+        sb.from('shift_banmen').select('car_code').eq('date', dateStr),
+        sb.from('shift_syaken').select('car_code, memo').eq('date', dateStr),
+      ]);
+
+      carRows = (carRes.data || []).slice().sort((a, b) => (parseInt(a.car_code) || 0) - (parseInt(b.car_code) || 0));
+      usedCarCodes = new Set((banmenRes.data || []).filter(r => r.car_code).map(r => r.car_code));
+      syakenCarCodes = new Map((syakenRes.data || []).map(r => [r.car_code, r.memo || '車検']));
+
+      renderBody();
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('body-area').style.display = '';
+    }
+
+    function renderBody() {
+      const area = document.getElementById('body-area');
+      area.innerHTML = '';
+
+      const targetCars = currentFilter ? carRows.filter(c => c.busho_code === currentFilter) : carRows;
+
+      // サマリー（使用中・未使用・車検修理中の台数）
+      let usedCount = 0, syakenCount = 0;
+      targetCars.forEach(c => {
+        if (syakenCarCodes.has(c.car_code)) syakenCount++;
+        else if (usedCarCodes.has(c.car_code)) usedCount++;
+      });
+      const unusedCount = targetCars.length - usedCount - syakenCount;
+      document.getElementById('summary-row').innerHTML = `
+        <span class="summary-chip summary-used">使用中：${usedCount}台</span>
+        <span class="summary-chip summary-unused">未使用：${unusedCount}台</span>
+        <span class="summary-chip summary-syaken">車検・修理中：${syakenCount}台</span>
+      `;
+
+      if (targetCars.length === 0) {
+        area.innerHTML += '<div class="empty-msg">対象の車両がありません</div>';
+        return;
+      }
+
+      // 所属ごとにグループ化（所属未設定の車はまとめて最後に表示）
+      const groups = {};
+      const order = [];
+      targetCars.forEach(c => {
+        const key = c.busho_code || '__none__';
+        if (!groups[key]) { groups[key] = []; order.push(key); }
+        groups[key].push(c);
+      });
+
+      order.forEach(bushoCode => {
+        const busho = masters.bushoMap[bushoCode];
+        const bname = busho ? busho.busho_name : '所属未設定';
+        const bcolor = busho ? busho.color_h : '#999';
+
+        const group = document.createElement('div');
+        group.className = 'busho-group';
+        let html = `<div class="busho-group-title" style="background:${bcolor};color:${getTextColor(bcolor)}">${bname}</div><div class="car-grid">`;
+        groups[bushoCode].forEach(c => {
+          let state = 'unused', label = '未使用';
+          if (syakenCarCodes.has(c.car_code)) { state = 'syaken'; label = syakenCarCodes.get(c.car_code); }
+          else if (usedCarCodes.has(c.car_code)) { state = 'used'; label = '使用中'; }
+          html += `
+            <div class="car-chip ${state}">
+              <div class="car-no">${c.car_no || c.car_code}</div>
+              <div class="car-state">${label}</div>
+            </div>`;
+        });
+        html += '</div>';
+        group.innerHTML = html;
+        area.appendChild(group);
+      });
+    }
+
+    init();
+  </script>
+</body>
+</html>

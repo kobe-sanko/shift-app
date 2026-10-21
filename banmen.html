@@ -28,6 +28,14 @@
     .btn-complete.complete { background: #27ae60; }
     .btn-complete:disabled { cursor: default; opacity: 0.85; }
 
+    /* ===== 盤面の切り替えタブ（盤面1／盤面2） ===== */
+    .board-tabs { display: flex; gap: 4px; }
+    .board-tab {
+      padding: 4px 12px; border: none; border-radius: 4px; cursor: pointer;
+      font-size: 0.78rem; font-weight: bold; background: #555; color: #ccc;
+    }
+    .board-tab.active { background: #4a90e2; color: white; }
+
     /* ===== レイアウト ===== */
     .main-layout { display: flex; height: calc(100vh - 38px - var(--shift-auth-bar-h, 0px)); }
 
@@ -185,8 +193,11 @@
     .cell-box.filled { background: #fff8e0; border: 1px solid #ccc; }
     .cell-box.osoban { border: 2px solid #1b4f72 !important; background: #eaf4fc; }
     /* 左パネルの「午前に配置／午後に配置」ボタン：選んでいる方だけ色を付ける */
-    .ampm-btn { flex: 1; padding: 3px 0; border: 1px solid #ccc; border-radius: 4px; background: white; cursor: pointer; }
-    .ampm-btn.active { background: #e67e22; color: white; border-color: #e67e22; font-weight: bold; }
+    .ampm-btn { flex: 1; padding: 3px 0; border: 1px solid #ccc; border-radius: 4px; cursor: pointer; font-size: 0.65rem; }
+    .ampm-btn.ampm-am { background: #d6eaf8; border-color: #aed6f1; }
+    .ampm-btn.ampm-pm { background: #fdebd0; border-color: #f8d7a3; }
+    .ampm-btn.ampm-am.active { background: #2980b9; color: white; border-color: #2980b9; font-weight: bold; }
+    .ampm-btn.ampm-pm.active { background: #e67e22; color: white; border-color: #e67e22; font-weight: bold; }
     .cell-box.car-cell { background: #fff8f0; min-width: 40px; padding: 1px 2px; }
     /* 必要台数マスタで設定した範囲の枠は、埋まっていても常に赤枠をつける */
     .cell-box.quota-required { border: 2px solid #e74c3c; }
@@ -332,6 +343,10 @@
 <body>
   <div class="top-bar">
     <a href="index.html">← メニュー</a>
+    <div class="board-tabs" id="board-tabs">
+      <button type="button" class="board-tab" id="board-tab-1" onclick="switchBoard(1)">盤面1</button>
+      <button type="button" class="board-tab" id="board-tab-2" onclick="switchBoard(2)">盤面2</button>
+    </div>
     <div class="date-nav">
       <button onclick="changeDate(-1)">◀</button>
       <span class="date-label" id="date-label">読込中...</span>
@@ -342,7 +357,7 @@
     <button class="btn-top btn-complete" id="btn-complete" onclick="toggleComplete()">確認中…</button>
     <button class="btn-top btn-recreate" onclick="recreate()">🔄 再作成</button>
     <button class="btn-top btn-excel" onclick="exportExcel()">📊 Excel出力</button>
-    <button class="btn-top btn-config" onclick="location.href='banmen_config.html'">⚙ 設定</button>
+    <button class="btn-top btn-config" onclick="location.href='banmen_config.html?board=' + currentBoard">⚙ 設定</button>
   </div>
 
   <!-- スマホ用：所属で絞り込むプルダウン（PCでは表示しない） -->
@@ -392,8 +407,8 @@
       <div class="list-section staff-section">
         <div class="list-section-title" id="staff-list-title" onclick="toggleStaffFilter()" style="cursor:pointer;" title="クリックで全員表示と切り替え">👤 社員</div>
         <div style="display:flex;gap:4px;padding:2px 4px;font-size:0.72rem;">
-          <button type="button" id="ampm-am-btn" class="ampm-btn" onclick="event.stopPropagation(); setAmpmMode('am');">午前に配置</button>
-          <button type="button" id="ampm-pm-btn" class="ampm-btn" onclick="event.stopPropagation(); setAmpmMode('pm');">午後に配置</button>
+          <button type="button" id="ampm-am-btn" class="ampm-btn ampm-am" onclick="event.stopPropagation(); setAmpmMode('am');">午前</button>
+          <button type="button" id="ampm-pm-btn" class="ampm-btn ampm-pm" onclick="event.stopPropagation(); setAmpmMode('pm');">午後</button>
         </div>
         <div class="list-scroll"><div id="staff-list"></div></div>
       </div>
@@ -420,6 +435,7 @@
     let hakenData = [];     // shift_banmen_haken
     let oenData = [];       // shift_banmen_oen
     let configData = [];    // shift_banmen_config
+    let currentBoard = 1;   // 盤面1／盤面2（shift_banmen_configのboard_noに対応。URLの?board=で指定・記憶できる）
     let carQuotaMap = {};   // busho_code → その日の必要台数・助手あり必要台数（shift_car_quota）
     let specialHolidayMap = {}; // busho_code → その日が特別休業日（正月休み・盆休みなど）に該当する場合の名称
     let staffRows = [];
@@ -479,12 +495,31 @@
 
     // ===== 初期化 =====
     async function init() {
+      const params = new URLSearchParams(location.search);
+      currentBoard = params.get('board') === '2' ? 2 : 1;
+      updateBoardTabs();
       masters = await loadMasters();
       buildGroupColorMap();
       buildLeftPanelBushoSelect();
       applyReadOnlyIfNeeded();
       window.addEventListener('resize', () => { updateCompleteBtn(); applyMobileLockIfNeeded(); });
       await loadData();
+    }
+
+    // 盤面1／盤面2を切り替える
+    function switchBoard(n) {
+      if (n === currentBoard) return;
+      currentBoard = n;
+      updateBoardTabs();
+      const url = new URL(location.href);
+      url.searchParams.set('board', String(n));
+      history.replaceState(null, '', url);
+      loadData();
+    }
+
+    function updateBoardTabs() {
+      document.getElementById('board-tab-1').classList.toggle('active', currentBoard === 1);
+      document.getElementById('board-tab-2').classList.toggle('active', currentBoard === 2);
     }
 
     // PC権限がない人は、盤面の変更（ドラッグ・削除・再作成など）ができないようにする（閲覧のみ）
@@ -601,7 +636,7 @@
         sb.from('shift_staff').select('staff_code,name,busho_code,car_code,retired,overtime_limit,is_admin,has_smaho').order('staff_code'),
         sb.from('shift_car').select('*').order('car_code'),
         sb.from('shift_haken').select('*').order('haken_name'),
-        sb.from('shift_banmen_config').select('*').order('hyoji_jun'),
+        sb.from('shift_banmen_config').select('*').eq('board_no', currentBoard).order('hyoji_jun'),
         sb.from('shift_banmen').select('*').eq('date', dateStr),
         sb.from('shift_banmen_haken').select('*').eq('date', dateStr),
         sb.from('shift_banmen_oen').select('*').eq('date', dateStr),
@@ -611,7 +646,7 @@
         sb.from('shift_busho_tekisei').select('staff_code, busho_code'),
         sb.from('shift_syaken').select('car_code, memo').eq('date', dateStr),
         sb.from('shift_car_quota').select('busho_code, need_car, need_jyoshu, night_jyoshu_count, night_muyoshu_count').eq('date', dateStr),
-        sb.from('shift_day_status').select('is_complete').eq('date', dateStr).maybeSingle(),
+        sb.from('shift_day_status').select('is_complete').eq('date', dateStr).eq('board_no', currentBoard).maybeSingle(),
         sb.from('shift_special_holiday').select('busho_code, label').lte('start_date', dateStr).gte('end_date', dateStr),
       ]);
 
@@ -809,13 +844,13 @@
       }
 
       const dateStr = getDateStr(currentDate);
-      // すでにその日の行があれば更新、なければ新しく作る
-      const { data: existing } = await sb.from('shift_day_status').select('id').eq('date', dateStr).maybeSingle();
+      // すでにその日・この盤面の行があれば更新、なければ新しく作る（盤面1と盤面2は別々に確定を管理する）
+      const { data: existing } = await sb.from('shift_day_status').select('id').eq('date', dateStr).eq('board_no', currentBoard).maybeSingle();
       let error;
       if (existing) {
         ({ error } = await sb.from('shift_day_status').update({ is_complete: newValue }).eq('id', existing.id));
       } else {
-        ({ error } = await sb.from('shift_day_status').insert({ date: dateStr, is_complete: newValue }));
+        ({ error } = await sb.from('shift_day_status').insert({ date: dateStr, board_no: currentBoard, is_complete: newValue }));
       }
       if (error) { showMsg('更新に失敗しました: ' + error.message, 'err'); return; }
       dayIsComplete = newValue;
@@ -3067,7 +3102,7 @@
       const dateStr = getDateStr(currentDate);
       const dateLabel = getDateLabel(currentDate);
       const workbook = new ExcelJS.Workbook();
-      const sheet = workbook.addWorksheet('盤面');
+      const sheet = workbook.addWorksheet(`盤面${currentBoard}`);
 
       // ---- 画面と同じ「列」構成を作る（buildBoardと同じロジック）----
       const allCards = [];
@@ -3171,7 +3206,7 @@
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `盤面_${dateStr}.xlsx`;
+      a.download = `盤面${currentBoard}_${dateStr}.xlsx`;
       a.click();
       URL.revokeObjectURL(url);
     }
@@ -3204,7 +3239,13 @@
       showMsg('再作成中...', 'ok');
 
       const dateStr = getDateStr(currentDate);
-      const { error: delErr } = await sb.from('shift_banmen').delete().eq('date', dateStr);
+      // 今表示している盤面（盤面1／盤面2）の所属だけを削除する。
+      // もう一方の盤面の所属データを誤って消してしまわないようにするため
+      const targetBushoCodes = [...new Set(
+        configData.filter(c => c.sp_jun !== 99 && c.sp_jun !== 98 && c.sp_jun !== 97).map(c => c.busho_code)
+      )];
+      if (targetBushoCodes.length === 0) { showMsg('この盤面には所属が設定されていません', 'err'); return; }
+      const { error: delErr } = await sb.from('shift_banmen').delete().eq('date', dateStr).in('busho_code', targetBushoCodes);
       if (delErr) { showMsg('再作成に失敗しました: ' + delErr.message, 'err'); return; }
 
       await loadData(); // 削除後に読み込み直すと、業務シフトから自動で組み立てられる
