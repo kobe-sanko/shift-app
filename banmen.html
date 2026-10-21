@@ -344,8 +344,8 @@
   <div class="top-bar">
     <a href="index.html">← メニュー</a>
     <div class="board-tabs" id="board-tabs">
-      <button type="button" class="board-tab" id="board-tab-1" onclick="switchBoard(1)">盤面1</button>
-      <button type="button" class="board-tab" id="board-tab-2" onclick="switchBoard(2)">盤面2</button>
+      <button type="button" class="board-tab" id="board-tab-1" onclick="switchBoard(1)">宅配業務課</button>
+      <button type="button" class="board-tab" id="board-tab-2" onclick="switchBoard(2)">企業物流課</button>
     </div>
     <div class="date-nav">
       <button onclick="changeDate(-1)">◀</button>
@@ -3101,8 +3101,9 @@
     async function exportExcel() {
       const dateStr = getDateStr(currentDate);
       const dateLabel = getDateLabel(currentDate);
+      const boardLabel = currentBoard === 2 ? '企業物流課' : '宅配業務課';
       const workbook = new ExcelJS.Workbook();
-      const sheet = workbook.addWorksheet(`盤面${currentBoard}`);
+      const sheet = workbook.addWorksheet(`盤面_${boardLabel}`);
 
       // ---- 画面と同じ「列」構成を作る（buildBoardと同じロジック）----
       const allCards = [];
@@ -3206,7 +3207,7 @@
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `盤面${currentBoard}_${dateStr}.xlsx`;
+      a.download = `盤面_${boardLabel}_${dateStr}.xlsx`;
       a.click();
       URL.revokeObjectURL(url);
     }
