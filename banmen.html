@@ -790,8 +790,12 @@
       // （スマホでまだ確定していない日を隠しているときは、新しい通知は出さない）。
       // 前の日付の重複通知がそのまま残らないよう、重複がない日・出さない日でも必ずリセットする
       const shouldShowConflicts = !(isMobileWidth() && !dayIsComplete);
-      showConflictResolver(shouldShowConflicts ? (conflicts || []) : [], loadId);
-      if (conflicts && conflicts.length > 0 && shouldShowConflicts) {
+      // 重複の通知は、今見ている盤面（宅配業務課／企業物流課）に関係があるものだけを出す。
+      // 業務シフトの重複は全所属分まとめて検出しているので、ここで今の盤面の所属だけに絞り込む
+      const currentBoardBushoCodes = new Set(configData.map(c => c.busho_code));
+      const boardConflicts = (conflicts || []).filter(c => currentBoardBushoCodes.has(c.bushoCode));
+      showConflictResolver(shouldShowConflicts ? boardConflicts : [], loadId);
+      if (boardConflicts.length > 0 && shouldShowConflicts) {
         // 重複で配置待ちになっている人を、左の社員リストにも表示されるようにする
         buildLeftPanel();
       }
@@ -1085,8 +1089,12 @@
           const staffCode = r[field];
           if (!staffCode) return;
           const skey = `${r.busho_code}|${r.row_no}|${field}`;
+          const nobanKey = `noban|${r.busho_code}`;
           const keys = staffSlotKeys[staffCode];
-          if (!keys || !keys.has(skey)) {
+          // 番号なし（所属名そのもの）の自動配置で入った人は、行番号が毎回社員コード順で
+          // 振り直されるため、固定のskeyとは一致しない。その場合は「今日noban枠に入っているか」で判定する
+          const stillHasToday = keys && (keys.has(skey) || (field === 'driver' && keys.has(nobanKey)));
+          if (!stillHasToday) {
             orphanClears.push({ id: r.id, field });
           }
         });
