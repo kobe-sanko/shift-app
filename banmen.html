@@ -641,7 +641,7 @@
         sb.from('shift_banmen_haken').select('*').eq('date', dateStr),
         sb.from('shift_banmen_oen').select('*').eq('date', dateStr),
         sb.from('shift_gyomu_tekisei').select('staff_code, gyomu_code, busho_code'),
-        sb.from('shift_gyomu').select('gyomu_code, busho_code, gyomu_name'),
+        sb.from('shift_gyomu').select('gyomu_code, busho_code, gyomu_name, auto_haiso'),
         sb.from('shift_gyomu_shift').select(`staff_code, ${dayCol}, ${dayColB}`).eq('yearmonth', yearMonth),
         sb.from('shift_busho_tekisei').select('staff_code, busho_code'),
         sb.from('shift_syaken').select('car_code, memo').eq('date', dateStr),
@@ -882,6 +882,7 @@
 
       const KYUJITSU_MAP = buildKyujitsuMap(masters.bushos);
       const driverRolePattern = buildDriverRolePattern();
+      const noNumberEntries = []; // { bushoCode, staff_code, ampm }（番号なしで、所属名そのものの業務名の人）
 
       dayShiftList.forEach(({ staff_code, gyomu_code, ampm }) => {
         // 休日・有休・健診（901/902/903）→ お休みカードへ（この盤面に関連する所属の人だけ）
@@ -916,9 +917,17 @@
         // 「盤面専用」にしている所属（ローソン・自転車・クチーナ・DC&アルカ・ジャペルなど）の名前＋数字も、
         // 運転と同じ扱い（配送テーブルの運転手欄に入る）をする。対象の所属一覧はマスタから自動で作る
         const m = gyomuName.match(driverRolePattern);
-        // 番号なしの「運転」「助手」は、今日は働けるがどこに配置するか決まっていない人。
-        // 盤面には自動配置せず、左の社員リストに残して手動でドラッグしてもらう（所属名そのものなども同様に対象外）
-        if (!m) return;
+        if (!m) {
+          // 番号なしでも、業務マスタ側で「盤面に自動配置」にチェックが入っている業務（車を使う配送業務）は、
+          // 倉庫・事務と同じように社員コード順で配送の枠に自動で割り振る（車も自動でセットする）。
+          // どの業務を対象にするかは業務マスタ（master_gyomu.html）で業務ごとに設定する
+          if (gyomu.auto_haiso) {
+            noNumberEntries.push({ bushoCode, staff_code, ampm });
+          }
+          // チェックが入っていない番号なしの業務（運転・助手や、配車・ドラレコなど車を使わない業務）は、
+          // 盤面には自動配置せず、左の社員リストに残して手動でドラッグしてもらう
+          return;
+        }
 
         const kindWord = m[1];
         const rowNo = parseInt(m[2], 10);
@@ -937,6 +946,14 @@
         staffSlotKeys[staff_code].add(skey);
         const ek = staff_code + '|' + skey;
         // 同じ枠に午前・午後とも同じ業務が入っている（入力ミス等）場合は「午前」を優先する
+        if (!entryAmpmByStaffSlot[ek] || ampm === 'am') entryAmpmByStaffSlot[ek] = ampm;
+      });
+      // 番号なし（所属名そのもの）の業務も、同じ人が他の枠と掛け持ちしているかの判定に加える
+      noNumberEntries.forEach(({ bushoCode, staff_code, ampm }) => {
+        const skey = `noban|${bushoCode}`;
+        if (!staffSlotKeys[staff_code]) staffSlotKeys[staff_code] = new Set();
+        staffSlotKeys[staff_code].add(skey);
+        const ek = staff_code + '|' + skey;
         if (!entryAmpmByStaffSlot[ek] || ampm === 'am') entryAmpmByStaffSlot[ek] = ampm;
       });
 
@@ -1098,7 +1115,33 @@
         });
       });
 
-      const records = [...Object.values(driverInserts), ...soukoJimuInserts];
+      // ----- 番号なし（所属名そのもの）の業務を、配送への自動配置（既存データがない所属のみ）-----
+      // 倉庫・事務と同じく社員コード順で行番号を振るが、こちらは車を使う配送の枠なので、
+      // 社員に紐づく車があれば一緒に自動でセットする
+      const noNumberGroups = {}; // bushoCode → 社員コードの配列（重複なし）
+      noNumberEntries.forEach(({ bushoCode, staff_code }) => {
+        if (!noNumberGroups[bushoCode]) noNumberGroups[bushoCode] = [];
+        if (!noNumberGroups[bushoCode].includes(staff_code)) noNumberGroups[bushoCode].push(staff_code);
+      });
+      const noNumberInserts = [];
+      Object.entries(noNumberGroups).forEach(([bushoCode, staffCodes]) => {
+        if (hasExisting(bushoCode, '配送')) return;
+        staffCodes.sort();
+        staffCodes.forEach((staff_code, idx) => {
+          const skey = `noban|${bushoCode}`;
+          const slotCount = staffSlotKeys[staff_code]?.size || 1;
+          const ampmTag = slotCount > 1 ? (entryAmpmByStaffSlot[staff_code + '|' + skey] || null) : null;
+          const rec = { busho_code: bushoCode, gyomu_code: '配送', row_no: idx + 1, driver: staff_code, driver_ampm: ampmTag };
+          const linkedCar = getLinkedCar(staff_code);
+          if (linkedCar) {
+            rec.car_code = linkedCar;
+            carsAssignedToday.set(linkedCar, staff_code);
+          }
+          noNumberInserts.push(rec);
+        });
+      });
+
+      const records = [...Object.values(driverInserts), ...soukoJimuInserts, ...noNumberInserts];
       if (records.length > 0) {
         const inserts = records.map(r => ({ date: dateStr, ...r }));
         const { data, error } = await sb.from('shift_banmen').insert(inserts).select();
@@ -2422,6 +2465,13 @@
 
       if (error) { showMsg('保存に失敗しました: ' + error.message, 'err'); return; }
 
+      // 変更履歴に記録（誰が・いつ・どこに・何を置いたか）
+      {
+        const fieldLabel = { car_code: '車両', driver: '運転', jyoshu1: '助手1', jyoshu2: '助手2', smaho: 'スマホ' }[field] || field;
+        const bushoName = masters.bushoMap[bushoCode]?.busho_name || bushoCode;
+        logChange('盤面', '配置', `${getDateLabel(currentDate)} ${bushoName} ${rowNo}行目 ${fieldLabel}`, `${dragInfo.name || dragInfo.code} を配置`);
+      }
+
       // 今回の配置を「午後」にしたときは、同じ人の最初の枠（まだ午前午後のタグがない方）を「午前」としてタグ付けする
       if (newAmpm === 'pm' && dragInfo.type === 'staff') {
         for (const r of banmenData) {
@@ -2579,6 +2629,14 @@
       if (error) { showMsg('削除に失敗しました', 'err'); return; }
 
       const removedStaff = existing[field];
+
+      // 変更履歴に記録
+      if (removedStaff) {
+        const fieldLabel = { car_code: '車両', driver: '運転', jyoshu1: '助手1', jyoshu2: '助手2', smaho: 'スマホ' }[field] || field;
+        const bushoName = masters.bushoMap[bushoCode]?.busho_name || bushoCode;
+        const removedName = masters.staffMap[removedStaff]?.name || removedStaff;
+        logChange('盤面', '削除', `${getDateLabel(currentDate)} ${bushoName} ${rowNo}行目 ${fieldLabel}`, `${removedName} を削除`);
+      }
 
       // 派遣が置かれていた場合は、shift_banmen_hakenの記録も削除する
       const removedHakenIdx = hakenData.findIndex(h =>
@@ -3248,6 +3306,9 @@
       if (targetBushoCodes.length === 0) { showMsg('この盤面には所属が設定されていません', 'err'); return; }
       const { error: delErr } = await sb.from('shift_banmen').delete().eq('date', dateStr).in('busho_code', targetBushoCodes);
       if (delErr) { showMsg('再作成に失敗しました: ' + delErr.message, 'err'); return; }
+
+      const boardLabel = currentBoard === 2 ? '企業物流課' : '宅配業務課';
+      logChange('盤面', '再作成', `${getDateLabel(currentDate)} ${boardLabel}`, '盤面データを削除して業務シフトから作り直した');
 
       await loadData(); // 削除後に読み込み直すと、業務シフトから自動で組み立てられる
       showMsg('再作成しました', 'ok');
