@@ -36,6 +36,7 @@
     .filter-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; justify-content: center; }
     .filter-btn { padding: 4px 12px; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85rem; }
     .filter-btn.active { outline: 3px solid #333; font-weight: bold; }
+    .sticky-header { position: sticky; top: 0; z-index: 20; background: #f5f5f5; padding-top: 2px; padding-bottom: 6px; }
   </style>
 </head>
 <body>
@@ -43,6 +44,7 @@
   <a class="back" href="index.html">← メニューへ</a>
   <div id="msg" class="msg"></div>
 
+  <div class="sticky-header">
   <!-- 所属フィルター -->
   <div class="filter-row" id="filter-row">
     <button class="filter-btn active" style="background:#555;color:white" onclick="filterByBusho('',this)">全員</button>
@@ -76,6 +78,7 @@
       <button class="btn-add"    onclick="addRow()">追加</button>
       <button class="btn-delete" onclick="deleteRow()">削除</button>
     </div>
+  </div>
   </div>
 
   <div id="loading" class="loading" style="display:none">読み込み中...</div>
@@ -236,6 +239,9 @@
         staff_code: currentStaffCode, busho_code: bushoCode
       });
       if (error) { showMsg('追加に失敗しました: ' + error.message, 'err'); return; }
+      const staffForLog = masters.staffMap[currentStaffCode];
+      const bushoForLog = masters.bushoMap[bushoCode];
+      logChange('所属適性', '追加', `社員「${staffForLog?.name || currentStaffCode}」× 所属「${bushoForLog?.busho_name || bushoCode}」`);
       showMsg('追加しました', 'ok');
       await loadTekisei();
     }
@@ -248,6 +254,8 @@
       if (!confirm(`「${busho?.busho_name || row?.busho_code}」を削除しますか？`)) return;
       const { error } = await sb.from('shift_busho_tekisei').delete().eq('id', selectedId);
       if (error) { showMsg('削除に失敗しました: ' + error.message, 'err'); return; }
+      const staffForLog = masters.staffMap[currentStaffCode];
+      logChange('所属適性', '削除', `社員「${staffForLog?.name || currentStaffCode}」× 所属「${busho?.busho_name || row?.busho_code}」`);
       showMsg('削除しました', 'ok');
       selectedId = null;
       await loadTekisei();

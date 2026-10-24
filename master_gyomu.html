@@ -10,6 +10,7 @@
     body { font-family: sans-serif; margin: 0 auto; padding: 10px; background: #f5f5f5; max-width: 900px; }
     h1 { font-size: 1.2rem; text-align: center; margin: 10px 0; }
     .back { display: block; text-align: center; margin: 8px 0; color: #4a90e2; text-decoration: none; width: fit-content; margin-left: auto; margin-right: auto; }
+    .sticky-header { position: sticky; top: 0; z-index: 20; background: #f5f5f5; padding-top: 2px; padding-bottom: 6px; }
     .filter-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; justify-content: center; }
     .filter-btn { padding: 4px 12px; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85rem; }
     .filter-btn.active { outline: 3px solid #333; font-weight: bold; }
@@ -48,6 +49,7 @@
   <a class="back" href="index.html">← メニューへ</a>
   <div id="msg" class="msg"></div>
 
+  <div class="sticky-header">
   <!-- 所属フィルター -->
   <div class="filter-row" id="filter-row">
     <button class="filter-btn active" style="background:#555;color:white" onclick="filterTable('',this)">全員</button>
@@ -87,12 +89,17 @@
         <label>&nbsp;</label>
         <button type="button" style="background:#8e44ad;width:100%;white-space:normal;" onclick="autoColorFromBusho()">🎨 所属色から自動生成</button>
       </div>
+      <div class="form-cell" style="width:160px">
+        <label style="white-space:normal;line-height:1.2;">盤面に自動配置<br>（車を使う配送業務）</label>
+        <input type="checkbox" id="f_auto_haiso" style="width:20px;height:20px;">
+      </div>
     </div>
     <div class="btn-row">
       <button class="btn-add"    onclick="saveRow('add')">新規登録</button>
       <button class="btn-update" onclick="saveRow('update')">更新</button>
       <button class="btn-delete" onclick="deleteRow()">削除</button>
     </div>
+  </div>
   </div>
 
   <!-- 一覧テーブル -->
@@ -105,6 +112,7 @@
         <th style="width:160px">業務名</th>
         <th style="width:156px">色</th>
         <th style="width:60px">有効</th>
+        <th style="width:90px">盤面自動配置</th>
       </tr>
     </thead>
     <tbody id="tbody"></tbody>
@@ -211,6 +219,7 @@
           <td><span class="badge" style="background:${color};color:${textColor}">${r.gyomu_name || ''}</span></td>
           <td><span class="badge" style="background:${color};color:${textColor}">${color}</span></td>
           <td>${r.is_active ? '有効' : '無効'}</td>
+          <td>${r.auto_haiso ? '<span class="badge" style="background:#27ae60;color:#fff">対象</span>' : '－'}</td>
         `;
         tbody.appendChild(tr);
       });
@@ -225,6 +234,7 @@
       document.getElementById('f_color').value      = color;
       document.getElementById('f_color_text').value = color.toUpperCase();
       document.getElementById('f_active').value     = r.is_active ? 'true' : 'false';
+      document.getElementById('f_auto_haiso').checked = !!r.auto_haiso;
       renderTable();
     }
 
@@ -252,6 +262,7 @@
         gyomu_name: name,
         color_h:    color,
         is_active:  document.getElementById('f_active').value === 'true',
+        auto_haiso: document.getElementById('f_auto_haiso').checked,
       };
 
       if (mode === 'add') {
@@ -259,10 +270,12 @@
         if (exists) { showMsg(`業務コード「${code}」はすでに存在します`, 'err'); return; }
         const { error } = await sb.from('shift_gyomu').insert(data);
         if (error) { showMsg('登録に失敗しました: ' + error.message, 'err'); return; }
+        logChange('業務マスタ', '追加', `業務「${name}」(gyomu_code ${code})`);
         showMsg('登録しました', 'ok');
       } else {
         const { error } = await sb.from('shift_gyomu').update(data).eq('gyomu_code', code);
         if (error) { showMsg('更新に失敗しました: ' + error.message, 'err'); return; }
+        logChange('業務マスタ', '更新', `業務「${name}」(gyomu_code ${code})`);
         showMsg('更新しました', 'ok');
       }
       selectedCode = code;
@@ -276,10 +289,12 @@
       if (!confirm(`「${code}」を削除しますか？`)) return;
       const { error } = await sb.from('shift_gyomu').delete().eq('gyomu_code', code);
       if (error) { showMsg('削除に失敗しました: ' + error.message, 'err'); return; }
+      logChange('業務マスタ', '削除', `業務「${document.getElementById('f_name').value.trim()}」(gyomu_code ${code})`);
       showMsg('削除しました', 'ok');
       selectedCode = null;
       document.getElementById('f_code').value = '';
       document.getElementById('f_name').value = '';
+      document.getElementById('f_auto_haiso').checked = false;
       await loadRows();
     }
 

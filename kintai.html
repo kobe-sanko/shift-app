@@ -49,6 +49,7 @@
     .filter-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; justify-content: center; }
     .filter-btn { padding: 3px 10px; border: none; border-radius: 4px; cursor: pointer; font-size: 0.82rem; }
     .filter-btn.active { outline: 3px solid #333; font-weight: bold; }
+    .sticky-header { position: sticky; top: 0; z-index: 20; background: #f5f5f5; padding-top: 2px; padding-bottom: 6px; }
 
     .table-wrap { overflow-x: auto; }
     table { border-collapse: collapse; white-space: nowrap; margin: 0 auto; font-size: 0.82rem; background: white; box-shadow: 0 1px 4px rgba(0,0,0,0.1); border-radius: 8px; overflow: hidden; }
@@ -71,6 +72,7 @@
       .back, .top-area, .shd-banner, .kijun-box, .fiscal-box, .year-check-result, .upload-box, .upload-msg, .filter-row { display: none !important; }
       #shift-auth-bar { display: none !important; }
       .print-title { display: block; }
+      .sticky-header { position: static !important; }
       body { background: white; padding: 0; }
       table { box-shadow: none; border-radius: 0; margin: 0; width: 100%; }
       th.sortable { cursor: default; }
@@ -125,8 +127,10 @@
   </div>
   <div class="upload-msg" id="upload-msg"></div>
 
+  <div class="sticky-header">
   <div class="filter-row" id="filter-row">
     <button class="filter-btn active" id="filter-btn-all" style="background:#555;color:white" onclick="clearFilter()">全員</button>
+  </div>
   </div>
 
   <div id="loading" class="loading">読み込み中...</div>
@@ -207,6 +211,7 @@
         .upsert({ key: 'fiscal_start_month', value: String(val) }, { onConflict: 'key' });
       if (error) { document.getElementById('fiscal-msg').textContent = '保存に失敗しました: ' + error.message; return; }
       fiscalStartMonth = val;
+      logChange('勤怠管理', '更新', '年間残業の年度開始月', `${val}月に設定`);
       document.getElementById('fiscal-msg').textContent = '✅ 設定しました';
       document.getElementById('year-check-result').style.display = 'none';
       await loadData();
@@ -383,6 +388,8 @@
       if (error) { document.getElementById('kijun-msg').textContent = '保存に失敗しました: ' + error.message; return; }
 
       hitsuyoKijun = kijun != null ? kijun : 10;
+      const { year: kY, month: kM } = parseYearMonth(currentYM);
+      logChange('勤怠管理', '更新', `${kY}年${kM}月`, `1日あたり基準時間を${kijun ?? '未設定'}時間に設定`);
       document.getElementById('kijun-msg').textContent = '✅ 設定しました';
       renderTable();
     }
@@ -499,6 +506,8 @@
         if (error) throw error;
 
         showUploadMsg(`✅ ${records.length}件のデータを取り込みました`, 'ok');
+        const { year: uY, month: uM } = parseYearMonth(yearmonth);
+        logChange('勤怠管理', '取込', `${uY}年${uM}月`, `${records.length}件取り込み`);
 
         // 取り込んだ月が選択中の月であれば、表を更新
         if (yearmonth !== currentYM) {

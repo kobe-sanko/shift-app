@@ -10,6 +10,7 @@
     body { font-family: sans-serif; margin: 0 auto; padding: 10px; background: #f5f5f5; max-width: 900px; }
     h1 { font-size: 1.2rem; text-align: center; margin: 10px 0; }
     .back { display: block; text-align: center; margin: 8px 0; color: #4a90e2; text-decoration: none; width: fit-content; margin-left: auto; margin-right: auto; }
+    .sticky-header { position: sticky; top: 0; z-index: 20; background: #f5f5f5; padding-top: 2px; padding-bottom: 6px; }
     .filter-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; justify-content: center; }
     .filter-btn { padding: 4px 12px; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85rem; }
     .filter-btn.active { outline: 3px solid #333; font-weight: bold; }
@@ -51,6 +52,7 @@
 
   <div id="msg" class="msg"></div>
 
+  <div class="sticky-header">
   <!-- 所属フィルター -->
   <div class="filter-row" id="filter-row">
     <button class="filter-btn active" style="background:#555;color:white" onclick="filterTable('',this)">全員</button>
@@ -113,6 +115,7 @@
         <input type="text" id="f_password" placeholder="変更時のみ入力" style="width:100%; font-size:0.85rem; padding:4px 6px; border:1px solid #ccc; border-radius:4px; box-sizing:border-box; text-align:center;">
       </div>
     </div>
+  </div>
   </div>
 
   <!-- 一覧テーブル -->
@@ -306,11 +309,13 @@
         const { error } = await sb.from('shift_staff').insert(data);
         if (error) { showMsg('登録に失敗しました: ' + error.message, 'err'); return; }
         await ensureBushoTekisei(code, data.busho_code);
+        logChange('社員マスタ', '追加', `社員「${data.name}」(社員コード ${code})`);
         showMsg('登録しました', 'ok');
       } else {
         const { error } = await sb.from('shift_staff').update(data).eq('staff_code', code);
         if (error) { showMsg('更新に失敗しました: ' + error.message, 'err'); return; }
         await ensureBushoTekisei(code, data.busho_code);
+        logChange('社員マスタ', '更新', `社員「${data.name}」(社員コード ${code})`);
         showMsg('更新しました', 'ok');
       }
       selectedCode = code;
@@ -335,6 +340,7 @@
       if (!confirm(`「${code}」を削除しますか？`)) return;
       const { error } = await sb.from('shift_staff').delete().eq('staff_code', code);
       if (error) { showMsg('削除に失敗しました: ' + error.message, 'err'); return; }
+      logChange('社員マスタ', '削除', `社員「${document.getElementById('f_name').value.trim()}」(社員コード ${code})`);
       showMsg('削除しました', 'ok');
       selectedCode = null;
       document.getElementById('f_code').value = '';

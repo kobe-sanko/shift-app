@@ -14,6 +14,7 @@
     .msg { text-align: center; font-size: 0.85rem; padding: 6px; border-radius: 4px; margin-bottom: 8px; display: none; }
     .msg.ok  { background: #d4edda; color: #155724; display: block; }
     .msg.err { background: #fdecea; color: #c0392b; display: block; }
+    .sticky-header { position: sticky; top: 0; z-index: 20; background: #f5f5f5; padding-top: 2px; padding-bottom: 6px; }
     .form-box {
       background: white; border-radius: 8px; padding: 14px; margin: 0 auto 16px; max-width: 900px;
       box-shadow: 0 1px 4px rgba(0,0,0,0.1); display: flex; flex-direction: column; gap: 10px;
@@ -45,6 +46,7 @@
     正月休みや盆休みなど、毎週の定休日とは別に、期間を決めてお休みにしたい日をここで登録します。登録した期間は、盤面のカードに「お休み」のリボン（名称を登録していればその名称）が表示されます。対象の所属は複数選べます。
   </div>
 
+  <div class="sticky-header">
   <div class="form-box">
     <div class="form-row">
       <label>名称</label>
@@ -62,6 +64,7 @@
       <button class="btn btn-add" onclick="addHoliday()">登録</button>
       <span id="f-msg" style="font-size:0.78rem;color:#888;"></span>
     </div>
+  </div>
   </div>
 
   <div id="loading" class="loading">読み込み中...</div>
@@ -157,6 +160,9 @@
       const { error } = await sb.from('shift_special_holiday').insert(inserts);
       if (error) { showMsg('登録に失敗しました: ' + error.message, 'err'); return; }
 
+      const bushoNames = bushoCodes.map(c => masters.bushoMap[c]?.busho_name || c).join('・');
+      logChange('特別休業日マスタ', '追加', `${label || '（名称なし）'}（${formatDate(start)}〜${formatDate(end)}）`, `対象所属: ${bushoNames}`);
+
       document.getElementById('f_label').value = '';
       document.getElementById('f_start').value = '';
       document.getElementById('f_end').value = '';
@@ -168,8 +174,13 @@
     async function deleteHoliday(id) {
       if (!canEdit()) { showMsg('閲覧のみモードのため削除できません', 'err'); return; }
       if (!confirm('この特別休業日を削除しますか？')) return;
+      const target = holidayRows.find(r => r.id === id);
       const { error } = await sb.from('shift_special_holiday').delete().eq('id', id);
       if (error) { showMsg('削除に失敗しました: ' + error.message, 'err'); return; }
+      if (target) {
+        const busho = masters.bushoMap[target.busho_code];
+        logChange('特別休業日マスタ', '削除', `${target.label || '（名称なし）'}（${formatDate(target.start_date)}〜${formatDate(target.end_date)}）`, `所属: ${busho?.busho_name || target.busho_code}`);
+      }
       showMsg('削除しました', 'ok');
       await loadHolidays();
     }

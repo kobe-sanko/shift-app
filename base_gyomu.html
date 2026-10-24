@@ -10,6 +10,7 @@
     body { font-family: sans-serif; margin: 0 auto; padding: 10px; background: #f5f5f5; max-width: 1100px; }
     h1 { font-size: 1.2rem; text-align: center; margin: 10px 0; }
     .back { display: block; text-align: center; margin: 8px 0; color: #4a90e2; text-decoration: none; width: fit-content; margin-left: auto; margin-right: auto; }
+    .sticky-header { position: sticky; top: 0; z-index: 20; background: #f5f5f5; padding-top: 2px; padding-bottom: 6px; }
     .filter-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; justify-content: center; }
     .filter-btn { padding: 4px 12px; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85rem; }
     .filter-btn.active { outline: 3px solid #333; font-weight: bold; }
@@ -87,6 +88,7 @@
   <h1 id="page-title">⚙️ ベース業務</h1>
   <a class="back" href="index.html">← メニューへ</a>
   <div id="msg" class="msg"></div>
+  <div class="sticky-header">
   <div id="copy-banner" class="copy-banner">
     📋 <span id="copy-banner-text"></span> をコピー中です。貼り付けたいマスをクリックしてください（続けて何か所でもクリックできます）。
     <button onclick="cancelCopy()" class="btn-copy-cancel">解除</button>
@@ -94,6 +96,7 @@
 
   <div class="filter-row" id="filter-row">
     <button class="filter-btn active" style="background:#555;color:white" onclick="filterTable('',this,'')">全員</button>
+  </div>
   </div>
 
   <div id="loading" class="loading">読み込み中...</div>
@@ -360,6 +363,8 @@
       if (error) { showMsg('保存に失敗しました: ' + error.message, 'err'); return; }
       if (!baseMap[staffCode]) baseMap[staffCode] = { staff_code: staffCode };
       baseMap[staffCode][col] = gyomuCode;
+      const staffForLog = staffRows.find(s => s.staff_code === staffCode);
+      logChange('ベース業務', '更新', `社員「${staffForLog?.name || staffCode}」`, `${DAY_LABELS[DAYS.indexOf(dayKey.replace('_b',''))]}曜${dayKey.endsWith('_b') ? '(午後)' : ''}を「${getGyomuLabel(gyomuCode)}」に変更`);
       showMsg('保存しました', 'ok');
       renderTable();
     }
@@ -635,6 +640,8 @@
         ({ error } = await sb.from('shift_base_gyomu').insert(data));
       }
       if (error) { showMsg('保存に失敗しました: ' + error.message, 'err'); return; }
+      const staffForLog = staffRows.find(s => s.staff_code === staffCode);
+      logChange('ベース業務', '更新', `社員「${staffForLog?.name || staffCode}」`, '1週間分のベース業務を更新');
       showMsg('保存しました', 'ok');
       baseMap[staffCode] = data;
       renderTable();

@@ -13,6 +13,7 @@
     .msg { text-align: center; font-size: 0.85rem; padding: 6px; border-radius: 4px; margin-bottom: 8px; display: none; }
     .msg.ok  { background: #d4edda; color: #155724; display: block; }
     .msg.err { background: #fdecea; color: #c0392b; display: block; }
+    .sticky-header { position: sticky; top: 0; z-index: 20; background: #f5f5f5; padding-top: 2px; padding-bottom: 6px; }
 
     /* フォーム */
     .form-box { background: #fff0e8; border-radius: 8px; padding: 8px; margin-bottom: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.1); }
@@ -46,6 +47,7 @@
   <a class="back" href="index.html">← メニューへ</a>
   <div id="msg" class="msg"></div>
 
+  <div class="sticky-header">
   <!-- 社員プルダウンをしぼりこむための所属選択（閲覧のみモードでも操作できるよう、フォームの外に置く） -->
   <div style="display:flex;align-items:center;gap:8px;max-width:600px;margin:0 auto 8px;">
     <label style="font-size:0.8rem;color:#666;white-space:nowrap;">社員を所属で絞込</label>
@@ -78,6 +80,7 @@
   <div class="slot-manage">
     <button class="btn-add-slot" onclick="addSlot()">＋ 枠を追加</button>
     <button class="btn-del-slot" onclick="deleteLastSlot()">－ 最後の枠を削除</button>
+  </div>
   </div>
 
   <div id="loading" class="loading">読み込み中...</div>
@@ -178,6 +181,8 @@
       const staffCode = document.getElementById('f_staff').value || null;
       const { error } = await sb.from('shift_chusyajo').update({ staff_code: staffCode }).eq('slot_no', parseInt(slot));
       if (error) { showMsg('更新に失敗しました: ' + error.message, 'err'); return; }
+      const staffForLog = masters.staffMap[staffCode];
+      logChange('駐車場マスタ', '更新', `${slot}番`, staffForLog ? `割り当て: ${staffForLog.name}` : '空きにした');
       showMsg('更新しました', 'ok');
       await loadRows();
     }
@@ -189,6 +194,7 @@
       if (!confirm(`${slot}番を空きにしますか？`)) return;
       const { error } = await sb.from('shift_chusyajo').update({ staff_code: null }).eq('slot_no', parseInt(slot));
       if (error) { showMsg('更新に失敗しました: ' + error.message, 'err'); return; }
+      logChange('駐車場マスタ', '更新', `${slot}番`, '空きにした');
       showMsg('空きにしました', 'ok');
       document.getElementById('f_staff').value = '';
       await loadRows();
@@ -202,6 +208,7 @@
       if (!confirm(`${newNo}番の枠を追加しますか？`)) return;
       const { error } = await sb.from('shift_chusyajo').insert({ slot_no: newNo, staff_code: null });
       if (error) { showMsg('追加に失敗しました: ' + error.message, 'err'); return; }
+      logChange('駐車場マスタ', '追加', `${newNo}番`);
       showMsg(`${newNo}番の枠を追加しました`, 'ok');
       await loadRows();
     }
@@ -217,6 +224,7 @@
       if (!confirm(`${lastRow.slot_no}番の枠を削除しますか？`)) return;
       const { error } = await sb.from('shift_chusyajo').delete().eq('slot_no', lastRow.slot_no);
       if (error) { showMsg('削除に失敗しました: ' + error.message, 'err'); return; }
+      logChange('駐車場マスタ', '削除', `${lastRow.slot_no}番`);
       showMsg(`${lastRow.slot_no}番の枠を削除しました`, 'ok');
       selectedSlot = null;
       document.getElementById('f_slot').value = '';

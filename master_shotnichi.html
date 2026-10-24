@@ -13,6 +13,7 @@
     .nav-row { display: flex; align-items: center; justify-content: center; gap: 12px; margin-bottom: 12px; }
     .nav-row button.nav-btn { background: #555; color: white; border: none; border-radius: 4px; padding: 4px 14px; font-size: 0.9rem; cursor: pointer; }
     .nav-row span { font-size: 1rem; font-weight: bold; min-width: 80px; text-align: center; }
+    .sticky-header { position: sticky; top: 0; z-index: 20; background: #f5f5f5; padding-top: 2px; padding-bottom: 6px; }
     .form-box { background: #fff0e8; border-radius: 8px; padding: 12px; margin-bottom: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.1); }
     .form-group { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
     .form-group label { font-size: 0.8rem; color: #666; }
@@ -52,6 +53,7 @@
     この月のデータ：<span id="current-days">－</span> 日
   </div>
 
+  <div class="sticky-header">
   <!-- 入力フォーム -->
   <div class="form-box">
     <div class="form-group">
@@ -63,6 +65,7 @@
       <button class="btn-update" onclick="saveRow('update')">更新</button>
       <button class="btn-delete" onclick="deleteRow()">削除</button>
     </div>
+  </div>
   </div>
 
   <!-- 一覧テーブル（直近12ヶ月） -->
@@ -161,11 +164,13 @@
         if (currentRow) { showMsg('この月のデータはすでに存在します。「更新」を使ってください。', 'err'); return; }
         const { error } = await sb.from('shift_shotnichi').insert(data);
         if (error) { showMsg('登録に失敗しました: ' + error.message, 'err'); return; }
+        logChange('月間所定日数マスタ', '追加', `${parseYearMonth(currentYM).year}年${parseYearMonth(currentYM).month}月`, `所定日数 ${days}日`);
         showMsg('登録しました', 'ok');
       } else {
         if (!currentRow) { showMsg('この月のデータがありません。「新規登録」を使ってください。', 'err'); return; }
         const { error } = await sb.from('shift_shotnichi').update({ shotei_days: parseInt(days) }).eq('yearmonth', currentYM);
         if (error) { showMsg('更新に失敗しました: ' + error.message, 'err'); return; }
+        logChange('月間所定日数マスタ', '更新', `${parseYearMonth(currentYM).year}年${parseYearMonth(currentYM).month}月`, `所定日数 ${days}日`);
         showMsg('更新しました', 'ok');
       }
       await loadRows();
@@ -178,6 +183,7 @@
       if (!confirm(`${year}年${month}月の所定日数を削除しますか？`)) return;
       const { error } = await sb.from('shift_shotnichi').delete().eq('yearmonth', currentYM);
       if (error) { showMsg('削除に失敗しました: ' + error.message, 'err'); return; }
+      logChange('月間所定日数マスタ', '削除', `${year}年${month}月`);
       showMsg('削除しました', 'ok');
       await loadRows();
     }
