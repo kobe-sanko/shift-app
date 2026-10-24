@@ -25,8 +25,8 @@
     .btn-add    { background: #4a90e2; }
     .btn-delete { background: #e74c3c; }
 
-    table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,0.1); font-size: 0.85rem; }
-    th { background: #eee; padding: 7px 4px; text-align: center; border-bottom: 1px solid #ddd; }
+    table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.1); font-size: 0.85rem; }
+    th { background: #eee; padding: 7px 4px; text-align: center; border-bottom: 1px solid #ddd; position: sticky; top: var(--sticky-offset, 0px); z-index: 15; }
     td { padding: 8px 4px; text-align: center; border-bottom: 1px solid #f0f0f0; cursor: pointer; }
     tr:hover td { background: #f0f8ff; }
     tr.selected td { background: #d0e8ff !important; }
@@ -313,6 +313,17 @@
       el.className = `msg ${type}`;
       setTimeout(() => { el.className = 'msg'; }, 3000);
     }
+
+    // 上のフォーム部分（.sticky-header）の高さに合わせて、表の見出し行（th）の固定位置をずらす。
+    // フォームの高さは画面の横幅（フィルターボタンの折り返し方）によって変わるため、
+    // ResizeObserverで常に実際の高さを測って反映する
+    (function () {
+      const sh = document.querySelector('.sticky-header');
+      if (!sh) return;
+      const update = () => document.documentElement.style.setProperty('--sticky-offset', sh.offsetHeight + 'px');
+      update();
+      new ResizeObserver(update).observe(sh);
+    })();
 
     init();
   </script>
