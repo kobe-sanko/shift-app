@@ -32,18 +32,20 @@
       transition: opacity 0.15s;
     }
     a.menu-btn:hover { opacity: 0.85; }
-    .c-master   { background: #e67e22; }
-    .c-config   { background: #505050; }
-    .c-tekisei  { background: #16a085; }
-    .c-shift    { background: #8e44ad; }
-    .c-banmen   { background: #2980b9; }
-    .c-oen      { background: #27ae60; }
-    .c-haken    { background: #c0392b; }
-    .c-kintai   { background: #1a5276; }
-    .c-parking  { background: #6c3483; }
-    .c-import   { background: #1a6a3a; }
-    .c-login    { background: #34495e; }
-    .c-carstatus{ background: #16a085; }
+    /* 色の考え方：同じ分類（シフト・運用・適性・マスタ）は同じ系統の色でそろえ、
+       その中で少しだけ濃淡を変えて見分けやすくしています */
+    .c-master   { background: #d4a017; } /* 🗂️ マスタ＝黄色系 */
+    .c-import   { background: #b8860b; } /* 🗂️ マスタ＝黄色系（少し濃いめ） */
+    .c-config   { background: #505050; } /* ⚙️ 設定系（運用の中の設定項目）＝グレー */
+    .c-tekisei  { background: #16a085; } /* ✅ 適性＝緑系 */
+    .c-shift    { background: #c0392b; } /* 📋 シフト＝赤系 */
+    .c-banmen   { background: #2980b9; } /* 🖥️ 運用＝青系 */
+    .c-oen      { background: #3498db; } /* 🖥️ 運用＝青系 */
+    .c-haken    { background: #1f618d; } /* 🖥️ 運用＝青系 */
+    .c-kintai   { background: #1a5276; } /* 🖥️ 運用＝青系 */
+    .c-parking  { background: #2471a3; } /* 🖥️ 運用＝青系 */
+    .c-carstatus{ background: #5499c7; } /* 🖥️ 運用＝青系 */
+    .c-login    { background: #34495e; } /* ログイン（単独ボタン） */
     @media (max-width: 768px) {
       .pc-only { display: none; }
       .sp-show { display: block; }
@@ -98,13 +100,14 @@
     <div class="section-title">🖥️ 運用</div>
     <div class="btn-grid">
       <a href="banmen.html" class="menu-btn c-banmen">盤面</a>
+      <a href="banmen_config.html" class="menu-btn c-config">盤面設定</a>
+      <a href="car_status.html" class="menu-btn c-carstatus">🚗 車両使用状況</a>
+      <a href="master_car_quota.html" class="menu-btn c-config">必要台数</a>
       <a href="oen.html" class="menu-btn c-oen">応援一覧</a>
+      <a href="chusyajo.html" class="menu-btn c-parking">🅿️ 駐車場状況</a>
       <a href="haken_total.html" class="menu-btn c-haken">派遣集計</a>
       <a href="kintai.html" class="menu-btn c-kintai">勤怠管理</a>
-      <a href="chusyajo.html" class="menu-btn c-parking">🅿️ 駐車場状況</a>
-      <a href="banmen_config.html" class="menu-btn c-config">盤面設定</a>
-      <a href="master_car_quota.html" class="menu-btn c-config">必要台数</a>
-      <a href="car_status.html" class="menu-btn c-carstatus">🚗 車両使用状況</a>
+      <a href="change_history.html" class="menu-btn c-config">🕘 変更履歴</a>
     </div>
   </div>
 
