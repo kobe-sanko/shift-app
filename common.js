@@ -8,8 +8,8 @@
 (function () {
   const isLoginPage = /\/login\.html$/.test(location.pathname) || location.pathname.endsWith('login.html');
 
-  // ログインしなくても見られる画面（トップメニュー・盤面・業務シフト・駐車場状況）
-  const publicPages = ['login.html', 'index.html', '', 'banmen.html', 'shift_gyoumu.html', 'chusyajo.html'];
+  // ログインしなくても見られる画面（ログイン画面のみ。それ以外は全画面でログインを必須にする）
+  const publicPages = ['login.html'];
   const currentPage = location.pathname.split('/').pop();
   const isPublicPage = publicPages.includes(currentPage);
 
@@ -91,6 +91,27 @@ function lockMasterFormIfNeeded(extraSelector) {
     if (extraSelector) selector += ', ' + extraSelector;
     document.querySelectorAll(selector).forEach(el => { el.disabled = true; });
   });
+}
+
+// ============================================================
+// 変更履歴（誰が・いつ・何をしたか）
+// ============================================================
+
+// 変更履歴を1件記録する。記録に失敗しても、今やっている作業自体は止めない
+async function logChange(screen, action, target, detail) {
+  try {
+    const auth = getAuth();
+    await sb.from('shift_change_log').insert({
+      staff_code: auth ? auth.code : null,
+      staff_name: auth ? auth.name : null,
+      screen: screen,
+      action: action,
+      target: target,
+      detail: detail || null,
+    });
+  } catch (e) {
+    console.error('変更履歴の記録に失敗しました', e);
+  }
 }
 
 // ============================================================

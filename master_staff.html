@@ -149,11 +149,9 @@
       await loadRows();
     }
 
-    // PC権限が「あり」の人だけ、パスワード欄を表示する（PC権限がない人はログイン不要なので隠す）
+    // 全画面でログインが必須になったため、PC権限の有無にかかわらずパスワード欄を常に表示する
     function updatePasswordVisibility() {
-      const isAdmin = document.getElementById('f_is_admin').value === 'true';
-      document.getElementById('password-row').style.display = isAdmin ? '' : 'none';
-      if (!isAdmin) document.getElementById('f_password').value = '';
+      document.getElementById('password-row').style.display = '';
     }
 
     function buildFilterButtons() {
@@ -288,11 +286,11 @@
         has_smaho:      document.getElementById('f_has_smaho').value === 'true',
       };
       // パスワードは「入力があった時だけ」更新する（空欄なら今の値を変えない）
-      // ただし新規登録の時だけ、未入力でもPC権限がある人には社員コードを初期パスワードにする（本人が最初のログイン時に変更できる）
-      // PC権限がない人はログイン自体が不要なので、パスワードは設定しない
+      // ただし新規登録の時だけ、未入力でもPC権限の有無にかかわらず社員コードを初期パスワードにする
+      // （全画面でログインが必須のため、PC権限がない人も必ずログインできる状態にしておく。本人が最初のログイン時に変更できる）
       const pwInput = document.getElementById('f_password').value.trim();
       if (pwInput) data.password = pwInput;
-      else if (mode === 'add' && data.is_admin) data.password = code;
+      else if (mode === 'add') data.password = code;
       // 同じ車両が別の在籍社員にすでに登録されていないかチェック
       if (data.car_code) {
         const carConflict = rows.find(r => r.car_code === data.car_code && r.staff_code !== code && !r.retired);
