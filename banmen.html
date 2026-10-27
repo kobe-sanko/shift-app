@@ -22,6 +22,7 @@
     .date-label { font-size: 1rem; font-weight: bold; min-width: 120px; text-align: center; }
     .btn-top { padding: 4px 10px; border: none; border-radius: 4px; cursor: pointer; font-size: 0.78rem; font-weight: bold; }
     .btn-recreate { background: #e67e22; color: white; }
+    .btn-memo-add { background: #d4ac0d; color: white; }
     .btn-excel { background: #27ae60; color: white; }
     .btn-config { background: #666; color: white; }
     .btn-complete { background: #95a5a6; color: white; }
@@ -102,6 +103,45 @@
     .board-grid {
       display: grid;
       gap: 8px;
+      position: relative;
+    }
+
+    /* ===== 盤面の自由メモ（付箋）：エクセルの図形挿入のように、盤面の好きな場所に置ける ===== */
+    .memo-layer { position: absolute; inset: 0; pointer-events: none; z-index: 30; }
+    .memo-box {
+      position: absolute; pointer-events: auto;
+      background: #fff9c4; border: 1px solid #e6d87a; border-radius: 4px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+      display: flex; flex-direction: row; align-items: stretch; min-width: 50px; min-height: 20px;
+    }
+    .memo-drag {
+      flex-shrink: 0; align-self: flex-start;
+      display: flex; align-items: center; justify-content: center;
+      width: 13px; color: #8a6d00; font-size: 0.65rem;
+      cursor: move; user-select: none;
+    }
+    .memo-del {
+      flex-shrink: 0; align-self: flex-start;
+      display: flex; align-items: center; justify-content: center;
+      width: 13px; cursor: pointer; font-weight: bold; color: #c0392b; font-size: 0.65rem;
+    }
+    .memo-del:hover { color: #e74c3c; }
+    .memo-box textarea {
+      flex: 1; min-width: 0; border: none; outline: none; resize: none;
+      background: transparent; font-size: 0.75rem; font-family: inherit;
+      padding: 1px 2px; box-sizing: border-box; line-height: 1.3;
+    }
+    .memo-resize-handle {
+      position: absolute; right: 0; bottom: 0; width: 10px; height: 10px;
+      cursor: nwse-resize; pointer-events: auto;
+    }
+    .memo-resize-handle::after {
+      content: ''; position: absolute; right: 1px; bottom: 1px;
+      width: 5px; height: 5px;
+      border-right: 2px solid #c6b65a; border-bottom: 2px solid #c6b65a;
+    }
+    @media (max-width: 768px) {
+      .memo-layer { display: none; } /* スマホは閲覧専用のため、自由配置のメモは出さない（通常のカードが隠れるのを防ぐため） */
     }
 
     /* スマホ用：所属で絞り込むプルダウン（PCでは非表示） */
@@ -113,7 +153,7 @@
     /* ===== スマホ表示：左パネルを消して縦一列に・見る専用なので操作ボタンも非表示 ===== */
     @media (max-width: 768px) {
       .left-panel { display: none; }
-      .btn-recreate, .btn-excel, .btn-config { display: none !important; }
+      .btn-recreate, .btn-excel, .btn-config, .btn-memo-add { display: none !important; }
       .top-bar { gap: 4px; padding: 6px 6px; flex-wrap: nowrap; }
       .top-bar a { white-space: nowrap; flex-shrink: 0; font-size: 0.78rem; }
       .date-nav { gap: 3px; flex-shrink: 0; }
@@ -356,6 +396,7 @@
     </div>
     <button class="btn-top btn-complete" id="btn-complete" onclick="toggleComplete()">確認中…</button>
     <button class="btn-top btn-recreate" onclick="recreate()">🔄 再作成</button>
+    <button class="btn-top btn-memo-add" onclick="addMemo()">📝 メモ追加</button>
     <button class="btn-top btn-excel" onclick="exportExcel()">📊 Excel出力</button>
     <button class="btn-top btn-config" onclick="location.href='banmen_config.html?board=' + currentBoard">⚙ 設定</button>
   </div>
@@ -435,6 +476,7 @@
     let hakenData = [];     // shift_banmen_haken
     let oenData = [];       // shift_banmen_oen
     let configData = [];    // shift_banmen_config
+    let memoData = [];       // shift_banmen_memo（盤面に自由に置けるメモ付箋）
     let currentBoard = 1;   // 盤面1／盤面2（shift_banmen_configのboard_noに対応。URLの?board=で指定・記憶できる）
     let carQuotaMap = {};   // busho_code → その日の必要台数・助手あり必要台数（shift_car_quota）
     let specialHolidayMap = {}; // busho_code → その日が特別休業日（正月休み・盆休みなど）に該当する場合の名称
@@ -528,6 +570,8 @@
       showReadOnlyBannerIfNeeded();
       const recreateBtn = document.querySelector('.btn-recreate');
       if (recreateBtn) recreateBtn.disabled = true;
+      const memoAddBtn = document.querySelector('.btn-memo-add');
+      if (memoAddBtn) memoAddBtn.disabled = true;
     }
 
     // 左パネル上部の所属プルダウンに、全所属を追加する（初回だけ）
@@ -632,9 +676,9 @@
       const dayCol = getDayCol(currentDate);
       const dayColB = dayCol + 'b';
 
-      const [staffRes, carRes, hakenRes, configRes, banmenRes, banmenHakenRes, oenRes, tekiseiRes, gyomuRes, gyomuShiftRes, bushoTekiseiRes, syakenRes, carQuotaRes, dayStatusRes, specialHolidayRes] = await Promise.all([
+      const [staffRes, carRes, hakenRes, configRes, banmenRes, banmenHakenRes, oenRes, tekiseiRes, gyomuRes, gyomuShiftRes, bushoTekiseiRes, syakenRes, carQuotaRes, dayStatusRes, specialHolidayRes, memoRes] = await Promise.all([
         sb.from('shift_staff').select('staff_code,name,busho_code,car_code,retired,overtime_limit,is_admin,has_smaho').order('staff_code'),
-        sb.from('shift_car').select('*').order('car_code'),
+        sb.from('shift_car').select('*').eq('is_active', true).order('car_code'),
         sb.from('shift_haken').select('*').order('haken_name'),
         sb.from('shift_banmen_config').select('*').eq('board_no', currentBoard).order('hyoji_jun'),
         sb.from('shift_banmen').select('*').eq('date', dateStr),
@@ -648,6 +692,8 @@
         sb.from('shift_car_quota').select('busho_code, need_car, need_jyoshu, night_jyoshu_count, night_muyoshu_count').eq('date', dateStr),
         sb.from('shift_day_status').select('is_complete').eq('date', dateStr).eq('board_no', currentBoard).maybeSingle(),
         sb.from('shift_special_holiday').select('busho_code, label').lte('start_date', dateStr).gte('end_date', dateStr),
+        // 盤面の自由メモ（shift_banmen_memoテーブルがまだ無い場合はエラーになるので、その時は空扱いにする）
+        sb.from('shift_banmen_memo').select('*').eq('date', dateStr).eq('board_no', currentBoard),
       ]);
 
       // この間に別の日付に切り替えられていたら、この結果はもう使わない
@@ -666,6 +712,9 @@
 
       // この日、車検・修理などで使えない車 → 理由のマップ
       syakenCarCodes = new Map((syakenRes.data || []).map(r => [r.car_code, r.memo || '車検']));
+
+      // 盤面の自由メモ（テーブルがまだ無い場合はエラーになるので、その時は空扱いにする）
+      memoData = memoRes.data || [];
 
       staffRows = (staffRes.data || []).filter(s => !s.retired);
       // 車番は数字として並べ直す（3桁・4桁が混ざらないように）
@@ -694,11 +743,11 @@
         configData.filter(c => c.sp_jun !== 99 && c.sp_jun !== 98).map(c => c.busho_code)
       );
 
-      // 「専属」は各所属に浮いた人を一時的に置くための所属なので、
-      // 車両の「関連あり（盤面）」判定や車検・修理カードからは除外する
+      // 「専属」の所属コードを覚えておく（車検・修理カードで専属の車を除外するために使う。
+      // それ以外の「関連あり（盤面）」判定からは除外しない＝専属の社員・車両も、この盤面の
+      // カードに表示されている以上、ふつうに左パネルの社員・車両一覧に出るようにする）
       const senzokuBusho = Object.values(masters.bushoMap || {}).find(b => b.busho_name === '専属');
       senzokuBushoCode = senzokuBusho ? senzokuBusho.busho_code : null;
-      if (senzokuBushoCode) boardBushoCodes.delete(senzokuBushoCode);
 
       // スマホ用の所属絞り込みプルダウンには、実際に盤面カードとして表示されている所属だけを出す
       buildMobileBushoSelect();
@@ -1448,6 +1497,184 @@
       }
 
       highlightConflictCells();
+      renderMemos();
+    }
+
+    // ===== 盤面の自由メモ（付箋）：エクセルの図形挿入のように、盤面の好きな場所に置ける =====
+    let memoSaveTimers = {}; // id → テキスト入力のデバウンス保存用タイマー
+
+    function renderMemos() {
+      const grid = document.getElementById('board-grid');
+      if (!grid) return;
+      // 他の操作（ドラッグ配置など）で再描画される前に、まだ保存していない入力中のメモがあれば先に保存する
+      Object.keys(memoSaveTimers).forEach(idStr => {
+        const ta = grid.querySelector(`.memo-box[data-id="${idStr}"] textarea`);
+        if (ta) saveMemoText(Number(idStr), ta.value);
+      });
+      const old = grid.querySelector('.memo-layer');
+      if (old) old.remove();
+      if (window.innerWidth <= 768) return; // スマホは表示しない（CSS側でも非表示）
+      const layer = document.createElement('div');
+      layer.className = 'memo-layer';
+      memoData.forEach(m => layer.appendChild(buildMemoBox(m)));
+      grid.appendChild(layer);
+    }
+
+    function buildMemoBox(m) {
+      const box = document.createElement('div');
+      box.className = 'memo-box';
+      box.style.left = (m.pos_x || 0) + 'px';
+      box.style.top = (m.pos_y || 0) + 'px';
+      box.style.width = (m.width || 120) + 'px';
+      box.style.height = (m.height || 20) + 'px';
+      box.style.background = m.color || '#fff9c4';
+      box.dataset.id = m.id;
+
+      let dragHandle = null;
+      if (canEdit()) {
+        dragHandle = document.createElement('span');
+        dragHandle.className = 'memo-drag';
+        dragHandle.textContent = '✥';
+        dragHandle.title = 'ドラッグで移動';
+        box.appendChild(dragHandle);
+      }
+
+      const ta = document.createElement('textarea');
+      ta.value = m.memo_text || '';
+      ta.readOnly = !canEdit();
+      ta.placeholder = 'メモを入力';
+      ta.oninput = () => scheduleMemoTextSave(m.id, ta.value);
+      ta.onblur = () => saveMemoText(m.id, ta.value);
+      box.appendChild(ta);
+
+      if (canEdit()) {
+        const del = document.createElement('span');
+        del.className = 'memo-del';
+        del.textContent = '✕';
+        del.title = '削除';
+        del.onclick = (e) => { e.stopPropagation(); deleteMemo(m.id); };
+        box.appendChild(del);
+      }
+
+      if (canEdit()) {
+        dragHandle.addEventListener('mousedown', (e) => startMemoDrag(e, box, m));
+        const resizeHandle = document.createElement('div');
+        resizeHandle.className = 'memo-resize-handle';
+        resizeHandle.title = 'ドラッグでサイズ変更';
+        resizeHandle.addEventListener('mousedown', (e) => startMemoResize(e, box, m));
+        box.appendChild(resizeHandle);
+      }
+      return box;
+    }
+
+    function scheduleMemoTextSave(id, text) {
+      if (memoSaveTimers[id]) clearTimeout(memoSaveTimers[id]);
+      memoSaveTimers[id] = setTimeout(() => saveMemoText(id, text), 800);
+    }
+
+    async function saveMemoText(id, text) {
+      if (memoSaveTimers[id]) { clearTimeout(memoSaveTimers[id]); delete memoSaveTimers[id]; }
+      const m = memoData.find(x => x.id === id);
+      if (m && m.memo_text === text) return; // 変化がなければ保存しない
+      const { error } = await sb.from('shift_banmen_memo').update({ memo_text: text }).eq('id', id);
+      if (error) { console.error('メモの保存に失敗しました', error); return; }
+      if (m) m.memo_text = text;
+      logChange('盤面', 'メモ編集', `${getDateLabel(currentDate)} ${currentBoard === 2 ? '企業物流課' : '宅配業務課'}`, text ? text.slice(0, 30) : '(空欄)');
+    }
+
+    function startMemoDrag(e, box, m) {
+      e.preventDefault();
+      const grid = document.getElementById('board-grid');
+      const startX = e.clientX;
+      const startY = e.clientY;
+      const origLeft = parseFloat(box.style.left) || 0;
+      const origTop = parseFloat(box.style.top) || 0;
+      box.style.zIndex = 50;
+
+      function onMove(ev) {
+        const dx = ev.clientX - startX;
+        const dy = ev.clientY - startY;
+        let newLeft = origLeft + dx;
+        let newTop = origTop + dy;
+        newLeft = Math.max(0, Math.min(newLeft, grid.scrollWidth - 40));
+        newTop = Math.max(0, Math.min(newTop, grid.scrollHeight - 30));
+        box.style.left = newLeft + 'px';
+        box.style.top = newTop + 'px';
+      }
+      async function onUp() {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        box.style.zIndex = '';
+        const newLeft = parseFloat(box.style.left) || 0;
+        const newTop = parseFloat(box.style.top) || 0;
+        m.pos_x = newLeft; m.pos_y = newTop;
+        const { error } = await sb.from('shift_banmen_memo').update({ pos_x: newLeft, pos_y: newTop }).eq('id', m.id);
+        if (error) console.error('メモの位置保存に失敗しました', error);
+      }
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    }
+
+    function startMemoResize(e, box, m) {
+      e.preventDefault();
+      e.stopPropagation();
+      const startX = e.clientX;
+      const startY = e.clientY;
+      const origWidth = parseFloat(box.style.width) || 120;
+      const origHeight = parseFloat(box.style.height) || 20;
+      box.style.zIndex = 50;
+
+      function onMove(ev) {
+        const dx = ev.clientX - startX;
+        const dy = ev.clientY - startY;
+        const newWidth = Math.max(50, origWidth + dx);
+        const newHeight = Math.max(20, origHeight + dy);
+        box.style.width = newWidth + 'px';
+        box.style.height = newHeight + 'px';
+      }
+      async function onUp() {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        box.style.zIndex = '';
+        const newWidth = parseFloat(box.style.width) || 160;
+        const newHeight = parseFloat(box.style.height) || 90;
+        m.width = newWidth; m.height = newHeight;
+        const { error } = await sb.from('shift_banmen_memo').update({ width: newWidth, height: newHeight }).eq('id', m.id);
+        if (error) console.error('メモのサイズ保存に失敗しました', error);
+      }
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    }
+
+    async function addMemo() {
+      if (!canEdit()) { showMsg('閲覧のみモードのため追加できません', 'err'); return; }
+      const dateStr = getDateStr(currentDate);
+      // 少しずつ位置をずらして、新しいメモが前のメモにぴったり重ならないようにする
+      const n = memoData.length;
+      const insert = {
+        date: dateStr, board_no: currentBoard, memo_text: '',
+        pos_x: 10 + (n % 6) * 24, pos_y: 10 + (n % 6) * 24,
+        width: 120, height: 20, color: '#fff9c4',
+      };
+      const { data, error } = await sb.from('shift_banmen_memo').insert(insert).select().single();
+      if (error) { showMsg('メモの追加に失敗しました: ' + error.message, 'err'); return; }
+      memoData.push(data);
+      renderMemos();
+      logChange('盤面', 'メモ追加', `${getDateLabel(currentDate)} ${currentBoard === 2 ? '企業物流課' : '宅配業務課'}`, '');
+      requestAnimationFrame(() => {
+        const ta = document.querySelector(`.memo-box[data-id="${data.id}"] textarea`);
+        if (ta) ta.focus();
+      });
+    }
+
+    async function deleteMemo(id) {
+      if (!canEdit()) { showMsg('閲覧のみモードのため削除できません', 'err'); return; }
+      if (!confirm('このメモを削除しますか？')) return;
+      const { error } = await sb.from('shift_banmen_memo').delete().eq('id', id);
+      if (error) { showMsg('メモの削除に失敗しました: ' + error.message, 'err'); return; }
+      memoData = memoData.filter(m => m.id !== id);
+      renderMemos();
+      logChange('盤面', 'メモ削除', `${getDateLabel(currentDate)} ${currentBoard === 2 ? '企業物流課' : '宅配業務課'}`, '');
     }
 
     // ===== 所属カード =====
@@ -2894,7 +3121,9 @@
     }
 
     // ===== 所属カード（配送・倉庫・事務）をExcelに描画 =====
-    function drawBushoCardExcel(sheet, bushoCode, items, col0, row0) {
+    // cellRowMapを渡すと、「どの所属・業務・枠番号のデータが、エクセルの何行目に書かれたか」を記録する
+    // （盤面のメモ付箋を、画面と同じ枠の位置にできるだけ正確に貼り付けるために使う）
+    function drawBushoCardExcel(sheet, bushoCode, items, col0, row0, cellRowMap) {
       const busho = masters.bushoMap[bushoCode];
       const bushoName = busho?.busho_name || bushoCode;
       const cardW = Math.max(...items.map(blockWidth), 1);
@@ -2987,14 +3216,14 @@
               return text;
             }
             const vals = [
-              { text: carVal },
-              { text: withAmpmMark(getStaffName(rec?.driver), rec?.driver_ampm) },
+              { text: carVal, field: 'car_code' },
+              { text: withAmpmMark(getStaffName(rec?.driver), rec?.driver_ampm), field: 'driver' },
             ];
             for (let j = 1; j <= jyoshuCount; j++) {
               const jf = j === 1 ? 'jyoshu1' : 'jyoshu2';
-              vals.push({ text: withAmpmMark(getStaffName(rec?.[jf]), rec?.[jf + '_ampm']) });
+              vals.push({ text: withAmpmMark(getStaffName(rec?.[jf]), rec?.[jf + '_ampm']), field: jf });
             }
-            if (showSmaho) vals.push({ text: getStaffName(rec?.smaho) });
+            if (showSmaho) vals.push({ text: getStaffName(rec?.smaho), field: 'smaho' });
 
             const osobanBorder = { style: 'thick', color: { argb: 'FF1B4F72' } };
             vals.forEach((entry, i) => {
@@ -3016,6 +3245,7 @@
                 const neededWidth = excelTextWidth(entry.text) + 2;
                 sheet.getColumn(col0 + i).width = Math.max(sheet.getColumn(col0 + i).width || 0, neededWidth);
               }
+              if (cellRowMap) cellRowMap[`${bushoCode}|${gyomuName}|${r}|${entry.field}`] = { row, col: col0 + i };
             });
             row++;
           }
@@ -3045,6 +3275,7 @@
             cell.alignment = { horizontal: 'center', vertical: 'middle' };
             cell.border = { top:{style:'thin'}, bottom:{style:'thin'}, left:{style:'thin'}, right:{style:'thin'} };
             sheet.getColumn(cc).width = Math.max(sheet.getColumn(cc).width || 0, 15);
+            if (cellRowMap) cellRowMap[`${bushoCode}|${gyomuName}|${rNo}|driver`] = { row: rr, col: cc };
           }
           // 枠に入りきらなかった応援の人は、グリッドの続きに追加する
           oenQueue.forEach((o, idx) => {
@@ -3164,6 +3395,124 @@
     }
 
     // ===== Excel出力（盤面）=====
+    // 盤面に置いたメモ（付箋）が、画面上でどの「枠」（所属・業務・番号）の近くにあるかを調べる。
+    // まず、ちょうど重なっているマス（車番・運転・助手や倉庫・事務の枠）を探し、
+    // 見つかればそのマスのデータ（busho/gyomu/row）を使って、あとでエクセルの同じマスに正確に合わせる。
+    // 見つからない場合（カードの外や見出し部分など）だけ、これまで通り列と大まかな高さの割合で決める
+    function collectMemoCellTargets() {
+      const result = [];
+      const grid = document.getElementById('board-grid');
+      if (!grid) return result;
+      const colDivs = Array.from(grid.children).filter(el => el.tagName === 'DIV' && !el.classList.contains('memo-layer'));
+      if (!colDivs.length) return result;
+      const maxCol = colDivs.length;
+      const gridRect = grid.getBoundingClientRect();
+
+      // elementFromPointでメモ自身ではなく下のマスを拾えるよう、一時的にメモ層を隠す
+      const layer = grid.querySelector('.memo-layer');
+      const prevDisplay = layer ? layer.style.display : null;
+      if (layer) layer.style.display = 'none';
+
+      memoData.forEach(m => {
+        const text = (m.memo_text || '').trim();
+        if (!text) return; // 空欄のメモは出力しない
+        const width = m.width || 120;
+        const height = m.height || 20;
+        const posX = m.pos_x || 0;
+        const posY = m.pos_y || 0;
+
+        // ちょうど重なっているマスを探す（メモの左寄り・縦方向中央あたりの点で判定）
+        const px = gridRect.left + posX + Math.min(16, width / 2);
+        const py = gridRect.top + posY + height / 2;
+        const el = document.elementFromPoint(px, py);
+        const cellEl = el ? el.closest('.cell-box, .person-box') : null;
+        const busho = cellEl?.dataset.busho || null;
+        const gyomu = cellEl?.dataset.gyomu || null;
+        const cellRow = cellEl ? parseInt(cellEl.dataset.row, 10) : null;
+        const field = cellEl?.dataset.field || null;
+
+        // 大まかな位置（マスが見つからなかった時のフォールバック用）も、念のため一緒に計算しておく
+        const centerX = posX + width / 2;
+        let bestIdx = 0, bestDist = Infinity;
+        colDivs.forEach((div, idx) => {
+          const r = div.getBoundingClientRect();
+          const left = r.left - gridRect.left;
+          const right = r.right - gridRect.left;
+          if (centerX >= left && centerX < right) { bestIdx = idx; bestDist = -1; return; }
+          const mid = (left + right) / 2;
+          const dist = Math.abs(centerX - mid);
+          if (bestDist >= 0 && dist < bestDist) { bestDist = dist; bestIdx = idx; }
+        });
+        const col = Math.min(bestIdx + 1, maxCol);
+        const colDiv = colDivs[bestIdx];
+        const colRect = colDiv.getBoundingClientRect();
+        const colTop = colRect.top - gridRect.top;
+        const colHeight = colRect.height || 1;
+        const yFrac = Math.min(Math.max((posY - colTop) / colHeight, 0), 1);
+
+        result.push({ text, width, height, busho, gyomu, row: cellRow, field, col, yFrac });
+      });
+
+      if (layer) layer.style.display = prevDisplay || '';
+      return result;
+    }
+
+    // メモ（付箋）を、セルに文字を入れるのではなく、画像として「図形のように」浮かせて貼り付けるための画像を作る
+    function memoToImageDataUrl(text, width, height) {
+      const scale = 2; // 文字がぼやけないように少し大きく描いてから縮小表示する
+      const canvas = document.createElement('canvas');
+      canvas.width = width * scale;
+      canvas.height = height * scale;
+      const ctx = canvas.getContext('2d');
+      ctx.scale(scale, scale);
+
+      // 付箋の背景（角丸の黄色）
+      const r = 4;
+      ctx.fillStyle = '#fff9c4';
+      ctx.strokeStyle = '#c9a227';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(r, 0);
+      ctx.lineTo(width - r, 0);
+      ctx.quadraticCurveTo(width, 0, width, r);
+      ctx.lineTo(width, height - r);
+      ctx.quadraticCurveTo(width, height, width - r, height);
+      ctx.lineTo(r, height);
+      ctx.quadraticCurveTo(0, height, 0, height - r);
+      ctx.lineTo(0, r);
+      ctx.quadraticCurveTo(0, 0, r, 0);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+
+      // 文字（はみ出す分は折り返し、入りきらない分は省略する）
+      ctx.fillStyle = '#5a4a00';
+      ctx.font = '13px sans-serif';
+      ctx.textBaseline = 'top';
+      const paddingX = 5, paddingY = 3, lineHeight = 15;
+      const maxWidth = Math.max(width - paddingX * 2, 10);
+      const lines = [];
+      text.split('\n').forEach(raw => {
+        let line = '';
+        for (const ch of raw) {
+          const test = line + ch;
+          if (ctx.measureText(test).width > maxWidth && line) {
+            lines.push(line);
+            line = ch;
+          } else {
+            line = test;
+          }
+        }
+        lines.push(line);
+      });
+      lines.forEach((line, i) => {
+        const y = paddingY + i * lineHeight;
+        if (y + lineHeight <= height) ctx.fillText(line, paddingX, y);
+      });
+
+      return canvas.toDataURL('image/png');
+    }
+
     async function exportExcel() {
       const dateStr = getDateStr(currentDate);
       const dateLabel = getDateLabel(currentDate);
@@ -3224,20 +3573,58 @@
       titleCell.alignment = { horizontal: 'center' };
       sheet.getRow(1).height = 30;
 
-      // 各グループを描画
+      // メモ（付箋）を、画面上でどの「枠（所属・業務・番号）」の近くに置かれているかを先に調べておく
+      // （セルに実際に書き込む前に調べる必要があるので、描画ループより先に行う）
+      const memoCellTargets = collectMemoCellTargets();
+
+      // 各グループを描画（枠ごとの正確な行・列と、列ごとの開始行/終了行を覚えておき、あとでメモの floating 画像の位置に使う）
+      const cellRowMap = {}; // `${busho}|${gyomu}|${rowNo}|${field}` → 書き込んだエクセルの{row,col}
+      const rowRangeByCol = {};
       for (let col = 1; col <= maxCol; col++) {
         const col0 = groupStartCol[col];
         let row = 2;
         columns[col].forEach(c => {
           if (c.type === 'busho') {
-            row = drawBushoCardExcel(sheet, c.bushoCode, c.items, col0, row);
+            row = drawBushoCardExcel(sheet, c.bushoCode, c.items, col0, row, cellRowMap);
           } else if (c.type === 'yasumi') {
             row = drawYasumiCardExcel(sheet, c.cfg, col0, row);
           } else if (c.type === 'oen') {
             row = drawOenCardExcel(sheet, groupWidths[col], col0, row);
           }
         });
+        rowRangeByCol[col] = { start: 2, end: Math.max(row - 1, 2) };
       }
+
+      // メモ（付箋）を、セルには入れず「図形の挿入」のように、好きな位置に浮かせた画像として貼り付ける。
+      // 画面上でどの枠の近くにあったかが分かったメモは、その枠と同じエクセルのマスに正確に合わせる。
+      // 枠の near くに無かったメモ（カードの外・お休み欄など）だけ、これまで通りの大まかな位置にする
+      memoCellTargets.forEach(p => {
+        let targetCol = null;
+        let targetRow = null;
+        if (p.busho && p.gyomu && p.row != null && p.field) {
+          const mapped = cellRowMap[`${p.busho}|${p.gyomu}|${p.row}|${p.field}`];
+          if (mapped != null) {
+            // 一番近いと分かったマスの、ちょうど1つ後ろ（右の列）に貼り付ける
+            // （ぴったり同じマスに重ねるより、少しずらした方がもとの内容が隠れず見やすいため）
+            targetCol = mapped.col + 1;
+            targetRow = mapped.row;
+          }
+        }
+        if (targetCol == null) {
+          // 枠にうまく対応づけられなかった場合は、画面上の列・おおよその高さから大まかに決める
+          targetCol = groupStartCol[p.col] || 1;
+          const range = rowRangeByCol[p.col] || { start: 2, end: 2 };
+          targetRow = Math.min(Math.max(Math.round(range.start + p.yFrac * (range.end - range.start)), range.start), range.end);
+        }
+        const width = p.width || 120;
+        const height = p.height || 20;
+        const dataUrl = memoToImageDataUrl(p.text, width, height);
+        const imageId = workbook.addImage({ base64: dataUrl, extension: 'png' });
+        sheet.addImage(imageId, {
+          tl: { col: targetCol - 1, row: targetRow - 1 },
+          ext: { width, height },
+        });
+      });
 
       // 行の高さを少し大きくする
       sheet.properties.defaultRowHeight = 20;

@@ -70,10 +70,10 @@
         <select id="f_busho"><option value="">-- 未選択 --</option></select>
       </div>
       <div class="form-cell" style="width:80px">
-        <label>有効</label>
+        <label>在籍</label>
         <select id="f_active">
-          <option value="true">有効</option>
-          <option value="false">無効</option>
+          <option value="true">在籍</option>
+          <option value="false">廃車</option>
         </select>
       </div>
     </div>
@@ -93,7 +93,7 @@
         <th style="width:130px">車両コード</th>
         <th style="width:200px">車番</th>
         <th style="width:130px">所属</th>
-        <th style="width:80px">有効</th>
+        <th style="width:80px">在籍</th>
       </tr>
     </thead>
     <tbody id="tbody"></tbody>
@@ -163,7 +163,7 @@
           <td>${r.car_code}</td>
           <td>${r.car_no || '－'}</td>
           <td>${bushoHtml}</td>
-          <td>${r.is_active ? '有効' : '無効'}</td>
+          <td>${r.is_active ? '在籍' : '廃車'}</td>
         `;
         tbody.appendChild(tr);
       });
