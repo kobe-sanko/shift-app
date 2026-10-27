@@ -13,7 +13,19 @@
   const currentPage = location.pathname.split('/').pop();
   const isPublicPage = publicPages.includes(currentPage);
 
-  const authRaw = sessionStorage.getItem('shiftAppAuth');
+  // 5分間、操作（クリック・タップ・キー入力・画面の切り替え）がなければ、
+  // ログインしたままでも「期限切れ」として扱い、もう一度ログインを求める
+  const AUTH_TIMEOUT_MS = 5 * 60 * 1000;
+
+  let authRaw = sessionStorage.getItem('shiftAppAuth');
+  if (authRaw) {
+    const lastActive = parseInt(sessionStorage.getItem('shiftAppAuthTime') || '0', 10);
+    if (!lastActive || Date.now() - lastActive > AUTH_TIMEOUT_MS) {
+      sessionStorage.removeItem('shiftAppAuth');
+      sessionStorage.removeItem('shiftAppAuthTime');
+      authRaw = null;
+    }
+  }
 
   if (!isPublicPage && !authRaw) {
     // ログイン後に、もとの画面（スマホのホーム画面に置いているアイコンの行き先など）へ
@@ -23,8 +35,21 @@
     return;
   }
 
+  // ここまで来た＝有効なログイン状態なので、「今、操作した」ことにして期限を延ばす
+  if (authRaw) {
+    sessionStorage.setItem('shiftAppAuthTime', String(Date.now()));
+  }
+
   // ログイン済みなら、画面の一番上に細い帯で名前とログアウトを出す（他の表示と重ならないよう、浮かせずに差し込む）
   if (!isLoginPage && authRaw) {
+    // クリック・タップ・キー入力があるたびに期限を延ばす（1つの画面を使い続けていても
+    // ログアウトされてしまわないように。何も操作しない時間が5分続いた時だけ期限切れにする）
+    ['click', 'touchstart', 'keydown'].forEach(evt => {
+      document.addEventListener(evt, () => {
+        sessionStorage.setItem('shiftAppAuthTime', String(Date.now()));
+      }, { passive: true });
+    });
+
     window.addEventListener('DOMContentLoaded', () => {
       let auth;
       try { auth = JSON.parse(authRaw); } catch (e) { auth = null; }
@@ -37,6 +62,7 @@
       document.getElementById('shiftAppLogoutLink').onclick = (e) => {
         e.preventDefault();
         sessionStorage.removeItem('shiftAppAuth');
+        sessionStorage.removeItem('shiftAppAuthTime');
         location.href = 'login.html';
       };
       // この帯の高さを覚えておき、画面全体の高さ計算（100vh基準のもの）が
