@@ -30,16 +30,16 @@
     .retired-text { color: #aaa; }
     .loading { text-align: center; padding: 20px; color: #888; }
 
-    /* フォーム：テーブルと完全同幅 */
-    .form-box { background: #fff0f5; border-radius: 8px; padding: 8px; margin-bottom: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.1); }
-    .form-table { width: 100%; display: flex; flex-wrap: wrap; gap: 4px; align-items: flex-end; }
-    .form-cell { display: block; }
-    .form-cell label { display: block; font-size: 0.75rem; color: #666; text-align: center; margin-bottom: 3px; }
-    .form-cell input, .form-cell select {
+    /* フォーム：下の一覧表と同じ<table>構造・同じ列幅にして、列の位置を必ず揃える */
+    .form-box { background: #fff0f5; border-radius: 8px; padding: 8px 0; margin-bottom: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.1); }
+    .form-input-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    .form-input-table td { padding: 6px 4px; text-align: center; vertical-align: bottom; }
+    .form-input-table label { display: block; font-size: 0.75rem; color: #666; text-align: center; margin-bottom: 3px; }
+    .form-input-table input, .form-input-table select {
       width: 100%; font-size: 0.85rem; padding: 4px 2px;
       border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; text-align: center;
     }
-    .btn-row { display: flex; gap: 6px; margin-top: 6px; }
+    .btn-row { display: flex; gap: 6px; margin-top: 6px; padding: 0 4px; }
     button { font-size: 0.85rem; padding: 5px 12px; border: none; border-radius: 4px; cursor: pointer; color: white; }
     .btn-add    { background: #4a90e2; }
     .btn-update { background: #27ae60; }
@@ -55,63 +55,68 @@
   <div class="filter-row" id="filter-row">
     <button class="filter-btn active" style="background:#555;color:white" onclick="filterTable('',this)">全員</button>
   </div>
-
   <!-- 入力フォーム（テーブルと同じ列幅） -->
   <div class="form-box">
-    <div class="form-table">
-      <div class="form-cell" style="width:110px">
-        <label>社員コード</label>
-        <input type="text" id="f_code">
-      </div>
-      <div class="form-cell" style="width:150px">
-        <label>氏名</label>
-        <input type="text" id="f_name">
-      </div>
-      <div class="form-cell" style="width:110px">
-        <label>所属</label>
-        <select id="f_busho" onchange="buildCarSelect(this.value)"><option value="">-- 未選択 --</option></select>
-      </div>
-      <div class="form-cell" style="width:110px">
-        <label>車両</label>
-        <select id="f_car"><option value="">-- 未選択 --</option></select>
-      </div>
-      <div class="form-cell" style="width:90px">
-        <label>退職済み</label>
-        <select id="f_retired">
-          <option value="false">いいえ</option>
-          <option value="true">はい</option>
-        </select>
-      </div>
-      <div class="form-cell" style="width:80px">
-        <label>残業上限(h)</label>
-        <select id="f_overtime">
-          <option value="80">80</option>
-          <option value="60">60</option>
-        </select>
-      </div>
-      <div class="form-cell" style="width:80px">
-        <label>PC権限</label>
-        <select id="f_is_admin" onchange="updatePasswordVisibility()">
-          <option value="false">なし</option>
-          <option value="true">あり</option>
-        </select>
-      </div>
-      <div class="form-cell" style="width:80px">
-        <label>スマホ</label>
-        <select id="f_has_smaho">
-          <option value="false">なし</option>
-          <option value="true">あり</option>
-        </select>
-      </div>
-    </div>
+    <table class="form-input-table">
+      <colgroup>
+        <col style="width:100px"><col style="width:130px"><col style="width:100px"><col style="width:90px">
+        <col style="width:80px"><col style="width:70px"><col style="width:70px"><col style="width:70px"><col style="width:85px">
+      </colgroup>
+      <tr>
+        <td>
+          <label>社員コード</label>
+          <input type="text" id="f_code">
+        </td>
+        <td>
+          <label>氏名</label>
+          <input type="text" id="f_name">
+        </td>
+        <td>
+          <label>所属</label>
+          <select id="f_busho" onchange="buildCarSelect(this.value)"><option value="">-- 未選択 --</option></select>
+        </td>
+        <td>
+          <label>車両</label>
+          <select id="f_car"><option value="">-- 未選択 --</option></select>
+        </td>
+        <td>
+          <label>退職済み</label>
+          <select id="f_retired">
+            <option value="false">いいえ</option>
+            <option value="true">はい</option>
+          </select>
+        </td>
+        <td>
+          <label>残業上限(h)</label>
+          <select id="f_overtime">
+            <option value="80">80</option>
+            <option value="60">60</option>
+          </select>
+        </td>
+        <td>
+          <label>PC権限</label>
+          <select id="f_is_admin" onchange="updatePasswordVisibility()">
+            <option value="false">なし</option>
+            <option value="true">あり</option>
+          </select>
+        </td>
+        <td>
+          <label>スマホ</label>
+          <select id="f_has_smaho">
+            <option value="false">なし</option>
+            <option value="true">あり</option>
+          </select>
+        </td>
+        <td id="password-row" style="display:none">
+          <label>パスワード</label>
+          <input type="text" id="f_password" placeholder="変更時のみ">
+        </td>
+      </tr>
+    </table>
     <div class="btn-row" style="align-items:flex-end;">
       <button class="btn-add"    onclick="saveRow('add')">新規登録</button>
       <button class="btn-update" onclick="saveRow('update')">更新</button>
       <button class="btn-delete" onclick="deleteRow()">削除</button>
-      <div id="password-row" style="display:none; width:160px;">
-        <label style="display:block; font-size:0.75rem; color:#666; margin-bottom:3px; text-align:center;">パスワード</label>
-        <input type="text" id="f_password" placeholder="変更時のみ入力" style="width:100%; font-size:0.85rem; padding:4px 6px; border:1px solid #ccc; border-radius:4px; box-sizing:border-box; text-align:center;">
-      </div>
     </div>
   </div>
   </div>
@@ -121,14 +126,15 @@
   <table id="main-table" style="display:none">
     <thead>
       <tr>
-        <th style="width:110px">社員コード</th>
-        <th style="width:150px">氏名</th>
-        <th style="width:110px">所属</th>
-        <th style="width:110px">車両</th>
-        <th style="width:90px">退職済み</th>
-        <th style="width:80px">残業上限</th>
-        <th style="width:80px">PC権限</th>
-        <th style="width:80px">スマホ</th>
+        <th style="width:100px">社員コード</th>
+        <th style="width:130px">氏名</th>
+        <th style="width:100px">所属</th>
+        <th style="width:90px">車両</th>
+        <th style="width:80px">退職済み</th>
+        <th style="width:70px">残業上限</th>
+        <th style="width:70px">PC権限</th>
+        <th style="width:70px">スマホ</th>
+        <th style="width:85px">パスワード</th>
       </tr>
     </thead>
     <tbody id="tbody"></tbody>
@@ -198,9 +204,10 @@
     }
 
     async function loadRows() {
-      // パスワードはここで取得しない（一覧や編集フォームに表示しない。変更したい時だけ新しい値を入力する）
+      // パスワードそのものは編集フォームに表示しない（変更したい時だけ新しい値を入力する）。
+      // 一覧には「初期パスワード（社員コードと同じ）のままかどうか」の判定にだけ使う
       const { data, error } = await sb.from('shift_staff')
-        .select('staff_code,name,busho_code,car_code,retired,overtime_limit,is_admin,has_smaho')
+        .select('staff_code,name,busho_code,car_code,retired,overtime_limit,is_admin,has_smaho,password')
         .order('staff_code');
       if (error) { showMsg('データの読み込みに失敗しました', 'err'); return; }
       rows = data || [];
@@ -232,6 +239,12 @@
         const smahoHtml = r.has_smaho
           ? `<span class="badge" style="background:#d4edda;color:#155724">あり</span>`
           : `<span class="badge" style="background:#eee;color:#999">なし</span>`;
+        // パスワードの中身は出さず、「初期パスワード（社員コードと同じ）のままかどうか」だけ分かるようにする
+        const pwHtml = !r.password
+          ? `<span class="badge" style="background:#fdecea;color:#c0392b">未設定</span>`
+          : (r.password === r.staff_code
+            ? `<span class="badge" style="background:#fdebd0;color:#935116">初期のまま</span>`
+            : `<span class="badge" style="background:#d4edda;color:#155724">変更済み</span>`);
         tr.innerHTML = `
           <td>${r.staff_code}</td>
           <td class="${r.retired ? 'retired-text' : ''}">${r.name || ''}</td>
@@ -241,6 +254,7 @@
           <td>${otHtml}</td>
           <td>${adminHtml}</td>
           <td>${smahoHtml}</td>
+          <td>${pwHtml}</td>
         `;
         tbody.appendChild(tr);
       });
