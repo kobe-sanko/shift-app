@@ -13,10 +13,13 @@
   const currentPage = location.pathname.split('/').pop();
   const isPublicPage = publicPages.includes(currentPage);
 
-  const authRaw = localStorage.getItem('shiftAppAuth');
+  const authRaw = sessionStorage.getItem('shiftAppAuth');
 
   if (!isPublicPage && !authRaw) {
-    location.href = 'login.html';
+    // ログイン後に、もとの画面（スマホのホーム画面に置いているアイコンの行き先など）へ
+    // そのまま戻れるように、今いた場所（ファイル名＋?以降のパラメータ）を覚えさせておく
+    const returnTo = location.pathname.split('/').pop() + location.search;
+    location.href = 'login.html?return=' + encodeURIComponent(returnTo);
     return;
   }
 
@@ -33,7 +36,7 @@
       document.body.prepend(bar);
       document.getElementById('shiftAppLogoutLink').onclick = (e) => {
         e.preventDefault();
-        localStorage.removeItem('shiftAppAuth');
+        sessionStorage.removeItem('shiftAppAuth');
         location.href = 'login.html';
       };
       // この帯の高さを覚えておき、画面全体の高さ計算（100vh基準のもの）が
@@ -49,7 +52,7 @@
 
 // 今ログインしている人の情報を取得する
 function getAuth() {
-  try { return JSON.parse(localStorage.getItem('shiftAppAuth')); } catch (e) { return null; }
+  try { return JSON.parse(sessionStorage.getItem('shiftAppAuth')); } catch (e) { return null; }
 }
 
 // PC権限（作成・修正ができるか）があるかどうか

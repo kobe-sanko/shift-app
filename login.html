@@ -43,8 +43,15 @@
     function enterApp(data) {
       if (!data) return;
       // 誰でもログインできる。PC権限（is_admin）は、各画面での「作成・修正できるかどうか」の判定に使う
-      localStorage.setItem('shiftAppAuth', JSON.stringify({ code: data.staff_code, name: data.name, isAdmin: !!data.is_admin }));
-      location.href = 'index.html';
+      sessionStorage.setItem('shiftAppAuth', JSON.stringify({ code: data.staff_code, name: data.name, isAdmin: !!data.is_admin }));
+      // もともと見ようとしていた画面（?returnで渡ってきたもの。スマホのホーム画面アイコンなど）があれば、
+      // ログイン後はトップ画面を経由せず、そのままその画面に進む
+      const params = new URLSearchParams(location.search);
+      const returnTo = params.get('return'); // URLSearchParamsが自動でデコードしてくれるので、そのまま使う
+      // 念のため、このアプリの中のファイル名（例：chusyajo.html）だけを許可する
+      // （外部サイトのURLなどが紛れ込んでいた場合は、トップ画面に進む）
+      const isSafeReturn = returnTo && /^[a-zA-Z0-9_\-]+\.html(\?.*)?$/.test(returnTo);
+      location.href = isSafeReturn ? returnTo : 'index.html';
     }
 
     async function doLogin() {
