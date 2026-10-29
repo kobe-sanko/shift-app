@@ -154,12 +154,14 @@
     @media (max-width: 768px) {
       .left-panel { display: none; }
       .btn-recreate, .btn-excel, .btn-config, .btn-memo-add { display: none !important; }
-      .top-bar { gap: 4px; padding: 6px 6px; flex-wrap: nowrap; }
+      .top-bar { gap: 4px; padding: 6px 6px; flex-wrap: nowrap; overflow-x: auto; }
       .top-bar a { white-space: nowrap; flex-shrink: 0; font-size: 0.78rem; }
       .date-nav { gap: 3px; flex-shrink: 0; }
       .date-label { min-width: 78px; font-size: 0.8rem; white-space: nowrap; }
       .date-nav button { padding: 4px 6px; }
       .btn-complete { white-space: nowrap; flex-shrink: 0; font-size: 0.68rem; padding: 4px 6px; }
+      .board-tabs { flex-shrink: 0; }
+      .board-tab { white-space: nowrap; flex-shrink: 0; font-size: 0.68rem; padding: 4px 8px; }
       .mobile-busho-filter { display: block; padding: 6px 8px 0; }
       /* スマホは実機によって画面の高さの扱いが変わりやすいため、
          高さを固定計算せず、ページ全体が普通にスクロールする形にする */
