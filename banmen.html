@@ -240,7 +240,10 @@
     .ampm-btn.ampm-pm { background: #fdebd0; border-color: #f8d7a3; }
     .ampm-btn.ampm-am.active { background: #2980b9; color: white; border-color: #2980b9; font-weight: bold; }
     .ampm-btn.ampm-pm.active { background: #e67e22; color: white; border-color: #e67e22; font-weight: bold; }
-    .cell-box.car-cell { background: #fff8f0; min-width: 40px; padding: 1px 2px; }
+    .cell-box.car-cell { background: #fff8f0; min-width: 80px; padding: 1px 2px; }
+    /* border-widthを常に2pxに固定しておく（必要台数の赤枠が付く・付かないで枠線の太さが変わると、
+       中の車番の開始位置が1pxずれて見えてしまうため）。何も入っていない空の枠（点線）はそのまま */
+    .cell-box.car-cell.filled { border-width: 2px; }
     /* 必要台数マスタで設定した範囲の枠は、埋まっていても常に赤枠をつける */
     .cell-box.quota-required { border: 2px solid #e74c3c; }
     /* 必要台数マスタで設定した台数に届いていない枠を目立たせる（未入力の問題箇所）：赤背景 */
@@ -536,6 +539,7 @@
     let gyomuRoleMap = {};    // bushoCode|field|rowNo や bushoCode|倉庫 → gyomu_code（「ローソン1」のような独自名でも、役割から業務コードを見つけられるようにする）
     let currentDayCol = '';   // その日のd列名（d01〜d31）
     let currentLoadId = 0;    // 日付を素早く切り替えたときに、古い読み込みの結果を無視するための番号
+    let carTypeAbbrMap = {};  // 'size|2t標準' のような key → 略称（車両サイズ・車両タイプマスタのabbr。車番セルの表示を短くするため）
 
     // ===== 初期化 =====
     async function init() {
@@ -544,10 +548,21 @@
       updateBoardTabs();
       masters = await loadMasters();
       buildGroupColorMap();
+      await loadCarTypeAbbrMap();
       buildLeftPanelBushoSelect();
       applyReadOnlyIfNeeded();
       window.addEventListener('resize', () => { updateCompleteBtn(); applyMobileLockIfNeeded(); });
       await loadData();
+    }
+
+    // 車両サイズ・車両タイプマスタの略称を読み込んでおく（車番セルの表示を短くするため）
+    async function loadCarTypeAbbrMap() {
+      const { data, error } = await sb.from('shift_car_type').select('kind, value, abbr');
+      if (error) { console.error('車両サイズ・車両タイプマスタの読み込みに失敗しました', error); return; }
+      carTypeAbbrMap = {};
+      (data || []).forEach(r => {
+        if (r.abbr) carTypeAbbrMap[r.kind + '|' + r.value] = r.abbr;
+      });
     }
 
     // 盤面1／盤面2を切り替える
@@ -1803,7 +1818,7 @@
 
       // ヘッダー
       // 車番欄の幅はどの所属でも同じにする
-      const carColWidth = 68;
+      const carColWidth = 84;
       let hdrHtml = `<tr><th style="width:${carColWidth}px;">車番</th><th>運転</th>`;
       for (let j = 0; j < jyoshuCount; j++) hdrHtml += '<th>助手</th>';
       // スマホ欄は氏名だけを表示するので、7文字の名前が1行に収まる幅を確保する
@@ -2102,6 +2117,43 @@
           tag.textContent = ampm === 'am' ? '午前' : '午後';
           span.appendChild(tag);
           span.appendChild(document.createTextNode(displayName));
+        } else if (field === 'car_code') {
+          // 車番のセルには、車両マスタに登録された「車両サイズ」「車両タイプ」があれば、
+          // 車番の両脇に小さく表示する
+          const carInfo = masters.carMap[value];
+          const sizeText  = carInfo?.car_size  ? (carTypeAbbrMap['size|'  + carInfo.car_size]  || carInfo.car_size)  : '';
+          const shapeText = carInfo?.car_shape ? (carTypeAbbrMap['shape|' + carInfo.car_shape] || carInfo.car_shape) : '';
+          if (sizeText || shapeText) {
+            // 「サイズ・車番・タイプ」の3つの枠を、サイズ・タイプの有無にかかわらず
+            // 常に同じ幅（固定ピクセル）にする。幅を内容に合わせて伸び縮みさせると、
+            // 行ごとに車番の位置がずれたり、縮みすぎて車番が消えたりするため、
+            // 必ず3枠とも幅を固定し、それぞれの枠の中だけで中央ぞろえにする
+            span.style.display = 'grid';
+            span.style.gridTemplateColumns = '16px 42px 10px'; // 車番は最大5文字（例：1234A）になることがあるため、真ん中の枠を少し広めにする
+            span.style.alignItems = 'center';
+            // この3枠の合計はいつも同じ幅（62px）なので、枠全体をセルの中央に置く。
+            // flex:1のままだとセル全体に引き伸ばされてしまうので、中身の幅ぴったりに戻す
+            span.style.flexGrow = '0';
+            span.style.flexShrink = '0';
+            span.title = [sizeText, displayName, shapeText].filter(Boolean).join(' ');
+
+            const sizeSpan = document.createElement('span');
+            sizeSpan.textContent = sizeText;
+            sizeSpan.style.cssText = 'font-size:0.56rem;color:#888;text-align:center;overflow:hidden;white-space:nowrap;';
+            span.appendChild(sizeSpan);
+
+            const mainLine = document.createElement('span');
+            mainLine.textContent = displayName;
+            mainLine.style.cssText = 'font-size:0.78rem;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+            span.appendChild(mainLine);
+
+            const shapeSpan = document.createElement('span');
+            shapeSpan.textContent = shapeText;
+            shapeSpan.style.cssText = 'font-size:0.56rem;color:#888;text-align:center;overflow:hidden;white-space:nowrap;';
+            span.appendChild(shapeSpan);
+          } else {
+            span.textContent = displayName;
+          }
         } else {
           span.textContent = displayName;
         }
@@ -2126,6 +2178,9 @@
         delBtn.textContent = '✕';
         delBtn.onclick = (e) => clearCell(e, delBtn);
         if (!canEdit()) delBtn.disabled = true;
+        // 削除ボタンは、名前・車番などの文字の流れから外して、どのセルでも右上に小さく重ねて表示する
+        box.style.position = 'relative';
+        delBtn.style.cssText = 'position:absolute;top:0;right:1px;font-size:0.55rem;line-height:1;padding:0;';
         box.appendChild(span);
         box.appendChild(delBtn);
       }

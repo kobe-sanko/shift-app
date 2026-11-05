@@ -89,6 +89,7 @@
         <td>
           <label>残業上限(h)</label>
           <select id="f_overtime">
+            <option value="">未設定（80として計算）</option>
             <option value="80">80</option>
             <option value="60">60</option>
           </select>
@@ -230,9 +231,11 @@
         const bushoHtml = busho
           ? `<span class="badge" style="background:${busho.color_h};color:${getTextColor(busho.color_h)}">${busho.busho_name}</span>`
           : '－';
-        const otHtml = r.overtime_limit == 60
-          ? `<span class="badge" style="background:#fdebd0;color:#935116">60h</span>`
-          : `<span class="badge" style="background:#d6eaf8;color:#1a5276">80h</span>`;
+        const otHtml = !r.overtime_limit
+          ? `<span class="badge" style="background:#fdecea;color:#c0392b">未設定(80h)</span>`
+          : (r.overtime_limit == 60
+            ? `<span class="badge" style="background:#fdebd0;color:#935116">60h</span>`
+            : `<span class="badge" style="background:#d6eaf8;color:#1a5276">${r.overtime_limit}h</span>`);
         const adminHtml = r.is_admin
           ? `<span class="badge" style="background:#d4edda;color:#155724">あり</span>`
           : `<span class="badge" style="background:#eee;color:#999">なし</span>`;
@@ -269,7 +272,7 @@
       buildCarSelect(r.busho_code || '');
       document.getElementById('f_car').value      = r.car_code || '';
       document.getElementById('f_retired').value  = r.retired ? 'true' : 'false';
-      document.getElementById('f_overtime').value = r.overtime_limit || 80;
+      document.getElementById('f_overtime').value = r.overtime_limit || '';
       document.getElementById('f_is_admin').value = r.is_admin ? 'true' : 'false';
       document.getElementById('f_has_smaho').value = r.has_smaho ? 'true' : 'false';
       updatePasswordVisibility();

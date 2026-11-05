@@ -122,7 +122,7 @@
   <div class="upload-box">
     <label>📂 勤怠Excelを取り込む：</label>
     <label class="file-btn" for="kintai-file">ファイルの選択</label>
-    <input type="file" id="kintai-file" accept=".xlsx" style="display:none" onchange="onFileChosen()">
+    <input type="file" id="kintai-file" accept=".xlsx,.xls" style="display:none" onchange="onFileChosen()">
     <span class="file-name-display" id="kintai-filename">（未選択）</span>
     <button class="btn btn-blue" onclick="doUpload()">取り込む</button>
   </div>
@@ -417,6 +417,114 @@
 
       showUploadMsg('取り込み中…', 'ok');
       try {
+        // ファイル名の拡張子で、2種類のファイル形式を区別する。
+        // ・.xlsx（従来の「時間管理変換」ファイル）
+        // ・.xls（「個人別勤務表：明細」のような、タブ区切りのテキスト形式）
+        const isTabTextFile = /\.xls$/i.test(file.name) && !/\.xlsx$/i.test(file.name);
+        if (isTabTextFile) {
+          await doUploadTabText(file);
+        } else {
+          await doUploadXlsx(file);
+        }
+      } catch (e) {
+        console.error(e);
+        showUploadMsg('❌ 取り込みに失敗しました: ' + e.message, 'err');
+      }
+    }
+
+    // 「個人別勤務表：明細」など、タブ区切りテキスト形式（拡張子は.xlsだが中身はExcelのバイナリ形式ではない）を取り込む。
+    // 社員ごと・日ごとに1行ずつ並んだ明細データを想定している。
+    async function doUploadTabText(file) {
+      const buf = await file.arrayBuffer();
+      // このファイルは文字コードがShift_JIS（cp932に近い日本語の文字コード）で保存されているため、
+      // 読み込むときにその文字コードを指定しないと文字化けしてしまう
+      const text = new TextDecoder('shift_jis').decode(buf);
+      const lines = text.split(/\r\n|\n/).filter(l => l.trim() !== '');
+      if (lines.length < 2) throw new Error('データの行が見つかりませんでした。ファイルの形式を確認してください。');
+
+      // 1行＝ダブルクォートで囲まれた項目がタブ区切りで並んでいる形式なので、
+      // ダブルクォートを取り除いてから、タブで分割する
+      function parseLine(line) {
+        return line.split('\t').map(cell => cell.trim().replace(/^"(.*)"$/, '$1'));
+      }
+
+      const header = parseLine(lines[0]);
+      const colIndex = (name) => header.indexOf(name);
+      const idxStaffCode = colIndex('従業員コード');
+      const idxDate       = colIndex('日付（/）');
+      const idxWorkHours   = colIndex('総労働時間');
+      if (idxStaffCode === -1 || idxDate === -1 || idxWorkHours === -1) {
+        throw new Error('必要な列（従業員コード・日付（/）・総労働時間）が見つかりませんでした。ファイルの形式を確認してください。');
+      }
+
+      const today = new Date();
+      const todayY = today.getFullYear(), todayM = today.getMonth(), todayD = today.getDate();
+
+      const totals = new Map(); // staff_code -> { work_days, work_hours, overtime_hours, today_done }
+      let yearmonth = null;
+      let prevKey = null; // 直前の行の「社員コード・日付」（同じ日が2回続けて出てくる、月集計だけの余分な行を飛ばすため）
+
+      for (let i = 1; i < lines.length; i++) {
+        const cells = parseLine(lines[i]);
+        // このファイルの社員コードは頭に0が付いた形式（例：080004）だが、
+        // システム側の社員コードは0を付けない形式（例：80004）なので、先頭の0を取り除いて合わせる
+        const staffCodeRaw = (cells[idxStaffCode] || '').trim();
+        const staffCode = staffCodeRaw.replace(/^0+(?=\d)/, '');
+        if (!staffCode) continue;
+        const dateStr = (cells[idxDate] || '').trim(); // 例：2026/10/01
+        const m = dateStr.match(/^(\d{4})\/(\d{2})\/(\d{2})$/);
+        if (!m) continue;
+        if (!yearmonth) yearmonth = m[1] + m[2];
+
+        // 同じ社員・同じ日付の行が続けて出てきた場合は、2回目以降は
+        // 「その日までの月合計」を表す余分な行とみなして読み飛ばす
+        const key = staffCode + '|' + dateStr;
+        if (key === prevKey) continue;
+        prevKey = key;
+
+        const hours = parseFloat(cells[idxWorkHours]);
+        if (!Number.isFinite(hours)) continue;
+        // 1日の労働時間として明らかにおかしい大きな値（24時間を超える等）は、
+        // 月集計の行が紛れ込んだものとみなして取り込まない
+        if (hours > 24) continue;
+
+        if (!totals.has(staffCode)) totals.set(staffCode, { work_days: 0, work_hours: 0, overtime_hours: 0, today_done: null });
+        const t = totals.get(staffCode);
+
+        const dY = parseInt(m[1], 10), dM = parseInt(m[2], 10) - 1, dD = parseInt(m[3], 10);
+        if (dY === todayY && dM === todayM && dD === todayD) {
+          t.today_done = hours > 0;
+        }
+
+        if (hours <= 0) continue; // 休みの日・まだ退勤していない日は数えない
+        t.work_days += 1;
+        t.work_hours += hours;
+        t.overtime_hours += Math.max(0, hours - 8);
+      }
+
+      if (!yearmonth) throw new Error('対象年月が読み取れませんでした。ファイルの形式を確認してください。');
+      if (totals.size === 0) throw new Error('取り込めるデータが0件でした。ファイルの形式を確認してください。');
+
+      // このファイル自体が、いつパソコンに保存されたか（＝アップロードした人が選んだファイルの更新日時）を
+      // データ基準日として使う
+      const fileSavedAt = new Date(file.lastModified);
+      const asOfDate = `${fileSavedAt.getFullYear()}-${String(fileSavedAt.getMonth() + 1).padStart(2, '0')}-${String(fileSavedAt.getDate()).padStart(2, '0')}`;
+
+      const records = [...totals.entries()].map(([staff_code, t]) => ({
+        staff_code,
+        yearmonth,
+        work_days: t.work_days,
+        work_hours: Math.round(t.work_hours * 100) / 100,
+        overtime_hours: Math.round(t.overtime_hours * 100) / 100,
+        today_done: t.today_done,
+        as_of_date: asOfDate,
+      }));
+
+      await saveKintaiRecords(yearmonth, records);
+    }
+
+    // 従来の「時間管理変換」Excel（.xlsx）ファイルを取り込む
+    async function doUploadXlsx(file) {
         const buf = await file.arrayBuffer();
         const wb = new ExcelJS.Workbook();
         await wb.xlsx.load(buf);
@@ -495,30 +603,31 @@
           as_of_date: asOfDate,
         }));
 
-        // このファイルに載っている社員の分だけを消してから、新しく入れ直す。
-        // （その年月を全員分消してしまうと、他の部署の人が別のタイミングで
-        //   取り込んだデータまで消えてしまうため、対象の社員だけに絞る）
-        const staffCodesInFile = records.map(r => r.staff_code);
-        const { error: delErr } = await sb.from('shift_kintai')
-          .delete().eq('yearmonth', yearmonth).in('staff_code', staffCodesInFile);
-        if (delErr) throw delErr;
+        await saveKintaiRecords(yearmonth, records);
+    }
 
-        const { error } = await sb.from('shift_kintai').insert(records);
-        if (error) throw error;
+    // 取り込んだデータを保存する（取り込み元の形式（.xlsx／.xls）によらず共通の処理）。
+    // このファイルに載っている社員の分だけを消してから、新しく入れ直す。
+    // （その年月を全員分消してしまうと、他の部署の人が別のタイミングで
+    //   取り込んだデータまで消えてしまうため、対象の社員だけに絞る）
+    async function saveKintaiRecords(yearmonth, records) {
+      const staffCodesInFile = records.map(r => r.staff_code);
+      const { error: delErr } = await sb.from('shift_kintai')
+        .delete().eq('yearmonth', yearmonth).in('staff_code', staffCodesInFile);
+      if (delErr) throw delErr;
 
-        showUploadMsg(`✅ ${records.length}件のデータを取り込みました`, 'ok');
-        const { year: uY, month: uM } = parseYearMonth(yearmonth);
-        logChange('勤怠管理', '取込', `${uY}年${uM}月`, `${records.length}件取り込み`);
+      const { error } = await sb.from('shift_kintai').insert(records);
+      if (error) throw error;
 
-        // 取り込んだ月が選択中の月であれば、表を更新
-        if (yearmonth !== currentYM) {
-          document.getElementById('ym-sel').value = yearmonth;
-        }
-        await loadData();
-      } catch (e) {
-        console.error(e);
-        showUploadMsg('❌ 取り込みに失敗しました: ' + e.message, 'err');
+      showUploadMsg(`✅ ${records.length}件のデータを取り込みました`, 'ok');
+      const { year: uY, month: uM } = parseYearMonth(yearmonth);
+      logChange('勤怠管理', '取込', `${uY}年${uM}月`, `${records.length}件取り込み`);
+
+      // 取り込んだ月が選択中の月であれば、表を更新
+      if (yearmonth !== currentYM) {
+        document.getElementById('ym-sel').value = yearmonth;
       }
+      await loadData();
     }
 
     function showUploadMsg(text, type) {
@@ -612,7 +721,8 @@
       const rows = targetStaffs.map(staff => {
         const k = kintaiMap[staff.staff_code];
         const busho = masters.bushoMap[staff.busho_code];
-        const overLimit = staff.overtime_limit || 60;
+        // 未設定（空欄）の場合は、社員マスタの表示と合わせて80hとして扱う
+        const overLimit = staff.overtime_limit || 80;
         const jougenJikan = shoteiDays ? shoteiDays * 8 + overLimit : null;
 
         const workDays = k ? k.work_days : null;

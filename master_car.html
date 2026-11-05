@@ -69,6 +69,14 @@
         <label>所属</label>
         <select id="f_busho"><option value="">-- 未選択 --</option></select>
       </div>
+      <div class="form-cell" style="width:100px">
+        <label>車両サイズ</label>
+        <select id="f_size"><option value="">-- 未選択 --</option></select>
+      </div>
+      <div class="form-cell" style="width:100px">
+        <label>車両タイプ</label>
+        <select id="f_shape"><option value="">-- 未選択 --</option></select>
+      </div>
       <div class="form-cell" style="width:80px">
         <label>在籍</label>
         <select id="f_active">
@@ -90,10 +98,12 @@
   <table id="main-table" style="display:none">
     <thead>
       <tr>
-        <th style="width:130px">車両コード</th>
-        <th style="width:200px">車番</th>
-        <th style="width:130px">所属</th>
-        <th style="width:80px">在籍</th>
+        <th style="width:110px">車両コード</th>
+        <th style="width:140px">車番</th>
+        <th style="width:100px">所属</th>
+        <th style="width:80px">車両サイズ</th>
+        <th style="width:90px">車両タイプ</th>
+        <th style="width:70px">在籍</th>
       </tr>
     </thead>
     <tbody id="tbody"></tbody>
@@ -109,8 +119,32 @@
       masters = await loadMasters();
       buildFilterButtons();
       buildSelects();
+      await buildTypeSelects();
       lockMasterFormIfNeeded();
       await loadRows();
+    }
+
+    // 「車両サイズ」「車両タイプ」のプルダウンを、マスタ（shift_car_type）から組み立てる
+    async function buildTypeSelects() {
+      const { data, error } = await sb.from('shift_car_type').select('*').order('id');
+      if (error) { console.error('車両サイズ・車両タイプマスタの読み込みに失敗しました', error); return; }
+      // 車両サイズは数字の小さい順、車両タイプは登録した順（古いものが先）に並べる
+      const sorted = (data || []).slice().sort((a, b) => {
+        if (a.kind === 'size' && b.kind === 'size') {
+          const numDiff = (parseFloat(a.value) || 0) - (parseFloat(b.value) || 0);
+          if (numDiff !== 0) return numDiff;
+        }
+        return a.id - b.id;
+      });
+      const sizeSel  = document.getElementById('f_size');
+      const shapeSel = document.getElementById('f_shape');
+      sorted.forEach(r => {
+        const opt = document.createElement('option');
+        opt.value = r.value;
+        opt.textContent = r.value;
+        if (r.kind === 'size') sizeSel.appendChild(opt);
+        else if (r.kind === 'shape') shapeSel.appendChild(opt);
+      });
     }
 
     function buildFilterButtons() {
@@ -163,6 +197,8 @@
           <td>${r.car_code}</td>
           <td>${r.car_no || '－'}</td>
           <td>${bushoHtml}</td>
+          <td>${r.car_size || '－'}</td>
+          <td>${r.car_shape || '－'}</td>
           <td>${r.is_active ? '在籍' : '廃車'}</td>
         `;
         tbody.appendChild(tr);
@@ -182,6 +218,8 @@
       document.getElementById('f_code').value   = r.car_code   || '';
       document.getElementById('f_no').value     = r.car_no     || '';
       document.getElementById('f_busho').value  = r.busho_code || '';
+      document.getElementById('f_size').value   = r.car_size   || '';
+      document.getElementById('f_shape').value  = r.car_shape  || '';
       document.getElementById('f_active').value = r.is_active ? 'true' : 'false';
       renderTable();
     }
@@ -194,6 +232,8 @@
         car_code:   code,
         car_no:     document.getElementById('f_no').value.trim() || null,
         busho_code: document.getElementById('f_busho').value     || null,
+        car_size:   document.getElementById('f_size').value      || null,
+        car_shape:  document.getElementById('f_shape').value     || null,
         is_active:  document.getElementById('f_active').value === 'true',
       };
       if (mode === 'add') {
