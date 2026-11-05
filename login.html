@@ -22,6 +22,10 @@
     <h1>📅 シフト管理システム</h1>
     <input type="text" id="code" placeholder="社員コードを入力" inputmode="numeric" autofocus onkeydown="if(event.key==='Enter') doLogin()">
     <input type="password" id="pw" placeholder="パスワードを入力" onkeydown="if(event.key==='Enter') doLogin()">
+    <label style="display:flex; align-items:center; gap:6px; font-size:0.8rem; color:#555; margin:-2px 0 12px; text-align:left;">
+      <input type="checkbox" id="rememberMe" checked style="width:auto; margin:0;">
+      ログイン状態を保存する（このパソコンを他の人と共有していない場合）
+    </label>
     <button id="btn" onclick="doLogin()">ログイン</button>
     <p style="font-size:0.75rem; color:#888; margin:10px 0 0;">📌 初めての方は、パスワードも社員コードと同じものを入力してください。</p>
     <div class="err" id="err">社員コードが見つかりません</div>
@@ -43,9 +47,16 @@
 
     function enterApp(data) {
       if (!data) return;
+      // 「ログイン状態を保存する」にチェックがあればlocalStorage（ブラウザを閉じても消えない）、
+      // なければ今まで通りsessionStorage（ブラウザ・タブを閉じると消える）に保存する
+      const remember = document.getElementById('rememberMe')?.checked;
+      const store = remember ? localStorage : sessionStorage;
+      const otherStore = remember ? sessionStorage : localStorage;
+      otherStore.removeItem('shiftAppAuth');
+      otherStore.removeItem('shiftAppAuthTime');
       // 誰でもログインできる。PC権限（is_admin）は、各画面での「作成・修正できるかどうか」の判定に使う
-      sessionStorage.setItem('shiftAppAuth', JSON.stringify({ code: data.staff_code, name: data.name, isAdmin: !!data.is_admin }));
-      sessionStorage.setItem('shiftAppAuthTime', String(Date.now()));
+      store.setItem('shiftAppAuth', JSON.stringify({ code: data.staff_code, name: data.name, isAdmin: !!data.is_admin }));
+      store.setItem('shiftAppAuthTime', String(Date.now()));
       // もともと見ようとしていた画面（?returnで渡ってきたもの。スマホのホーム画面アイコンなど）があれば、
       // ログイン後はトップ画面を経由せず、そのままその画面に進む
       const params = new URLSearchParams(location.search);

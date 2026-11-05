@@ -3,6 +3,30 @@
 // ============================================================
 
 // ============================================================
+// ログイン情報の保存場所について
+//
+// ログイン画面で「ログイン状態を保存する」にチェックを入れた場合は
+// localStorage（ブラウザを閉じても消えない）に、チェックを外した場合は
+// 今まで通りsessionStorage（ブラウザ・タブを閉じると消える）に保存する。
+// どちらに保存したかはページごとに覚えていないので、読み込むとき・消すときは
+// 両方を見て、入っている方を使うようにする。
+// ============================================================
+
+// ログイン情報が入っている方のStorageを返す（なければsessionStorageを返す）
+function getAuthStorage() {
+  if (localStorage.getItem('shiftAppAuth')) return localStorage;
+  return sessionStorage;
+}
+
+// ログイン情報を両方のStorageから消す（どちらに入っていても確実に消すため）
+function clearAuthStorage() {
+  localStorage.removeItem('shiftAppAuth');
+  localStorage.removeItem('shiftAppAuthTime');
+  sessionStorage.removeItem('shiftAppAuth');
+  sessionStorage.removeItem('shiftAppAuthTime');
+}
+
+// ============================================================
 // 簡易ログインチェック（社員コードでログイン）
 // ============================================================
 (function () {
@@ -13,16 +37,16 @@
   const currentPage = location.pathname.split('/').pop();
   const isPublicPage = publicPages.includes(currentPage);
 
-  // 5分間、操作（クリック・タップ・キー入力・画面の切り替え）がなければ、
+  // 1時間、操作（クリック・タップ・キー入力・画面の切り替え）がなければ、
   // ログインしたままでも「期限切れ」として扱い、もう一度ログインを求める
-  const AUTH_TIMEOUT_MS = 5 * 60 * 1000;
+  const AUTH_TIMEOUT_MS = 60 * 60 * 1000;
 
-  let authRaw = sessionStorage.getItem('shiftAppAuth');
+  const store = getAuthStorage();
+  let authRaw = store.getItem('shiftAppAuth');
   if (authRaw) {
-    const lastActive = parseInt(sessionStorage.getItem('shiftAppAuthTime') || '0', 10);
+    const lastActive = parseInt(store.getItem('shiftAppAuthTime') || '0', 10);
     if (!lastActive || Date.now() - lastActive > AUTH_TIMEOUT_MS) {
-      sessionStorage.removeItem('shiftAppAuth');
-      sessionStorage.removeItem('shiftAppAuthTime');
+      clearAuthStorage();
       authRaw = null;
     }
   }
@@ -37,7 +61,7 @@
 
   // ここまで来た＝有効なログイン状態なので、「今、操作した」ことにして期限を延ばす
   if (authRaw) {
-    sessionStorage.setItem('shiftAppAuthTime', String(Date.now()));
+    store.setItem('shiftAppAuthTime', String(Date.now()));
   }
 
   // ログイン済みなら、画面の一番上に細い帯で名前とログアウトを出す（他の表示と重ならないよう、浮かせずに差し込む）
@@ -46,7 +70,7 @@
     // ログアウトされてしまわないように。何も操作しない時間が5分続いた時だけ期限切れにする）
     ['click', 'touchstart', 'keydown'].forEach(evt => {
       document.addEventListener(evt, () => {
-        sessionStorage.setItem('shiftAppAuthTime', String(Date.now()));
+        store.setItem('shiftAppAuthTime', String(Date.now()));
       }, { passive: true });
     });
 
@@ -61,8 +85,7 @@
       document.body.prepend(bar);
       document.getElementById('shiftAppLogoutLink').onclick = (e) => {
         e.preventDefault();
-        sessionStorage.removeItem('shiftAppAuth');
-        sessionStorage.removeItem('shiftAppAuthTime');
+        clearAuthStorage();
         location.href = 'login.html';
       };
       // この帯の高さを覚えておき、画面全体の高さ計算（100vh基準のもの）が
@@ -78,7 +101,7 @@
 
 // 今ログインしている人の情報を取得する
 function getAuth() {
-  try { return JSON.parse(sessionStorage.getItem('shiftAppAuth')); } catch (e) { return null; }
+  try { return JSON.parse(getAuthStorage().getItem('shiftAppAuth')); } catch (e) { return null; }
 }
 
 // PC権限（作成・修正ができるか）があるかどうか
