@@ -265,7 +265,12 @@
     let dialogResolve = null;
     let smahoData = [];      // shift_banmenのsmaho列データ（月分）
     let smahoConfig = [];    // smaho_flg=trueの配送設定
-    let chibanCodes = new Set(); // 遅番行に対応する業務コードのセット
+    let chibanByDate = {}; // 日付（YYYYMMDD）→ その日に遅番となる業務コードのセット
+
+    // 指定した日付で、このコードが遅番かどうか
+    function isChibanCode(code, dateStr) {
+      return !!(dateStr && chibanByDate[dateStr] && chibanByDate[dateStr].has(code));
+    }
     let badgeLabelMode = 'busho'; // 'busho'=所属名で表示 / 'gyomu'=業務名（運転1など）で表示
     let hyojiJunMap = {};    // busho_code → { staff_code: jun } の表示順マップ
     let syakenByDay = {};    // d01〜d31 → その日使えない車番の配列
@@ -618,14 +623,16 @@
         rangeTo = `${nextYM}${String(cappedExtra).padStart(2,'0')}`;
       }
 
-      const [staffRes, shiftRes, tekiseiRes, configRes, smahoRes, chibanRes, hyojiJunRes, syakenRes, nextShiftRes] = await Promise.all([
+      const [staffRes, shiftRes, tekiseiRes, configRes, smahoRes, quotaRes, hyojiJunRes, syakenRes, nextShiftRes] = await Promise.all([
         sb.from('shift_staff').select('staff_code,name,busho_code,car_code,retired,overtime_limit,is_admin,has_smaho').order('staff_code'),
         sb.from('shift_gyomu_shift').select('*').eq('yearmonth', currentYM),
         sb.from('shift_gyomu_tekisei').select('staff_code, gyomu_code, busho_code'),
         sb.from('shift_banmen_config').select('*').eq('smaho_flg', true).eq('gyomu_code', '配送'),
         sb.from('shift_banmen').select('date, busho_code, row_no, smaho')
           .gte('date', dateFrom).lte('date', rangeTo).not('smaho', 'is', null),
-        sb.from('shift_banmen_config').select('busho_code, osoban_row').eq('gyomu_code', '配送').gt('osoban_row', 0),
+        // 遅番は「必要台数マスタ」で日ごとに決まる（盤面画面と同じ仕組み）ので、日付ごとに取得する
+        sb.from('shift_car_quota').select('busho_code, date, need_jyoshu, night_jyoshu_count, night_muyoshu_count')
+          .gte('date', dateFrom).lte('date', rangeTo),
         sb.from('shift_hyoji_jun').select('*'),
         sb.from('shift_syaken').select('car_code, date, memo').gte('date', dateFrom).lte('date', rangeTo),
         extraDays > 0 ? sb.from('shift_gyomu_shift').select('*').eq('yearmonth', nextYM) : Promise.resolve({ data: [] }),
@@ -650,16 +657,26 @@
         hyojiJunMap[r.busho_code][r.staff_code] = r.hyoji_jun;
       });
 
-      // 遅番行に対応する業務コードを特定
-      // 例：沖縄(810)のosoban_row=1 → 810-11（運転1）と810-21（助手1）
-      chibanCodes = new Set();
-      (chibanRes.data || []).forEach(r => {
-        if (!r.osoban_row) return;
-        const row = r.osoban_row;
-        // 運転（枝番の十の位=1、一の位=行番号）
-        chibanCodes.add(`${r.busho_code}-1${row}`);
-        // 助手（枝番の十の位=2、一の位=行番号）
-        chibanCodes.add(`${r.busho_code}-2${row}`);
+      // 遅番に対応する業務コードを、日付ごとに特定する（盤面画面の判定と同じロジック）。
+      // 助手ありグループ（row 1〜need_jyoshu）の上からnight_jyoshu_count行、
+      // 助手なしグループ（それより後ろ）の上からnight_muyoshu_count行が遅番になる。
+      // 例：沖縄(810)で row=1が遅番 → 810-11（運転1）と810-21（助手1）
+      chibanByDate = {};
+      (quotaRes.data || []).forEach(r => {
+        const needJyoshu = r.need_jyoshu || 0;
+        const nightJyoshuCount = r.night_jyoshu_count || 0;
+        const nightMuyoshuCount = r.night_muyoshu_count || 0;
+        if (!nightJyoshuCount && !nightMuyoshuCount) return;
+        if (!chibanByDate[r.date]) chibanByDate[r.date] = new Set();
+        const set = chibanByDate[r.date];
+        for (let row = 1; row <= Math.min(nightJyoshuCount, needJyoshu); row++) {
+          set.add(`${r.busho_code}-1${row}`); // 運転
+          set.add(`${r.busho_code}-2${row}`); // 助手
+        }
+        for (let i = 1; i <= nightMuyoshuCount; i++) {
+          const row = needJyoshu + i;
+          set.add(`${r.busho_code}-1${row}`); // 助手なしグループは運転のみ
+        }
       });
 
       // 車検・修理（使えない車）：日付(yyyymmdd) → その日使えない車のリスト（表示名＋所属コード＋理由）
@@ -757,7 +774,7 @@
     // ===== バッジ表示 =====
     // 空欄のときは、ベース業務と同じように細長いグレーの枠にして、
     // ドロップできる場所だとひと目で分かるようにする
-    function getBadgeHtml(code, isSecondary = false) {
+    function getBadgeHtml(code, isSecondary = false, dateStr = null) {
       if (!code || code === 'EMPTY') {
         return `<span class="badge empty slot-b-empty"></span>`;
       }
@@ -766,9 +783,9 @@
         const label = KYUJITSU_MAP[code] || (masters.bushoMap[code]?.busho_name) || code;
         return `<span class="badge" style="background:#e0e0e0;color:#c0392b;font-weight:bold">${label}</span>`;
       }
-      // 遅番フラグ
-      const isChiban = chibanCodes.has(code);
-      const chibanStyle = isChiban ? 'outline:2px solid #e67e22;' : '';
+      // 遅番フラグ（盤面画面と同じ青枠で揃える）
+      const isChiban = isChibanCode(code, dateStr);
+      const chibanStyle = isChiban ? 'outline:2px solid #1b4f72;' : '';
       // 業務
       const g = masters.gyomuMap[code];
       if (g) {
@@ -838,11 +855,12 @@
           const key = `d${String(d).padStart(2,'0')}`;
           const keyB = key + 'b';
           const cls = getDayClass(d);
+          const dateStr = `${currentYM}${String(d).padStart(2,'0')}`;
           // 午前の欄は普段通りの表示にする（空欄なら「－」）。こうすることで、
           // 午後だけ業務が入っている日は、業務が自然と下側（午後の位置）に表示される
           html += `<td class="day-cell ${cls}">
-            <div class="shift-td slot-a" data-staff="${s.staff_code}" data-key="${key}">${getBadgeHtml(shift[key])}</div>
-            <div class="shift-td slot-b" data-staff="${s.staff_code}" data-key="${keyB}">${getBadgeHtml(shift[keyB], true)}</div>
+            <div class="shift-td slot-a" data-staff="${s.staff_code}" data-key="${key}">${getBadgeHtml(shift[key], false, dateStr)}</div>
+            <div class="shift-td slot-b" data-staff="${s.staff_code}" data-key="${keyB}">${getBadgeHtml(shift[keyB], true, dateStr)}</div>
           </td>`;
         }
         // 来月の最初の数日分（設定されている場合）
@@ -855,9 +873,10 @@
             const origKeyB = origKey + 'b';
             const cls = getNextDayClass(d);
             const borderStyle = d === 1 ? 'border-left:3px solid #8e44ad;' : '';
+            const dateStr = `${nextYM}${String(d).padStart(2,'0')}`;
             html += `<td class="day-cell ${cls}" style="background:#faf5ff;${borderStyle}">
-              <div class="shift-td slot-a" data-staff="${s.staff_code}" data-key="${key}">${getBadgeHtml(nextShift[origKey])}</div>
-              <div class="shift-td slot-b" data-staff="${s.staff_code}" data-key="${keyB}">${getBadgeHtml(nextShift[origKeyB], true)}</div>
+              <div class="shift-td slot-a" data-staff="${s.staff_code}" data-key="${key}">${getBadgeHtml(nextShift[origKey], false, dateStr)}</div>
+              <div class="shift-td slot-b" data-staff="${s.staff_code}" data-key="${keyB}">${getBadgeHtml(nextShift[origKeyB], true, dateStr)}</div>
             </td>`;
           }
         }
@@ -1098,7 +1117,12 @@
       changed[staffCode] = true;
       document.getElementById('btn-save').style.display = '';
       const td = document.querySelector(`.shift-td[data-staff="${staffCode}"][data-key="${key}"]`);
-      if (td) td.innerHTML = getBadgeHtml(gyomuCode);
+      if (td) {
+        const ym = isNextKey(key) ? nextYM : currentYM;
+        const day = key.replace(/^[dn]/, '').replace(/b$/, '');
+        const dateStr = ym + day;
+        td.innerHTML = getBadgeHtml(gyomuCode, key.endsWith('b'), dateStr);
+      }
     }
 
     // ===== ダイアログ =====
@@ -1276,7 +1300,37 @@
         for (const t of banmenSyncTargets2) {
           await syncBanmenOnShiftChange(staffCode, t.key, t.oldCode, t.newCode, nextYM);
         }
+
+        // 翌月分の変更履歴
+        if (banmenSyncTargets2.length > 0) {
+          const staffName = staffRows.find(s => s.staff_code === staffCode)?.name || staffCode;
+          const { year, month } = parseYearMonth(nextYM);
+          const codeLabel = (code) => code ? (masters.gyomuMap[code]?.gyomu_name || code) : '未入力';
+          const changesText2 = banmenSyncTargets2
+            .map(t => `${parseInt(t.key.replace(/[^0-9]/g,''),10)}日${t.key.endsWith('b') ? '(2コマ目)' : ''}：${codeLabel(t.oldCode)}→${codeLabel(t.newCode)}`)
+            .join('、');
+          logChange('業務シフト', '変更', `${year}年${month}月 ${staffName}（翌月分）`, changesText2);
+        }
+
         nextShiftMap[staffCode] = { ...nextCurrent, ...data2 };
+      }
+
+      // 変更履歴に記録（この人の、今回実際に変わったセルだけをまとめて1件にする）
+      {
+        const staffName = staffRows.find(s => s.staff_code === staffCode)?.name || staffCode;
+        const { year, month } = parseYearMonth(currentYM);
+        const codeLabel = (code) => code ? (masters.gyomuMap[code]?.gyomu_name || code) : '未入力';
+        const keyToLabel = (key) => {
+          const isPm = key.endsWith('b');
+          const day = parseInt((isPm ? key.slice(0, -1) : key).slice(1), 10);
+          return `${day}日${isPm ? '(2コマ目)' : ''}`;
+        };
+        const changesText = banmenSyncTargets
+          .map(t => `${keyToLabel(t.key)}：${codeLabel(t.oldCode)}→${codeLabel(t.newCode)}`)
+          .join('、');
+        if (changesText) {
+          logChange('業務シフト', '変更', `${year}年${month}月 ${staffName}`, changesText);
+        }
       }
 
       showMsg('保存しました', 'ok');
@@ -1387,6 +1441,7 @@
       } else {
         showMsg(`「${scopeLabel}」のシフトを作成しました（${targetRecords.length}件）`, 'ok');
       }
+      logChange('業務シフト', '一括作成', `${currentYM.slice(0,4)}年${currentYM.slice(4)}月 ${scopeLabel}`, `ベース業務から${targetRecords.length}件作成（失敗${errorCount + nextErrorCount}件）`);
       await loadData();
     }
 
@@ -1534,13 +1589,13 @@
       const defs = [];
       for (let d = 1; d <= daysInMonth; d++) {
         const wd = new Date(year, month - 1, d).getDay();
-        defs.push({ label: `${d}`, wd, map: shiftMap, col: `d${String(d).padStart(2,'0')}`, isNext: false });
+        defs.push({ label: `${d}`, wd, map: shiftMap, col: `d${String(d).padStart(2,'0')}`, isNext: false, date: `${currentYM}${String(d).padStart(2,'0')}` });
       }
       if (extraDays > 0) {
         const { year: nY, month: nM } = parseYearMonth(nextYM);
         for (let d = 1; d <= extraDays; d++) {
           const wd = new Date(nY, nM - 1, d).getDay();
-          defs.push({ label: `${nM}/${d}`, wd, map: nextShiftMap, col: `d${String(d).padStart(2,'0')}`, isNext: true });
+          defs.push({ label: `${nM}/${d}`, wd, map: nextShiftMap, col: `d${String(d).padStart(2,'0')}`, isNext: true, date: `${nextYM}${String(d).padStart(2,'0')}` });
         }
       }
       return defs;
@@ -1631,7 +1686,7 @@
       // 1つの日付セルに、見た目・色を設定する共通処理
       // （午前午後がある日は、午前・午後それぞれ別のセルに対してこれを呼ぶことで、
       // セルの境界線がそのまま午前午後の間の「線」になる）
-      function styleDayCell(cell, code, info, isArrow, wd) {
+      function styleDayCell(cell, code, info, isArrow, wd, dateStr) {
         if (isArrow) {
           cell.alignment = { horizontal: 'center', vertical: 'middle' };
           cell.font = { color: { argb: 'FF555555' }, size: 9 };
@@ -1664,13 +1719,13 @@
           if (wd === 6) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF0F0FF' } };
         }
 
-        // 遅番はオレンジ枠
-        if (chibanCodes.has(code)) {
+        // 遅番は青枠（画面表示と合わせる）
+        if (isChibanCode(code, dateStr)) {
           cell.border = {
-            top:{style:'medium', color:{argb:'FFE67E22'}},
-            bottom:{style:'medium', color:{argb:'FFE67E22'}},
-            left:{style:'medium', color:{argb:'FFE67E22'}},
-            right:{style:'medium', color:{argb:'FFE67E22'}},
+            top:{style:'medium', color:{argb:'FF1B4F72'}},
+            bottom:{style:'medium', color:{argb:'FF1B4F72'}},
+            left:{style:'medium', color:{argb:'FF1B4F72'}},
+            right:{style:'medium', color:{argb:'FF1B4F72'}},
           };
         }
       }
@@ -1725,12 +1780,12 @@
           const isArrow = useArrow && d > 0 && di.code && di.code === prevCode && !di.info.isKyu;
 
           const cellA = dataRowA.getCell(colIdx);
-          styleDayCell(cellA, di.code, di.info, isArrow, wd);
+          styleDayCell(cellA, di.code, di.info, isArrow, wd, dayDefs[d].date);
 
           if (needsTwoRows) {
             if (di.hasDistinctB) {
               const cellB = dataRowB.getCell(colIdx);
-              styleDayCell(cellB, di.codeB, di.infoB, false, wd);
+              styleDayCell(cellB, di.codeB, di.infoB, false, wd, dayDefs[d].date);
             } else {
               // この日は午前のみ（または空欄）なので、午前午後2行分をまとめて1つのセルにする
               sheet.mergeCells(dataRowA.number, colIdx, dataRowB.number, colIdx);

@@ -2085,20 +2085,7 @@
       box.dataset.field = field;
       box.dataset.accept = acceptType;
 
-      // 遅番の行の車番欄には「遅」の文字を入れる。
-      // 車番の数字と重ならないよう、絶対位置ではなく横並びの要素として先頭に置く。
-      const showOsobanMark = field === 'car_code' && isOsoban;
-      if (showOsobanMark) {
-        const mark = document.createElement('span');
-        mark.textContent = '遅';
-        mark.style.color = '#1b4f72';
-        mark.style.fontWeight = 'bold';
-        mark.style.fontSize = '0.68rem';
-        mark.style.marginRight = '2px';
-        mark.style.flexShrink = '0';
-        mark.style.pointerEvents = 'none';
-        box.appendChild(mark);
-      }
+      // 遅番は「遅」の文字ではなく、枠の色（osobanクラスの青枠）だけで表す
 
       if (value && value !== 'EMPTY') {
         // 表示名を解決
