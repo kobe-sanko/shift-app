@@ -785,7 +785,8 @@
       }
       // 遅番フラグ（盤面画面と同じ青枠で揃える）
       const isChiban = isChibanCode(code, dateStr);
-      const chibanStyle = isChiban ? 'outline:2px solid #1b4f72;' : '';
+      // 枠を太くして、ひと目でわかるようにする（マスの背景色は呼び出し側で付ける）
+      const chibanStyle = isChiban ? 'outline:3px solid #FFEB00;outline-offset:-2px;' : '';
       // 業務
       const g = masters.gyomuMap[code];
       if (g) {
@@ -856,11 +857,14 @@
           const keyB = key + 'b';
           const cls = getDayClass(d);
           const dateStr = `${currentYM}${String(d).padStart(2,'0')}`;
+          // マスの中の業務の枠（バッジ）の外側、マスの余白部分にも薄い青を付けて、より目立たせる
+          const bgA = isChibanCode(shift[key], dateStr) ? 'background:#1565c0;' : '';
+          const bgB = isChibanCode(shift[keyB], dateStr) ? 'background:#1565c0;' : '';
           // 午前の欄は普段通りの表示にする（空欄なら「－」）。こうすることで、
           // 午後だけ業務が入っている日は、業務が自然と下側（午後の位置）に表示される
           html += `<td class="day-cell ${cls}">
-            <div class="shift-td slot-a" data-staff="${s.staff_code}" data-key="${key}">${getBadgeHtml(shift[key], false, dateStr)}</div>
-            <div class="shift-td slot-b" data-staff="${s.staff_code}" data-key="${keyB}">${getBadgeHtml(shift[keyB], true, dateStr)}</div>
+            <div class="shift-td slot-a" style="${bgA}" data-staff="${s.staff_code}" data-key="${key}">${getBadgeHtml(shift[key], false, dateStr)}</div>
+            <div class="shift-td slot-b" style="${bgB}" data-staff="${s.staff_code}" data-key="${keyB}">${getBadgeHtml(shift[keyB], true, dateStr)}</div>
           </td>`;
         }
         // 来月の最初の数日分（設定されている場合）
@@ -874,9 +878,11 @@
             const cls = getNextDayClass(d);
             const borderStyle = d === 1 ? 'border-left:3px solid #8e44ad;' : '';
             const dateStr = `${nextYM}${String(d).padStart(2,'0')}`;
+            const bgA = isChibanCode(nextShift[origKey], dateStr) ? 'background:#1565c0;' : '';
+            const bgB = isChibanCode(nextShift[origKeyB], dateStr) ? 'background:#1565c0;' : '';
             html += `<td class="day-cell ${cls}" style="background:#faf5ff;${borderStyle}">
-              <div class="shift-td slot-a" data-staff="${s.staff_code}" data-key="${key}">${getBadgeHtml(nextShift[origKey], false, dateStr)}</div>
-              <div class="shift-td slot-b" data-staff="${s.staff_code}" data-key="${keyB}">${getBadgeHtml(nextShift[origKeyB], true, dateStr)}</div>
+              <div class="shift-td slot-a" style="${bgA}" data-staff="${s.staff_code}" data-key="${key}">${getBadgeHtml(nextShift[origKey], false, dateStr)}</div>
+              <div class="shift-td slot-b" style="${bgB}" data-staff="${s.staff_code}" data-key="${keyB}">${getBadgeHtml(nextShift[origKeyB], true, dateStr)}</div>
             </td>`;
           }
         }
@@ -1122,6 +1128,8 @@
         const day = key.replace(/^[dn]/, '').replace(/b$/, '');
         const dateStr = ym + day;
         td.innerHTML = getBadgeHtml(gyomuCode, key.endsWith('b'), dateStr);
+        // マスの余白部分の背景色も、遅番かどうかに合わせて更新する
+        td.style.background = isChibanCode(gyomuCode, dateStr) ? '#1565c0' : '';
       }
     }
 
@@ -1719,13 +1727,13 @@
           if (wd === 6) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF0F0FF' } };
         }
 
-        // 遅番は青枠（画面表示と合わせる）
+        // 遅番は青枠（画面表示と合わせる。Excelはマスが1つしかないため、枠だけで表す）
         if (isChibanCode(code, dateStr)) {
           cell.border = {
-            top:{style:'medium', color:{argb:'FF1B4F72'}},
-            bottom:{style:'medium', color:{argb:'FF1B4F72'}},
-            left:{style:'medium', color:{argb:'FF1B4F72'}},
-            right:{style:'medium', color:{argb:'FF1B4F72'}},
+            top:{style:'thick', color:{argb:'FFFFEB00'}},
+            bottom:{style:'thick', color:{argb:'FFFFEB00'}},
+            left:{style:'thick', color:{argb:'FFFFEB00'}},
+            right:{style:'thick', color:{argb:'FFFFEB00'}},
           };
         }
       }
