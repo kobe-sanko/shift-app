@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>健診管理</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="common.js"></script>
+  <style>
+    body { font-family: sans-serif; margin: 0 auto; padding: 10px; background: #f5f5f5; max-width: 700px; }
+    h1 { font-size: 1.2rem; text-align: center; margin: 10px 0; }
+    h2 { font-size: 1rem; margin: 18px 0 8px; }
+    .back { display: block; text-align: center; margin: 8px 0; color: #4a90e2; text-decoration: none; width: fit-content; margin-left: auto; margin-right: auto; }
+    .desc { background: #e8f4fd; border-radius: 6px; padding: 10px 14px; margin-bottom: 14px; font-size: 0.85rem; }
+    .sticky-header { position: sticky; top: 0; z-index: 20; background: #f5f5f5; padding-top: 2px; padding-bottom: 6px; }
+    .msg { text-align: center; font-size: 0.85rem; padding: 6px; border-radius: 4px; margin-bottom: 8px; display: none; }
+    .msg.ok  { background: #d4edda; color: #155724; display: block; }
+    .msg.err { background: #fdecea; color: #c0392b; display: block; }
+
+    .filter-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; justify-content: center; }
+    .filter-btn { padding: 4px 12px; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85rem; }
+    .filter-btn.active { outline: 3px solid #333; font-weight: bold; }
+
+    .form-box { background: #e8f4fd; border-radius: 8px; padding: 8px; margin-bottom: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.1); }
+    .form-table { width: 100%; display: flex; flex-wrap: wrap; gap: 4px; align-items: flex-end; }
+    .form-cell { display: block; }
+    .form-cell label { display: block; font-size: 0.75rem; color: #666; text-align: center; margin-bottom: 3px; }
+    .form-cell input, .form-cell select {
+      width: 100%; font-size: 0.85rem; padding: 4px 2px;
+      border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; text-align: center;
+    }
+    .btn-row { display: flex; gap: 6px; margin-top: 6px; }
+    button { font-size: 0.85rem; padding: 5px 12px; border: none; border-radius: 4px; cursor: pointer; color: white; }
+    .btn-add    { background: #4a90e2; }
+
+    table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.1); font-size: 0.85rem; table-layout: fixed; margin-bottom: 16px; }
+    th { background: #eee; padding: 7px 4px; text-align: center; border-bottom: 1px solid #ddd; }
+    td { padding: 6px 4px; text-align: center; border-bottom: 1px solid #f0f0f0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    tr:hover td { background: #f0f8ff; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.8rem; font-weight: bold; white-space: nowrap; }
+    .loading { text-align: center; padding: 20px; color: #888; }
+    .btn-del-row { background: #e74c3c; color: white; border: none; border-radius: 3px; padding: 3px 10px; cursor: pointer; font-size: 0.78rem; }
+    .empty-msg { text-align: center; padding: 20px; color: #aaa; }
+  </style>
+</head>
+<body>
+
+  <div class="desc">
+    🩺 社員ごとに「健診を受けた日」を登録します。前回の健診日から1年近くたつと、一覧の上に自動でお知らせが出ます。新しい健診日を登録すると、そちらが「前回の健診日」として使われます（お知らせも新しい日付から計算し直されます）。
+  </div>
+
+  <div class="sticky-header">
+  <h1>🩺 健診管理</h1>
+  <a class="back" href="index.html">← メニューへ</a>
+  <div id="msg" class="msg"></div>
+  <!-- 所属フィルター -->
+  <div class="filter-row" id="filter-row">
+    <button class="filter-btn active" style="background:#555;color:white" onclick="filterByBusho('',this)">全員</button>
+  </div>
+  <!-- 入力フォーム -->
+  <div class="form-box">
+    <div class="form-table">
+      <div class="form-cell" style="width:160px">
+        <label>社員</label>
+        <select id="f_staff"><option value="">-- 選択 --</option></select>
+      </div>
+      <div class="form-cell" style="width:150px">
+        <label>健診を受けた日</label>
+        <input type="date" id="f_date">
+      </div>
+      <div class="form-cell" style="width:170px">
+        <label>メモ（任意）</label>
+        <input type="text" id="f_memo" placeholder="例：人間ドック">
+      </div>
+    </div>
+    <div class="btn-row">
+      <button class="btn-add" onclick="addRow()">登録</button>
+    </div>
+  </div>
+  </div>
+
+  <div id="loading" class="loading">読み込み中...</div>
+  <div id="main-content" style="display:none">
+
+    <h2>⚠️ 健診の期限が近い・過ぎている人</h2>
+    <table>
+      <thead>
+        <tr><th>氏名</th><th style="width:140px">前回の健診日</th><th style="width:130px">状態</th></tr>
+      </thead>
+      <tbody id="kenko-alert-tbody"></tbody>
+    </table>
+
+    <h2>📑 登録一覧</h2>
+    <table>
+      <thead>
+        <tr>
+          <th style="width:130px">日付</th>
+          <th>氏名</th>
+          <th>メモ</th>
+          <th style="width:70px">操作</th>
+        </tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+
+  <script>
+    let masters = {};
+    let rows = [];
+    let activeStaffs = [];
+    let currentFilter = '';
+
+    async function init() {
+      masters = await loadMasters();
+      activeStaffs = masters.staffs.filter(s => !s.retired).sort((a, b) => a.staff_code.localeCompare(b.staff_code));
+      buildFilterButtons();
+      buildStaffSelect();
+      lockMasterFormIfNeeded();
+      await loadRows();
+    }
+
+    function buildFilterButtons() {
+      const row = document.getElementById('filter-row');
+      masters.bushos.filter(b => !b.busho_code.startsWith('9') && !b.is_banmen_only).forEach(b => {
+        const btn = document.createElement('button');
+        btn.className = 'filter-btn';
+        btn.style.background = b.color_h;
+        btn.style.color = getTextColor(b.color_h);
+        btn.textContent = b.busho_name;
+        btn.onclick = () => filterByBusho(b.busho_code, btn);
+        row.appendChild(btn);
+      });
+    }
+
+    function filterByBusho(bushoCode, btn) {
+      currentFilter = bushoCode;
+      document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+      if (btn) btn.classList.add('active');
+      else document.querySelector('.filter-btn').classList.add('active');
+      renderAll();
+    }
+
+    function filteredStaffs() {
+      return currentFilter ? activeStaffs.filter(s => s.busho_code === currentFilter) : activeStaffs;
+    }
+
+    function buildStaffSelect() {
+      const sel = document.getElementById('f_staff');
+      activeStaffs.forEach(s => {
+        const opt = document.createElement('option');
+        opt.value = s.staff_code;
+        opt.textContent = s.name || s.staff_code;
+        sel.appendChild(opt);
+      });
+    }
+
+    function pickStaffToForm(staffCode) {
+      document.getElementById('f_staff').value = staffCode;
+    }
+
+    function toDateStr(v) { return (v || '').replaceAll('-', ''); }
+    function formatDateLabel(v) {
+      if (!v || v.length !== 8) return v || '－';
+      return `${v.slice(0,4)}年${parseInt(v.slice(4,6))}月${parseInt(v.slice(6,8))}日`;
+    }
+    function toDateObj(v) {
+      if (!v || v.length !== 8) return null;
+      return new Date(parseInt(v.slice(0,4)), parseInt(v.slice(4,6)) - 1, parseInt(v.slice(6,8)));
+    }
+
+    async function loadRows() {
+      const { data, error } = await sb.from('shift_kenko_yukyu').select('*').eq('category', '健診').order('date', { ascending: false });
+      if (error) { showMsg('データの読み込みに失敗しました: ' + error.message, 'err'); return; }
+      rows = data || [];
+      renderAll();
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('main-content').style.display = '';
+    }
+
+    function renderAll() {
+      renderKenkoAlert();
+      renderTable();
+    }
+
+    // ===== 健診の期限アラート =====
+    // 社員ごとに「一番新しい健診の日」だけを見て、そこから1年後を次の期限とする。
+    // 新しい健診を登録すれば、その日が「一番新しい健診の日」になるので、お知らせも自動で新しい方に切り替わる
+    function renderKenkoAlert() {
+      const tbody = document.getElementById('kenko-alert-tbody');
+      tbody.innerHTML = '';
+      const today = new Date();
+      const list = [];
+
+      filteredStaffs().forEach(s => {
+        const kenkoRows = rows.filter(r => r.staff_code === s.staff_code);
+        const latest = kenkoRows.length ? kenkoRows.reduce((a, b) => a.date > b.date ? a : b) : null;
+        let statusLabel, statusColor, sortKey;
+        if (!latest) {
+          statusLabel = '未登録';
+          statusColor = { bg: '#eee', col: '#888' };
+          sortKey = -99999;
+        } else {
+          const lastDate = toDateObj(latest.date);
+          const dueDate = new Date(lastDate);
+          dueDate.setFullYear(dueDate.getFullYear() + 1);
+          const diffDays = Math.round((dueDate - today) / (1000 * 60 * 60 * 24));
+          sortKey = diffDays;
+          if (diffDays < 0) {
+            statusLabel = `期限切れ（${Math.abs(diffDays)}日超過）`;
+            statusColor = { bg: '#fdecea', col: '#c0392b' };
+          } else if (diffDays <= 30) {
+            statusLabel = `あと${diffDays}日`;
+            statusColor = { bg: '#fdf3cf', col: '#8a6d1d' };
+          } else {
+            return;
+          }
+        }
+        list.push({ staffCode: s.staff_code, name: s.name || s.staff_code, lastDateLabel: latest ? formatDateLabel(latest.date) : '－', statusLabel, statusColor, sortKey });
+      });
+
+      list.sort((a, b) => a.sortKey - b.sortKey);
+
+      if (list.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="3" class="empty-msg">対象者はいません</td></tr>';
+        return;
+      }
+      list.forEach(item => {
+        const tr = document.createElement('tr');
+        tr.style.cursor = 'pointer';
+        tr.title = '押すと、上の登録フォームの「社員」にこの人を入れます';
+        tr.onclick = () => pickStaffToForm(item.staffCode);
+        tr.innerHTML = `
+          <td>${item.name}</td>
+          <td>${item.lastDateLabel}</td>
+          <td><span class="badge" style="background:${item.statusColor.bg};color:${item.statusColor.col}">${item.statusLabel}</span></td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    // ===== 登録一覧 =====
+    function renderTable() {
+      const tbody = document.getElementById('tbody');
+      tbody.innerHTML = '';
+      const filteredRows = currentFilter
+        ? rows.filter(r => (masters.staffMap[r.staff_code] || {}).busho_code === currentFilter)
+        : rows;
+      if (filteredRows.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="4" class="empty-msg">登録はありません</td></tr>';
+        return;
+      }
+      filteredRows.forEach(r => {
+        const staff = masters.staffMap[r.staff_code];
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${formatDateLabel(r.date)}</td>
+          <td style="cursor:pointer" title="押すと、上の登録フォームの「社員」にこの人を入れます">${staff ? (staff.name || staff.staff_code) : r.staff_code}</td>
+          <td>${r.memo || ''}</td>
+          <td><button class="btn-del-row" onclick="deleteRow(${r.id})">削除</button></td>
+        `;
+        tr.querySelector('td:nth-child(2)').onclick = () => pickStaffToForm(r.staff_code);
+        tbody.appendChild(tr);
+      });
+    }
+
+    async function addRow() {
+      if (!canEdit()) { showMsg('閲覧のみモードのため登録できません', 'err'); return; }
+      const staffCode = document.getElementById('f_staff').value;
+      const dateStr = toDateStr(document.getElementById('f_date').value);
+      const memo = document.getElementById('f_memo').value.trim();
+      if (!staffCode) { showMsg('社員を選んでください', 'err'); return; }
+      if (!dateStr) { showMsg('日付を選んでください', 'err'); return; }
+
+      const { error } = await sb.from('shift_kenko_yukyu').insert({ staff_code: staffCode, category: '健診', date: dateStr, memo: memo || null });
+      if (error) { showMsg('登録に失敗しました: ' + error.message, 'err'); return; }
+      const staff = masters.staffMap[staffCode];
+      logChange('健診管理', '追加', `社員「${staff ? (staff.name || staffCode) : staffCode}」${formatDateLabel(dateStr)}`, memo || null);
+      showMsg('登録しました', 'ok');
+      document.getElementById('f_memo').value = '';
+      await loadRows();
+    }
+
+    async function deleteRow(id) {
+      if (!canEdit()) { showMsg('閲覧のみモードのため削除できません', 'err'); return; }
+      if (!confirm('この登録を削除しますか？')) return;
+      const target = rows.find(r => r.id === id);
+      const { error } = await sb.from('shift_kenko_yukyu').delete().eq('id', id);
+      if (error) { showMsg('削除に失敗しました: ' + error.message, 'err'); return; }
+      if (target) {
+        const staff = masters.staffMap[target.staff_code];
+        logChange('健診管理', '削除', `社員「${staff ? (staff.name || target.staff_code) : target.staff_code}」${formatDateLabel(target.date)}`);
+      }
+      showMsg('削除しました', 'ok');
+      await loadRows();
+    }
+
+    function showMsg(text, type) {
+      const el = document.getElementById('msg');
+      el.textContent = text;
+      el.className = `msg ${type}`;
+      setTimeout(() => { el.className = 'msg'; }, 3000);
+    }
+
+    init();
+  </script>
+</body>
+</html>
