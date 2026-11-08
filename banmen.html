@@ -3012,6 +3012,18 @@
     // staffCode: 対象社員コード
     // gyomuCode: 新しい業務コード（nullなら空欄にする）
     // ampm: 'pm'なら午後欄（dXXb）に、それ以外（null/'am'）なら午前欄（dXX）に書き込む
+    // 盤面・業務シフトで「健診」「有給（取得）」を置いたとき、健診管理・有給管理の
+    // 登録一覧にも自動で1件追加する（すでに同じ人・同じ日が登録されていれば何もしない）
+    async function syncToKenkoYukyu(staffCode, dateStr, category) {
+      const { data: exists } = await sb.from('shift_kenko_yukyu')
+        .select('id').eq('staff_code', staffCode).eq('category', category).eq('date', dateStr).maybeSingle();
+      if (exists) return;
+      const { error } = await sb.from('shift_kenko_yukyu').insert({ staff_code: staffCode, category, date: dateStr });
+      if (error) { console.error('健診・有給管理への同期に失敗しました', error); return; }
+      const staffName = masters.staffMap[staffCode]?.name || staffCode;
+      logChange(category === '健診' ? '健診管理' : '有給管理', '追加', `社員「${staffName}」${dateStr.slice(0,4)}年${parseInt(dateStr.slice(4,6))}月${parseInt(dateStr.slice(6,8))}日（盤面・業務シフトから自動登録）`);
+    }
+
     async function syncGyomuShift(staffCode, gyomuCode, ampm = null) {
       if (!staffCode || !currentDayCol) return;
       const yearMonth = getYearMonth(currentDate);
@@ -3036,6 +3048,14 @@
       if (error) {
         console.error('業務シフトの同期に失敗しました', error);
         return;
+      }
+
+      // 健診（903）・有休（902）を配置した場合は、健診管理・有給管理の登録一覧にも
+      // 自動で記録しておく（すでに同じ日が登録されていれば、重ねて登録しない）
+      if (gyomuCode === '902' || gyomuCode === '903') {
+        const day = targetCol.replace(/^d/, '').replace(/b$/, '');
+        const dateStr = `${yearMonth}${day}`;
+        await syncToKenkoYukyu(staffCode, dateStr, gyomuCode === '903' ? '健診' : '有給');
       }
 
       // 左パネルの「今日の業務シフトに登録済みか」の判定（todayShiftStaffCodes）も、

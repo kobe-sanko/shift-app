@@ -46,7 +46,7 @@
 <body>
 
   <div class="desc">
-    🩺 社員ごとに「健診を受けた日」を登録します。前回の健診日から1年近くたつと、一覧の上に自動でお知らせが出ます。新しい健診日を登録すると、そちらが「前回の健診日」として使われます（お知らせも新しい日付から計算し直されます）。
+    🩺 社員ごとに健診日を登録します。登録した日がまだ来ていなければ「今回の健診日」として表示し、その日を過ぎると自動で「前回の健診日」に変わります。日が過ぎたあと、次の健診日が決まったら、新しく登録してください。
   </div>
 
   <div class="sticky-header">
@@ -62,15 +62,11 @@
     <div class="form-table">
       <div class="form-cell" style="width:160px">
         <label>社員</label>
-        <select id="f_staff"><option value="">-- 選択 --</option></select>
+        <select id="f_staff" onchange="onStaffChange()"><option value="">-- 選択 --</option></select>
       </div>
       <div class="form-cell" style="width:150px">
-        <label>健診を受けた日</label>
+        <label>健診日</label>
         <input type="date" id="f_date">
-      </div>
-      <div class="form-cell" style="width:170px">
-        <label>メモ（任意）</label>
-        <input type="text" id="f_memo" placeholder="例：人間ドック">
       </div>
     </div>
     <div class="btn-row">
@@ -82,25 +78,15 @@
   <div id="loading" class="loading">読み込み中...</div>
   <div id="main-content" style="display:none">
 
-    <h2>⚠️ 健診の期限が近い・過ぎている人</h2>
+    <h2 style="display:flex;align-items:center;gap:10px;">
+      🩺 健診状況一覧
+      <button id="btn-missing-only" onclick="toggleMissingOnly()" style="background:#e74c3c;font-size:0.75rem;padding:4px 10px;">未登録のみ表示</button>
+    </h2>
     <table>
       <thead>
-        <tr><th>氏名</th><th style="width:140px">前回の健診日</th><th style="width:130px">状態</th></tr>
+        <tr><th>氏名</th><th style="width:140px">前回の健診日</th><th style="width:140px">今回の健診日</th></tr>
       </thead>
       <tbody id="kenko-alert-tbody"></tbody>
-    </table>
-
-    <h2>📑 登録一覧</h2>
-    <table>
-      <thead>
-        <tr>
-          <th style="width:130px">日付</th>
-          <th>氏名</th>
-          <th>メモ</th>
-          <th style="width:70px">操作</th>
-        </tr>
-      </thead>
-      <tbody id="tbody"></tbody>
     </table>
   </div>
 
@@ -109,6 +95,15 @@
     let rows = [];
     let activeStaffs = [];
     let currentFilter = '';
+    let showMissingOnly = false;
+
+    function toggleMissingOnly() {
+      showMissingOnly = !showMissingOnly;
+      const btn = document.getElementById('btn-missing-only');
+      btn.style.outline = showMissingOnly ? '3px solid #333' : '';
+      btn.textContent = showMissingOnly ? '全員を表示' : '未登録のみ表示';
+      renderAll();
+    }
 
     async function init() {
       masters = await loadMasters();
@@ -156,6 +151,7 @@
 
     function pickStaffToForm(staffCode) {
       document.getElementById('f_staff').value = staffCode;
+      onStaffChange();
     }
 
     function toDateStr(v) { return (v || '').replaceAll('-', ''); }
@@ -166,6 +162,39 @@
     function toDateObj(v) {
       if (!v || v.length !== 8) return null;
       return new Date(parseInt(v.slice(0,4)), parseInt(v.slice(4,6)) - 1, parseInt(v.slice(6,8)));
+    }
+    // 今日の日付を、登録データと同じYYYYMMDD形式の文字列にする（文字列同士の大小比較で前後が分かる）
+    function todayStr() {
+      const d = new Date();
+      return `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;
+    }
+    // YYYYMMDD → <input type=date>に入れられるYYYY-MM-DD
+    function toInputDateValue(v) {
+      if (!v || v.length !== 8) return '';
+      return `${v.slice(0,4)}-${v.slice(4,6)}-${v.slice(6,8)}`;
+    }
+
+    // ある社員の「前回の健診日」「今回の健診日」を求める。
+    // 今回＝まだ来ていない日の中で一番近いもの、前回＝すでに過ぎた日の中で一番新しいもの
+    // （同じ日が重複登録されていても、正しく判定できるようにする）
+    function getKenkoStatus(staffCode) {
+      const today = todayStr();
+      const kenkoRows = rows.filter(r => r.staff_code === staffCode);
+      const futureDates = kenkoRows.filter(r => r.date >= today).map(r => r.date).sort();
+      const pastDates = kenkoRows.filter(r => r.date < today).map(r => r.date).sort();
+      return {
+        nextDate: futureDates.length ? futureDates[0] : null,
+        prevDate: pastDates.length ? pastDates[pastDates.length - 1] : null,
+      };
+    }
+
+    // 社員を選んだときに、その人の「今回の健診日」があれば自動で日付欄に入れる（なければ空欄のまま）
+    function onStaffChange() {
+      const staffCode = document.getElementById('f_staff').value;
+      const dateInput = document.getElementById('f_date');
+      if (!staffCode) { dateInput.value = ''; return; }
+      const { nextDate } = getKenkoStatus(staffCode);
+      dateInput.value = nextDate ? toInputDateValue(nextDate) : '';
     }
 
     async function loadRows() {
@@ -179,86 +208,54 @@
 
     function renderAll() {
       renderKenkoAlert();
-      renderTable();
     }
 
-    // ===== 健診の期限アラート =====
-    // 社員ごとに「一番新しい健診の日」だけを見て、そこから1年後を次の期限とする。
-    // 新しい健診を登録すれば、その日が「一番新しい健診の日」になるので、お知らせも自動で新しい方に切り替わる
+    // ===== 健診状況一覧 =====
+    // 社員ごとに、「今回の健診日」（まだ来ていない日の中で一番近いもの）と
+    // 「前回の健診日」（すでに過ぎた日の中で一番新しいもの）を求めて表示する。
     function renderKenkoAlert() {
       const tbody = document.getElementById('kenko-alert-tbody');
       tbody.innerHTML = '';
-      const today = new Date();
+      const today = todayStr();
       const list = [];
 
       filteredStaffs().forEach(s => {
-        const kenkoRows = rows.filter(r => r.staff_code === s.staff_code);
-        const latest = kenkoRows.length ? kenkoRows.reduce((a, b) => a.date > b.date ? a : b) : null;
-        let statusLabel, statusColor, sortKey;
-        if (!latest) {
-          statusLabel = '未登録';
+        const { nextDate, prevDate } = getKenkoStatus(s.staff_code);
+        const isMissing = !nextDate;
+        let statusColor, sortKey;
+        if (isMissing) {
+          sortKey = 999999; // 今回の健診日が未登録の人は、一覧の一番下に出す
           statusColor = { bg: '#eee', col: '#888' };
-          sortKey = -99999;
         } else {
-          const lastDate = toDateObj(latest.date);
-          const dueDate = new Date(lastDate);
-          dueDate.setFullYear(dueDate.getFullYear() + 1);
-          const diffDays = Math.round((dueDate - today) / (1000 * 60 * 60 * 24));
+          const diffDays = Math.round((toDateObj(nextDate) - toDateObj(today)) / (1000 * 60 * 60 * 24));
           sortKey = diffDays;
-          if (diffDays < 0) {
-            statusLabel = `期限切れ（${Math.abs(diffDays)}日超過）`;
-            statusColor = { bg: '#fdecea', col: '#c0392b' };
-          } else if (diffDays <= 30) {
-            statusLabel = `あと${diffDays}日`;
-            statusColor = { bg: '#fdf3cf', col: '#8a6d1d' };
-          } else {
-            return;
-          }
+          statusColor = diffDays <= 30 ? { bg: '#fdf3cf', col: '#8a6d1d' } : { bg: '#e8f8e8', col: '#1e7a1e' };
         }
-        list.push({ staffCode: s.staff_code, name: s.name || s.staff_code, lastDateLabel: latest ? formatDateLabel(latest.date) : '－', statusLabel, statusColor, sortKey });
+
+        list.push({
+          staffCode: s.staff_code,
+          name: s.name || s.staff_code,
+          prevLabel: prevDate ? formatDateLabel(prevDate) : '－',
+          nextLabel: nextDate ? formatDateLabel(nextDate) : '未登録',
+          statusColor, sortKey, isMissing,
+        });
       });
 
-      list.sort((a, b) => a.sortKey - b.sortKey);
+      const visibleList = showMissingOnly ? list.filter(item => item.isMissing) : list;
+      visibleList.sort((a, b) => a.sortKey - b.sortKey);
 
-      if (list.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="3" class="empty-msg">対象者はいません</td></tr>';
+      if (visibleList.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="3" class="empty-msg">${showMissingOnly ? '未登録の人はいません' : '対象者はいません'}</td></tr>`;
         return;
       }
-      list.forEach(item => {
-        const tr = document.createElement('tr');
-        tr.style.cursor = 'pointer';
-        tr.title = '押すと、上の登録フォームの「社員」にこの人を入れます';
-        tr.onclick = () => pickStaffToForm(item.staffCode);
-        tr.innerHTML = `
-          <td>${item.name}</td>
-          <td>${item.lastDateLabel}</td>
-          <td><span class="badge" style="background:${item.statusColor.bg};color:${item.statusColor.col}">${item.statusLabel}</span></td>
-        `;
-        tbody.appendChild(tr);
-      });
-    }
-
-    // ===== 登録一覧 =====
-    function renderTable() {
-      const tbody = document.getElementById('tbody');
-      tbody.innerHTML = '';
-      const filteredRows = currentFilter
-        ? rows.filter(r => (masters.staffMap[r.staff_code] || {}).busho_code === currentFilter)
-        : rows;
-      if (filteredRows.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="4" class="empty-msg">登録はありません</td></tr>';
-        return;
-      }
-      filteredRows.forEach(r => {
-        const staff = masters.staffMap[r.staff_code];
+      visibleList.forEach(item => {
         const tr = document.createElement('tr');
         tr.innerHTML = `
-          <td>${formatDateLabel(r.date)}</td>
-          <td style="cursor:pointer" title="押すと、上の登録フォームの「社員」にこの人を入れます">${staff ? (staff.name || staff.staff_code) : r.staff_code}</td>
-          <td>${r.memo || ''}</td>
-          <td><button class="btn-del-row" onclick="deleteRow(${r.id})">削除</button></td>
+          <td style="cursor:pointer" title="押すと、上の登録フォームの「社員」にこの人を入れます">${item.name}</td>
+          <td>${item.prevLabel}</td>
+          <td><span class="badge" style="background:${item.statusColor.bg};color:${item.statusColor.col}">${item.nextLabel}</span></td>
         `;
-        tr.querySelector('td:nth-child(2)').onclick = () => pickStaffToForm(r.staff_code);
+        tr.querySelector('td').onclick = () => pickStaffToForm(item.staffCode);
         tbody.appendChild(tr);
       });
     }
@@ -267,31 +264,44 @@
       if (!canEdit()) { showMsg('閲覧のみモードのため登録できません', 'err'); return; }
       const staffCode = document.getElementById('f_staff').value;
       const dateStr = toDateStr(document.getElementById('f_date').value);
-      const memo = document.getElementById('f_memo').value.trim();
       if (!staffCode) { showMsg('社員を選んでください', 'err'); return; }
       if (!dateStr) { showMsg('日付を選んでください', 'err'); return; }
+      if (rows.some(r => r.staff_code === staffCode && r.date === dateStr)) {
+        showMsg('その人・その日はすでに登録されています', 'err');
+        return;
+      }
 
-      const { error } = await sb.from('shift_kenko_yukyu').insert({ staff_code: staffCode, category: '健診', date: dateStr, memo: memo || null });
+      const { error } = await sb.from('shift_kenko_yukyu').insert({ staff_code: staffCode, category: '健診', date: dateStr });
       if (error) { showMsg('登録に失敗しました: ' + error.message, 'err'); return; }
       const staff = masters.staffMap[staffCode];
-      logChange('健診管理', '追加', `社員「${staff ? (staff.name || staffCode) : staffCode}」${formatDateLabel(dateStr)}`, memo || null);
+      logChange('健診管理', '追加', `社員「${staff ? (staff.name || staffCode) : staffCode}」${formatDateLabel(dateStr)}`);
+
+      // 業務シフト・盤面にも、その日「健診」として反映する（901〜904は休み系の所属コードとして
+      // もともと業務シフト・盤面が認識する仕組みになっている）
+      await syncToGyomuShift(staffCode, dateStr, '903');
+
       showMsg('登録しました', 'ok');
-      document.getElementById('f_memo').value = '';
       await loadRows();
     }
 
-    async function deleteRow(id) {
-      if (!canEdit()) { showMsg('閲覧のみモードのため削除できません', 'err'); return; }
-      if (!confirm('この登録を削除しますか？')) return;
-      const target = rows.find(r => r.id === id);
-      const { error } = await sb.from('shift_kenko_yukyu').delete().eq('id', id);
-      if (error) { showMsg('削除に失敗しました: ' + error.message, 'err'); return; }
-      if (target) {
-        const staff = masters.staffMap[target.staff_code];
-        logChange('健診管理', '削除', `社員「${staff ? (staff.name || target.staff_code) : target.staff_code}」${formatDateLabel(target.date)}`);
+    // 業務シフト（shift_gyomu_shift）の、その日の欄（午前）に、所属コードを書き込む。
+    // すでに別の予定が入っている日は、上書きしていいか必ず確認する
+    async function syncToGyomuShift(staffCode, dateStr, code) {
+      const yearmonth = dateStr.slice(0, 6);
+      const col = 'd' + dateStr.slice(6, 8);
+      const { data } = await sb.from('shift_gyomu_shift').select(col).eq('yearmonth', yearmonth).eq('staff_code', staffCode).maybeSingle();
+      const current = data ? data[col] : null;
+      if (current && current !== 'EMPTY' && current !== code) {
+        if (!confirm(`この日の業務シフトには、すでに別の予定（${current}）が入っています。\n健診に変更しますか？`)) {
+          showMsg('健診は登録しましたが、業務シフトへの反映はスキップしました', 'ok');
+          return;
+        }
       }
-      showMsg('削除しました', 'ok');
-      await loadRows();
+      const { error } = await sb.from('shift_gyomu_shift').upsert(
+        { yearmonth, staff_code: staffCode, [col]: code },
+        { onConflict: 'yearmonth,staff_code' }
+      );
+      if (error) { showMsg('業務シフトへの反映に失敗しました: ' + error.message, 'err'); }
     }
 
     function showMsg(text, type) {

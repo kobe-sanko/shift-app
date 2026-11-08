@@ -221,7 +221,7 @@ async function loadMasters() {
     sb.from('shift_busho').select('*').order('busho_code'),
     sb.from('shift_gyomu').select('*').order('gyomu_code'),
     // パスワードは、ここでは絶対に取得しない（この一覧はログインしていない画面でも使われるため）
-    sb.from('shift_staff').select('staff_code,name,busho_code,car_code,retired,overtime_limit,is_admin,has_smaho,paid_leave_days').order('staff_code'),
+    sb.from('shift_staff').select('staff_code,name,busho_code,car_code,retired,overtime_limit,is_admin,has_smaho').order('staff_code'),
     sb.from('shift_car').select('*').order('car_code'),
   ]);
   // 車番は文字としての並びだと3桁・4桁が混ざるため、数字として並べ直す

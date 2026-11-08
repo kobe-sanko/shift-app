@@ -60,7 +60,7 @@
     <table class="form-input-table">
       <colgroup>
         <col style="width:100px"><col style="width:130px"><col style="width:100px"><col style="width:90px">
-        <col style="width:80px"><col style="width:70px"><col style="width:70px"><col style="width:70px"><col style="width:85px"><col style="width:75px">
+        <col style="width:80px"><col style="width:70px"><col style="width:70px"><col style="width:70px"><col style="width:85px">
       </colgroup>
       <tr>
         <td>
@@ -112,10 +112,6 @@
           <label>パスワード</label>
           <input type="text" id="f_password" placeholder="変更時のみ">
         </td>
-        <td>
-          <label>有給付与日数</label>
-          <input type="number" min="0" id="f_paid_leave" placeholder="例：10">
-        </td>
       </tr>
     </table>
     <div class="btn-row" style="align-items:flex-end;">
@@ -140,7 +136,6 @@
         <th style="width:70px">PC権限</th>
         <th style="width:70px">スマホ</th>
         <th style="width:85px">パスワード</th>
-        <th style="width:75px">有給付与日数</th>
       </tr>
     </thead>
     <tbody id="tbody"></tbody>
@@ -213,7 +208,7 @@
       // パスワードそのものは編集フォームに表示しない（変更したい時だけ新しい値を入力する）。
       // 一覧には「初期パスワード（社員コードと同じ）のままかどうか」の判定にだけ使う
       const { data, error } = await sb.from('shift_staff')
-        .select('staff_code,name,busho_code,car_code,retired,overtime_limit,is_admin,has_smaho,password,paid_leave_days')
+        .select('staff_code,name,busho_code,car_code,retired,overtime_limit,is_admin,has_smaho,password')
         .order('staff_code');
       if (error) { showMsg('データの読み込みに失敗しました', 'err'); return; }
       rows = data || [];
@@ -263,7 +258,6 @@
           <td>${adminHtml}</td>
           <td>${smahoHtml}</td>
           <td>${pwHtml}</td>
-          <td>${r.paid_leave_days != null ? r.paid_leave_days + '日' : '－'}</td>
         `;
         tbody.appendChild(tr);
       });
@@ -281,7 +275,6 @@
       document.getElementById('f_overtime').value = r.overtime_limit || '';
       document.getElementById('f_is_admin').value = r.is_admin ? 'true' : 'false';
       document.getElementById('f_has_smaho').value = r.has_smaho ? 'true' : 'false';
-      document.getElementById('f_paid_leave').value = r.paid_leave_days != null ? r.paid_leave_days : '';
       updatePasswordVisibility();
       renderTable();
     }
@@ -308,7 +301,6 @@
         overtime_limit: parseInt(document.getElementById('f_overtime').value) || 80,
         is_admin:       document.getElementById('f_is_admin').value === 'true',
         has_smaho:      document.getElementById('f_has_smaho').value === 'true',
-        paid_leave_days: document.getElementById('f_paid_leave').value === '' ? null : parseInt(document.getElementById('f_paid_leave').value),
       };
       // パスワードは「入力があった時だけ」更新する（空欄なら今の値を変えない）
       // ただし新規登録の時だけ、未入力でもPC権限の有無にかかわらず社員コードを初期パスワードにする

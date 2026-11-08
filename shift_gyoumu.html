@@ -1226,6 +1226,30 @@
       }
     }
 
+    // 業務シフトで「健診」「有給（取得）」を入力したとき、健診管理・有給管理の
+    // 登録一覧にも自動で1件追加する（すでに同じ人・同じ日が登録されていれば何もしない）
+    async function syncToKenkoYukyu(staffCode, dateStr, category) {
+      const { data: exists } = await sb.from('shift_kenko_yukyu')
+        .select('id').eq('staff_code', staffCode).eq('category', category).eq('date', dateStr).maybeSingle();
+      if (exists) return;
+      const { error } = await sb.from('shift_kenko_yukyu').insert({ staff_code: staffCode, category, date: dateStr });
+      if (error) { console.error('健診・有給管理への同期に失敗しました', error); return; }
+      const staffName = masters.staffMap[staffCode]?.name || staffCode;
+      logChange(category === '健診' ? '健診管理' : '有給管理', '追加', `社員「${staffName}」${dateStr.slice(0,4)}年${parseInt(dateStr.slice(4,6))}月${parseInt(dateStr.slice(6,8))}日（業務シフトから自動登録）`);
+    }
+
+    // banmenSyncTargets（変更されたセルの一覧）の中から、新しく「健診」「有給」になったものを
+    // 健診管理・有給管理に反映する
+    async function syncKenkoYukyuFromTargets(staffCode, targets, ym) {
+      for (const t of targets) {
+        if (t.newCode !== '902' && t.newCode !== '903') continue;
+        const isPm = t.key.endsWith('b');
+        const day = (isPm ? t.key.slice(0, -1) : t.key).slice(1);
+        const dateStr = `${ym}${day}`;
+        await syncToKenkoYukyu(staffCode, dateStr, t.newCode === '903' ? '健診' : '有給');
+      }
+    }
+
     async function saveStaff(staffCode) {
       if (!canEdit()) { showMsg('閲覧のみモードのため変更できません', 'err'); return; }
       const current = shiftMap[staffCode] || {};
@@ -1270,6 +1294,8 @@
       for (const t of banmenSyncTargets) {
         await syncBanmenOnShiftChange(staffCode, t.key, t.oldCode, t.newCode, currentYM);
       }
+      // 「健診」「有給」になったセルは、健診管理・有給管理にも反映する
+      await syncKenkoYukyuFromTargets(staffCode, banmenSyncTargets, currentYM);
 
       // 来月の最初の数日分（設定されている場合）も、あわせて保存する。
       // 来月分は他の日のデータも入っている1行なので、変更した日だけ上書きし、それ以外はそのまま残す
@@ -1308,6 +1334,8 @@
         for (const t of banmenSyncTargets2) {
           await syncBanmenOnShiftChange(staffCode, t.key, t.oldCode, t.newCode, nextYM);
         }
+        // 「健診」「有給」になったセルは、健診管理・有給管理にも反映する
+        await syncKenkoYukyuFromTargets(staffCode, banmenSyncTargets2, nextYM);
 
         // 翌月分の変更履歴
         if (banmenSyncTargets2.length > 0) {
