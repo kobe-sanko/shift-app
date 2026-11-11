@@ -448,6 +448,7 @@
       <div class="left-panel-busho-filter">
         <select id="left-panel-busho-select" onchange="onLeftPanelBushoChange()">
           <option value="">所属で絞り込み：全部</option>
+          <option value="__SMAHO__">📱 スマホ（貸せる人）</option>
         </select>
       </div>
       <div class="list-section staff-section">
@@ -682,6 +683,8 @@
     async function loadData() {
       // 日付をすぐ切り替えたときに、後から来た（新しい）読み込みだけを反映するための番号
       const loadId = ++currentLoadId;
+      // 日付が変わるので、前の日に「あとで配置する」「×で外した」人の一覧もリセットする
+      manuallyFreedStaffCodes = new Set();
 
       document.getElementById('loading').style.display = 'block';
       document.getElementById('main-layout').style.display = 'none';
@@ -840,6 +843,39 @@
       const conflicts = await autoFillBanmen(dateStr, dayShiftList, gyomuMap, loadId);
 
       // オートフィル中に別の日付に切り替えられていたら、盤面の描画はしない（古い日付で上書きしないため）
+      if (loadId !== currentLoadId) return;
+
+      // すでに盤面に車番を入れたあとで、その車が車検・修理などに登録された場合、
+      // 車番欄に残ったままにならないよう、自動で空にする
+      if (syakenCarCodes.size > 0) {
+        const staleCarRows = banmenData.filter(r => r.car_code && syakenCarCodes.has(r.car_code));
+        const clearedCarCodes = [];
+        for (const r of staleCarRows) {
+          const reason = syakenCarCodes.get(r.car_code);
+          const oldCar = r.car_code;
+          const { error: clearErr } = await sb.from('shift_banmen').update({ car_code: null }).eq('id', r.id);
+          if (!clearErr) {
+            r.car_code = null;
+            clearedCarCodes.push(oldCar);
+            const bushoName = masters.bushoMap[r.busho_code]?.busho_name || r.busho_code;
+            logChange('盤面', '自動解除', `${getDateLabel(currentDate)} ${bushoName} ${r.row_no}台目：車番「${oldCar}」（${reason}のため自動で外しました）`);
+          }
+        }
+        if (loadId !== currentLoadId) return;
+        if (clearedCarCodes.length > 0) {
+          showMsg(`車検・修理などで使えなくなった車（${[...new Set(clearedCarCodes)].join('、')}）を盤面から自動で外しました`, 'err');
+        }
+      }
+
+      // スマホ欄に、もう運転でも助手でもない人の名前が残っていないか、盤面を開くたびに必ず確認する
+      // （ドラッグで入れ替えた時だけでなく、前から残っていた古いデータもここで必ず片付ける）
+      const staleSmahoRows = banmenData.filter(r =>
+        r.gyomu_code === '配送' && r.smaho && r.smaho !== r.driver && r.smaho !== r.jyoshu1
+      );
+      for (const r of staleSmahoRows) {
+        const { error: staleSmahoErr } = await sb.from('shift_banmen').update({ smaho: null }).eq('id', r.id);
+        if (!staleSmahoErr) r.smaho = null;
+      }
       if (loadId !== currentLoadId) return;
 
       // スマホ欄も、運転→助手の順でスマホを持っている人を自動で入れる（空欄の所だけ）
@@ -1172,7 +1208,16 @@
           console.error('古いデータの片付けに失敗しました', orphanErr);
         } else {
           const idx = banmenData.findIndex(r => r.id === id);
-          if (idx !== -1) { banmenData[idx][field] = null; banmenData[idx][field + '_ampm'] = null; }
+          if (idx !== -1) {
+            banmenData[idx][field] = null;
+            banmenData[idx][field + '_ampm'] = null;
+            // 外した人がスマホ担当のままになっていたら、それも一緒に空にする
+            const row = banmenData[idx];
+            if (row.smaho && row.smaho !== row.driver && row.smaho !== row.jyoshu1) {
+              const { error: smahoOrphanErr } = await sb.from('shift_banmen').update({ smaho: null }).eq('id', row.id);
+              if (!smahoOrphanErr) row.smaho = null;
+            }
+          }
         }
       }
 
@@ -1180,11 +1225,18 @@
       const soukoJimuInserts = [];
       Object.entries(soukoJimuGroups).forEach(([key, staffCodes]) => {
         const [bushoCode, gyomuName] = key.split('|');
-        if (hasExisting(bushoCode, gyomuName)) return;
-        staffCodes.sort();
-        staffCodes.forEach((staff_code, idx) => {
+        // すでに行がある人は除外し、まだ盤面に入っていない人だけを追加する
+        // （以前は1人でも既存行があるとグループ全体をスキップしてしまい、
+        //   あとから業務シフトに追加された人が盤面に反映されない不具合があった）
+        const existingRows = banmenData.filter(r => r.busho_code === bushoCode && r.gyomu_code === gyomuName);
+        const existingDrivers = new Set(existingRows.map(r => r.driver));
+        const newStaffCodes = staffCodes.filter(sc => !existingDrivers.has(sc));
+        if (newStaffCodes.length === 0) return;
+        let nextRowNo = existingRows.length > 0 ? Math.max(...existingRows.map(r => r.row_no || 0)) + 1 : 1;
+        newStaffCodes.sort();
+        newStaffCodes.forEach((staff_code) => {
           soukoJimuInserts.push({
-            busho_code: bushoCode, gyomu_code: gyomuName, row_no: idx + 1, driver: staff_code,
+            busho_code: bushoCode, gyomu_code: gyomuName, row_no: nextRowNo++, driver: staff_code,
           });
         });
       });
@@ -1199,13 +1251,18 @@
       });
       const noNumberInserts = [];
       Object.entries(noNumberGroups).forEach(([bushoCode, staffCodes]) => {
-        if (hasExisting(bushoCode, '配送')) return;
-        staffCodes.sort();
-        staffCodes.forEach((staff_code, idx) => {
+        // すでに行がある人は除外し、まだ盤面に入っていない人だけを追加する（上の休日等と同じ考え方）
+        const existingRows = banmenData.filter(r => r.busho_code === bushoCode && r.gyomu_code === '配送');
+        const existingDrivers = new Set(existingRows.map(r => r.driver));
+        const newStaffCodes = staffCodes.filter(sc => !existingDrivers.has(sc));
+        if (newStaffCodes.length === 0) return;
+        let nextRowNo = existingRows.length > 0 ? Math.max(...existingRows.map(r => r.row_no || 0)) + 1 : 1;
+        newStaffCodes.sort();
+        newStaffCodes.forEach((staff_code) => {
           const skey = `noban|${bushoCode}`;
           const slotCount = staffSlotKeys[staff_code]?.size || 1;
           const ampmTag = slotCount > 1 ? (entryAmpmByStaffSlot[staff_code + '|' + skey] || null) : null;
-          const rec = { busho_code: bushoCode, gyomu_code: '配送', row_no: idx + 1, driver: staff_code, driver_ampm: ampmTag };
+          const rec = { busho_code: bushoCode, gyomu_code: '配送', row_no: nextRowNo++, driver: staff_code, driver_ampm: ampmTag };
           const linkedCar = getLinkedCar(staff_code);
           if (linkedCar) {
             rec.car_code = linkedCar;
@@ -1308,16 +1365,28 @@
       // 未選択（全部）のときは、これまで通り「関連のみ／全員」の切り替えに従う）
       const staffList = document.getElementById('staff-list');
       staffList.innerHTML = '';
+      // 「📱 スマホ（貸せる人）」モード：今日の盤面に出てくるかどうかに関係なく、
+      // 社員マスタで「スマホあり」になっていて、まだ今日どこのスマホ欄にも使われていない人だけを出す
+      // （アマゾンなどで、その日働いていない人からもスマホだけ借りることがあるため）
+      const isSmahoPickMode = leftPanelBushoFilter === '__SMAHO__';
+      const usedSmahoSet = isSmahoPickMode
+        ? new Set(banmenData.filter(r => r.smaho).map(r => r.smaho))
+        : null;
       staffRows.forEach(s => {
-        // 今日の業務シフトに登録済みの人は非表示。
-        // すでに盤面に配置されている人も、「配置済みも表示」がONのとき以外は非表示にする
-        // （誰がまだ残っているか分かりやすくするため。2か所目に置きたいときだけONにする）
-        if (usedStaff.has(s.staff_code) && !ampmMode) return;
-        if (todayShiftStaffCodes.has(s.staff_code) && !usedStaff.has(s.staff_code) && !conflictStaffCodes.has(s.staff_code)) return;
-        if (leftPanelBushoFilter) {
-          if (!isStaffInBusho(s, leftPanelBushoFilter)) return;
-        } else if (staffFilterMode === 'relevant' && !isStaffRelevant(s)) {
-          return;
+        if (isSmahoPickMode) {
+          if (!s.has_smaho) return;
+          if (usedSmahoSet.has(s.staff_code)) return;
+        } else {
+          // 今日の業務シフトに登録済みの人は非表示。
+          // すでに盤面に配置されている人も、「配置済みも表示」がONのとき以外は非表示にする
+          // （誰がまだ残っているか分かりやすくするため。2か所目に置きたいときだけONにする）
+          if (usedStaff.has(s.staff_code) && !ampmMode) return;
+          if (todayShiftStaffCodes.has(s.staff_code) && !usedStaff.has(s.staff_code) && !conflictStaffCodes.has(s.staff_code) && !manuallyFreedStaffCodes.has(s.staff_code)) return;
+          if (leftPanelBushoFilter) {
+            if (!isStaffInBusho(s, leftPanelBushoFilter)) return;
+          } else if (staffFilterMode === 'relevant' && !isStaffRelevant(s)) {
+            return;
+          }
         }
         const el = document.createElement('div');
         const isUsed = usedStaff.has(s.staff_code);
@@ -1335,12 +1404,16 @@
         el.dataset.type = 'staff';
         el.dataset.code = s.staff_code;
         el.dataset.name = s.name || s.staff_code;
+        // 「📱 スマホ（貸せる人）」リストから出した人は、スマホ欄以外にはドロップできないようにする
+        if (isSmahoPickMode) el.dataset.smahoOnly = '1';
         el.addEventListener('dragstart', onDragStart);
         staffList.appendChild(el);
       });
-      document.getElementById('staff-list-title').textContent = leftPanelBushoFilter
-        ? `👤 社員（${masters.bushoMap[leftPanelBushoFilter]?.busho_name || leftPanelBushoFilter}）`
-        : (staffFilterMode === 'relevant' ? '👤 社員（盤面）' : '👤 社員（全員）');
+      document.getElementById('staff-list-title').textContent = isSmahoPickMode
+        ? '📱 スマホ（貸せる人）'
+        : (leftPanelBushoFilter
+          ? `👤 社員（${masters.bushoMap[leftPanelBushoFilter]?.busho_name || leftPanelBushoFilter}）`
+          : (staffFilterMode === 'relevant' ? '👤 社員（盤面）' : '👤 社員（全員）'));
 
       // 車両リスト（同じく、上部の所属プルダウンを優先）
       const carList = document.getElementById('car-list');
@@ -1907,7 +1980,9 @@
         // 必要台数の範囲内の枠は、埋まっていても常に赤枠をつける
         if (row <= needCar) carBox.classList.add('quota-required');
         // 必要台数が足りていない（範囲内なのに空欄）→ 赤
-        if (row <= needCar && !rowData?.car_code) {
+        // また、必要台数の範囲外でも、運転の人が入っているのに車番だけ空になっている場合は
+        // 入れ忘れの可能性が高いので、同じように赤で知らせる
+        if ((row <= needCar && !rowData?.car_code) || (rowData?.driver && !rowData?.car_code)) {
           carBox.classList.add('quota-missing');
         }
         if (isOverQuotaCar) carBox.classList.add('over-quota');
@@ -1958,7 +2033,13 @@
         // スマホ担当セル（沖縄のみ）：遅番の青枠はここには付けない
         if (showSmaho) {
           const smahoTd = document.createElement('td');
-          smahoTd.appendChild(makeCell('staff', bushoCode, '配送', row, 'smaho', rowData?.smaho, false));
+          const smahoBox = makeCell('staff', bushoCode, '配送', row, 'smaho', rowData?.smaho, false);
+          // 運転・助手は入っているのに、どちらもスマホを持っていなくてスマホ欄が空のままになっている場合は、
+          // 貸し借りの手配を忘れないよう赤で警告する
+          if ((rowData?.driver || rowData?.jyoshu1) && !rowData?.smaho) {
+            smahoBox.classList.add('quota-missing');
+          }
+          smahoTd.appendChild(smahoBox);
           tr.appendChild(smahoTd);
         }
 
@@ -2490,6 +2571,9 @@
 
     // ===== 業務シフトの重複を、盤面を見ながらその場で配置し直せる通知 =====
     let conflictQueue = [];
+    // 「あとで自分で配置する」を押した人・盤面から×で外した人を、
+    // 左の社員リストにそのまま表示し続けるための一覧（日付を切り替えたらリセットする）
+    let manuallyFreedStaffCodes = new Set();
 
     // 通知に表示する内容を組み立てる：枠は空けたままにしてあるので、
     // 重複が複数あってもすべて並べて出し、盤面の好きな場所へドラッグ＆ドロップして配置してもらう
@@ -2594,14 +2678,20 @@
 
     // このグループは今回は配置せず、「あとで自分で配置する」を押したとき
     function skipConflictGroup(group) {
+      // 通知からは消すが、まだ配置先が決まっていないので、左の社員リストには残しておく
+      group.staffCodes.forEach(code => manuallyFreedStaffCodes.add(code));
       conflictQueue = conflictQueue.filter(c => c !== group);
       renderConflictDialog();
+      buildLeftPanel();
     }
 
     // 「すべて閉じる」を押したとき：通知だけ閉じる（盤面上の枠は空いたまま）
     function dismissAllConflicts() {
+      // 通知からは消すが、まだ配置先が決まっていないので、左の社員リストには残しておく
+      conflictQueue.forEach(c => c.staffCodes.forEach(code => manuallyFreedStaffCodes.add(code)));
       conflictQueue = [];
       renderConflictDialog();
+      buildLeftPanel();
     }
 
     // 盤面が表示されたあとに呼ばれる：重複一覧をまとめて通知する
@@ -2616,6 +2706,7 @@
         type: e.currentTarget.dataset.type,
         code: e.currentTarget.dataset.code,
         name: e.currentTarget.dataset.name,
+        smahoOnly: e.currentTarget.dataset.smahoOnly === '1',
       };
       e.dataTransfer.effectAllowed = 'move';
     }
@@ -2629,6 +2720,12 @@
       const field = box.dataset.field;
       const acceptType = box.dataset.accept;
 
+      // 「📱 スマホ（貸せる人）」リストから出した人は、スマホ欄以外には配置できないようにする
+      if (dragInfo.smahoOnly && field !== 'smaho') {
+        showMsg('この人はスマホの貸し借り専用の候補です。運転・助手には配置できません', 'err');
+        return;
+      }
+
       // 型チェック
       if (acceptType === 'car' && dragInfo.type !== 'car') { showMsg('ここには車両をドロップしてください', 'err'); return; }
       if (acceptType === 'staff' && dragInfo.type === 'car') { showMsg('ここには社員または派遣をドロップしてください', 'err'); return; }
@@ -2641,9 +2738,10 @@
 
       // すでに他の枠に配置済みの社員を、別の枠にも配置しようとしている場合は確認する（午前午後で別の業務につく場合など）。
       // 左の「午前に配置／午後に配置」ボタンを選んでいるときは、確認せずそのままそちらのタグで配置する。
-      // 選んでいないときは、2つ目の配置は「午後」、最初からあった方は「午前」として自動的に区別する
+      // 選んでいないときは、2つ目の配置は「午後」、最初からあった方は「午前」として自動的に区別する。
+      // スマホ欄は「配置」ではなく「その日働いていない人からでもスマホを借りる」ことがあるため、対象外にする
       let newAmpm = null;
-      if (dragInfo.type === 'staff' && acceptType === 'staff') {
+      if (dragInfo.type === 'staff' && acceptType === 'staff' && field !== 'smaho') {
         if (ampmMode) {
           newAmpm = ampmMode;
         } else {
@@ -2656,13 +2754,19 @@
         }
       }
 
-      // 業務適性チェック（社員かつ業務コードがある場合のみ。お休みは対象外）
+      // 業務適性チェック（社員かつ業務コードがある場合のみ。お休みは対象外）。
+      // 所属の適性があるだけでは不十分で、この枠（運転5など）そのものの適性があるかまで確認する
+      // （例：運転4の適性はあっても、運転5の適性までは無い、ということがあるため）
       let registerTekisei = false;
-      if (dragInfo.type === 'staff' && acceptType === 'staff' && bushoCode !== 'お休み') {
+      if (dragInfo.type === 'staff' && acceptType === 'staff' && bushoCode !== 'お休み' && field !== 'smaho') {
         const tekisei = tekiseiMap[dragInfo.code] || [];
-        const hasTekisei = tekisei.some(t => t.busho_code === bushoCode);
+        const exactGyomuCode = peekGyomuCode(bushoCode, gyomuCode, rowNo, field);
+        const hasTekisei = exactGyomuCode
+          ? tekisei.some(t => t.gyomu_code === exactGyomuCode)
+          : tekisei.some(t => t.busho_code === bushoCode);
         if (!hasTekisei) {
-          const result = await showDialog(`「${dragInfo.name}」は「${masters.bushoMap[bushoCode]?.busho_name || bushoCode}」の業務適性がありません。\nそれでも入力しますか？`, true);
+          const posLabel = exactGyomuCode ? (masters.gyomuMap[exactGyomuCode]?.gyomu_name || exactGyomuCode) : (masters.bushoMap[bushoCode]?.busho_name || bushoCode);
+          const result = await showDialog(`「${dragInfo.name}」は「${posLabel}」の業務適性がありません。\nそれでも入力しますか？`, true);
           if (!result.ok) return;
           registerTekisei = result.register;
         }
@@ -2856,8 +2960,15 @@
         }
       }
 
-      // 運転・助手が変わったら、スマホ欄も自動判定をやり直す（すでに入っている欄は上書きしない）
+      // 運転・助手が変わったら、スマホ欄も自動判定をやり直す（すでに入っている欄は上書きしない）。
+      // ただし、今までスマホ担当だった人が、もうこの枠の運転でも助手でもなくなっていたら、
+      // 古い名前が残り続けてしまうので、いったん空にしてから判定し直す
       if (field === 'driver' || field === 'jyoshu1') {
+        const updatedRow = banmenData.find(r => r.busho_code === bushoCode && r.gyomu_code === gyomuCode && r.row_no === rowNo);
+        if (updatedRow?.smaho && updatedRow.smaho !== updatedRow.driver && updatedRow.smaho !== updatedRow.jyoshu1) {
+          const { error: smahoClearErr } = await sb.from('shift_banmen').update({ smaho: null }).eq('id', updatedRow.id);
+          if (!smahoClearErr) updatedRow.smaho = null;
+        }
         await autoFillSmaho(bushoCode);
       }
 
@@ -2932,6 +3043,16 @@
       }
       existing[field] = null;
       if (ampmField[field + '_ampm'] === null) existing[field + '_ampm'] = null;
+
+      // 運転・助手1を×で外したときも、スマホ欄に外した人の名前が残り続けないようにする
+      if ((field === 'driver' || field === 'jyoshu1') && existing.smaho && existing.smaho !== existing.driver && existing.smaho !== existing.jyoshu1) {
+        const { error: smahoClearErr } = await sb.from('shift_banmen').update({ smaho: null }).eq('id', existing.id);
+        if (!smahoClearErr) existing.smaho = null;
+      }
+
+      // ×で外した人は、左の社員リストにすぐ戻ってくるようにしておく
+      // （今日の業務シフトには登録が残っているため、何もしないと一覧から消えたままになってしまう）
+      if (removedStaff) manuallyFreedStaffCodes.add(removedStaff);
 
       // 配置がちょうど1つだけ残った場合は、もう午前午後を区別する必要がないのでタグを消す
       if (removedStaff) {
@@ -3115,6 +3236,28 @@
     // 盤面のfield（driver/jyoshu1など）と配置場所から業務コードを特定する
     // 例：bushoCode=805, gyomuCode=配送, rowNo=1, field=driver → 805-11（運転1）
     // 業務マスタにまだ登録されていない場合は、盤面の配置内容からそのまま自動登録する
+    // 配置先（所属・枠・行・役割）に対応する業務コードを、新規作成はせず調べるだけの関数。
+    // 業務適性チェックで「所属だけでなく、この行（運転5など）にもちゃんと適性があるか」を
+    // 正しく判定するために使う（resolveOrCreateGyomuCodeは新規登録もしてしまうため、ここでは使わない）
+    function peekGyomuCode(bushoCode, gyomuCode, rowNo, field) {
+      if (bushoCode === 'お休み') {
+        const KYUJITSU_CODE = buildKyujitsuCodeMap(masters.bushos);
+        return KYUJITSU_CODE[gyomuCode] || null;
+      }
+      let gyomuName;
+      if (gyomuCode === '配送') {
+        gyomuName = (field === 'driver' ? '運転' : '助手') + rowNo;
+      } else if (gyomuCode === '倉庫' || gyomuCode === '事務') {
+        gyomuName = gyomuCode;
+      } else {
+        return null;
+      }
+      const roleKey = gyomuCode === '配送'
+        ? bushoCode + '|' + field + '|' + rowNo
+        : bushoCode + '|' + gyomuCode;
+      return gyomuRoleMap[roleKey] || gyomuReverseMap[bushoCode + '|' + gyomuName] || null;
+    }
+
     async function resolveOrCreateGyomuCode(bushoCode, gyomuCode, rowNo, field) {
       if (bushoCode === 'お休み') {
         const KYUJITSU_CODE = buildKyujitsuCodeMap(masters.bushos);

@@ -1016,7 +1016,21 @@
         grouped[g.busho_code].push(g);
       });
 
+      // 今すでに入っている値が、その人の今の業務適性に含まれていないことがある
+      // （後から業務適性を変更した場合など）。その場合でも選択肢に出しておかないと、
+      // 画面には「－」が選ばれているように見えても実際の値は変わっておらず、
+      // 「－」を選び直しても変化なしと判定されて保存できない（消せない）ままになってしまう。
+      // そのため、適性外であっても今の値だけは必ず選択肢に入れておく
+      const knownCodes = new Set();
+      Object.values(grouped).forEach(arr => arr.forEach(g => knownCodes.add(g.gyomu_code)));
+      Object.keys(KYUJITSU_MAP).forEach(code => knownCodes.add(code));
+      const isOrphanValue = currentVal && !knownCodes.has(currentVal);
+
       let html = `<select id="${id}" data-orig="${currentVal}" data-key="${key}" onchange="onCellChange('${staffCode}','${key}')"><option value="">－</option>`;
+      if (isOrphanValue) {
+        const orphanLabel = masters.gyomuMap[currentVal]?.gyomu_name || currentVal;
+        html += `<option value="${currentVal}" selected>⚠️ ${orphanLabel}（適性外）</option>`;
+      }
       Object.keys(grouped).sort().forEach(bCode => {
         const bName = masters.bushoMap[bCode]?.busho_name || bCode;
         html += `<optgroup label="${bName}">`;
