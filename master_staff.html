@@ -7,7 +7,11 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="common.js"></script>
   <style>
-    body { font-family: sans-serif; margin: 0 auto; padding: 10px; background: #f5f5f5; max-width: 900px; }
+    /* 一部のブラウザ（会社のパソコンのEdgeなど）では、<body>に直接
+       margin:0 auto と max-width を指定しても中央に寄らないことがあるため、
+       中身をすべて<div id="page-wrap">で囲んで、そちらで中央寄せする */
+    body { font-family: sans-serif; margin: 0; padding: 0; background: #f5f5f5; }
+    #page-wrap { max-width: 900px; margin: 0 auto; padding: 10px; }
     h1 { font-size: 1.2rem; text-align: center; margin: 10px 0; }
     .back { display: block; text-align: center; margin: 8px 0; color: #4a90e2; text-decoration: none; width: fit-content; margin-left: auto; margin-right: auto; }
     .sticky-header { position: sticky; top: 0; z-index: 20; background: #f5f5f5; padding-top: 2px; padding-bottom: 6px; }
@@ -47,6 +51,7 @@
   </style>
 </head>
 <body>
+  <div id="page-wrap">
   <div class="sticky-header">
   <h1>👤 社員マスタ</h1>
   <a class="back" href="index.html">← メニューへ</a>
@@ -125,21 +130,26 @@
   <!-- 一覧テーブル -->
   <div id="loading" class="loading">読み込み中...</div>
   <table id="main-table" style="display:none">
+    <colgroup>
+      <col style="width:100px"><col style="width:130px"><col style="width:100px"><col style="width:90px">
+      <col style="width:80px"><col style="width:70px"><col style="width:70px"><col style="width:70px"><col style="width:85px">
+    </colgroup>
     <thead>
       <tr>
-        <th style="width:100px">社員コード</th>
-        <th style="width:130px">氏名</th>
-        <th style="width:100px">所属</th>
-        <th style="width:90px">車両</th>
-        <th style="width:80px">退職済み</th>
-        <th style="width:70px">残業上限</th>
-        <th style="width:70px">PC権限</th>
-        <th style="width:70px">スマホ</th>
-        <th style="width:85px">パスワード</th>
+        <th>社員コード</th>
+        <th>氏名</th>
+        <th>所属</th>
+        <th>車両</th>
+        <th>退職済み</th>
+        <th>残業上限</th>
+        <th>PC権限</th>
+        <th>スマホ</th>
+        <th>パスワード</th>
       </tr>
     </thead>
     <tbody id="tbody"></tbody>
   </table>
+  </div>
 
   <script>
     let masters = {};
@@ -208,7 +218,7 @@
       // パスワードそのものは編集フォームに表示しない（変更したい時だけ新しい値を入力する）。
       // 一覧には「初期パスワード（社員コードと同じ）のままかどうか」の判定にだけ使う
       const { data, error } = await sb.from('shift_staff')
-        .select('staff_code,name,busho_code,car_code,retired,overtime_limit,is_admin,has_smaho,password')
+        .select('staff_code,name,busho_code,car_code,retired,overtime_limit,is_admin,has_smaho,password,must_change_password')
         .order('staff_code');
       if (error) { showMsg('データの読み込みに失敗しました', 'err'); return; }
       rows = data || [];
@@ -245,7 +255,7 @@
         // パスワードの中身は出さず、「初期パスワード（社員コードと同じ）のままかどうか」だけ分かるようにする
         const pwHtml = !r.password
           ? `<span class="badge" style="background:#fdecea;color:#c0392b">未設定</span>`
-          : (r.password === r.staff_code
+          : (r.must_change_password
             ? `<span class="badge" style="background:#fdebd0;color:#935116">初期のまま</span>`
             : `<span class="badge" style="background:#d4edda;color:#155724">変更済み</span>`);
         tr.innerHTML = `
@@ -304,10 +314,16 @@
       };
       // パスワードは「入力があった時だけ」更新する（空欄なら今の値を変えない）
       // ただし新規登録の時だけ、未入力でもPC権限の有無にかかわらず社員コードを初期パスワードにする
-      // （全画面でログインが必須のため、PC権限がない人も必ずログインできる状態にしておく。本人が最初のログイン時に変更できる）
+      // （全画面でログインが必須のため、PC権限がない人も必ずログインできる状態にしておく。本人が最初のログイン時に変更できる）。
+      // パスワードはそのまま保存せず、ハッシュ化（元に戻せない形に変換）してから保存する
       const pwInput = document.getElementById('f_password').value.trim();
-      if (pwInput) data.password = pwInput;
-      else if (mode === 'add') data.password = code;
+      if (pwInput) {
+        Object.assign(data, await makePasswordRecord(pwInput));
+        data.must_change_password = true; // 管理者が設定した分は、本人に一度変更してもらう
+      } else if (mode === 'add') {
+        Object.assign(data, await makePasswordRecord(code));
+        data.must_change_password = true;
+      }
       // 同じ車両が別の在籍社員にすでに登録されていないかチェック
       if (data.car_code) {
         const carConflict = rows.find(r => r.car_code === data.car_code && r.staff_code !== code && !r.retired);

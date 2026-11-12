@@ -27,6 +27,36 @@ function clearAuthStorage() {
 }
 
 // ============================================================
+// パスワードの保存方法について
+//
+// パスワードは生の文字列のままでは保存せず、「ソルト（ランダムな文字列）」を
+// 混ぜたうえで、元に戻せない形（ハッシュ）に変換してから保存する。
+// ログイン時は、入力されたパスワードを同じソルトで同じ方法に変換し、
+// 保存されているハッシュと一致するかどうかで確認する。
+// ============================================================
+
+// ランダムなソルトを作る（32文字の16進数）
+function makeSalt() {
+  const arr = new Uint8Array(16);
+  crypto.getRandomValues(arr);
+  return Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// パスワード＋ソルトを、元に戻せない文字列（ハッシュ）に変換する
+async function hashPassword(password, salt) {
+  const data = new TextEncoder().encode(salt + ':' + password);
+  const digest = await crypto.subtle.digest('SHA-256', data);
+  return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// 新しいパスワードを保存用の形（ハッシュ＋ソルト）に変換する
+async function makePasswordRecord(password) {
+  const salt = makeSalt();
+  const hash = await hashPassword(password, salt);
+  return { password: hash, password_salt: salt };
+}
+
+// ============================================================
 // 簡易ログインチェック（社員コードでログイン）
 // ============================================================
 (function () {
@@ -79,10 +109,25 @@ function clearAuthStorage() {
       try { auth = JSON.parse(authRaw); } catch (e) { auth = null; }
       const bar = document.createElement('div');
       bar.id = 'shift-auth-bar';
-      bar.style.cssText = 'background:#333;color:white;font-size:0.7rem;padding:2px 8px;text-align:right;';
+      bar.style.cssText = 'background:#333;color:white;font-size:0.7rem;padding:2px 8px;text-align:right;box-sizing:border-box;';
       const nameLabel = auth && auth.name ? `👤 ${auth.name}さん　` : '';
       bar.innerHTML = `${nameLabel}<a href="#" style="color:#9cf;" id="shiftAppLogoutLink">ログアウト</a>`;
-      document.body.prepend(bar);
+      // 画面の中身を囲んでいる#page-wrap（中央寄せされた部分）があれば、その中の
+      // 一番上にこのバーを入れる。こうすると、下の内容とぴったり同じ幅・同じ位置に揃う。
+      // #page-wrapがない古い画面では、今まで通り<body>の一番上に入れる
+      const pageWrap = document.getElementById('page-wrap');
+      if (pageWrap) {
+        pageWrap.prepend(bar);
+      } else {
+        document.body.prepend(bar);
+        // <body>に直接max-widthが指定されている画面向けに、念のためバーの幅も合わせておく
+        const bodyMaxWidth = getComputedStyle(document.body).maxWidth;
+        if (bodyMaxWidth && bodyMaxWidth !== 'none') {
+          bar.style.maxWidth = bodyMaxWidth;
+          bar.style.marginLeft = 'auto';
+          bar.style.marginRight = 'auto';
+        }
+      }
       document.getElementById('shiftAppLogoutLink').onclick = (e) => {
         e.preventDefault();
         clearAuthStorage();
@@ -221,7 +266,7 @@ async function loadMasters() {
     sb.from('shift_busho').select('*').order('busho_code'),
     sb.from('shift_gyomu').select('*').order('gyomu_code'),
     // パスワードは、ここでは絶対に取得しない（この一覧はログインしていない画面でも使われるため）
-    sb.from('shift_staff').select('staff_code,name,busho_code,car_code,retired,overtime_limit,is_admin,has_smaho').order('staff_code'),
+    sb.from('shift_staff').select('staff_code,name,busho_code,car_code,hire_date,retired,overtime_limit,is_admin,has_smaho').order('staff_code'),
     sb.from('shift_car').select('*').order('car_code'),
   ]);
   // 車番は文字としての並びだと3桁・4桁が混ざるため、数字として並べ直す

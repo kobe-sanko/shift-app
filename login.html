@@ -20,14 +20,18 @@
 <body>
   <div class="box" id="login-box">
     <h1>📅 シフト管理システム</h1>
-    <input type="text" id="code" placeholder="社員コードを入力" inputmode="numeric" autofocus onkeydown="if(event.key==='Enter') doLogin()">
-    <input type="password" id="pw" placeholder="パスワードを入力" onkeydown="if(event.key==='Enter') doLogin()">
-    <label style="display:flex; align-items:center; gap:6px; font-size:0.8rem; color:#555; margin:-2px 0 12px; text-align:left;">
-      <input type="checkbox" id="rememberMe" checked style="width:auto; margin:0;">
-      ログイン状態を保存する（このパソコンを他の人と共有していない場合）
-    </label>
-    <button id="btn" onclick="doLogin()">ログイン</button>
+    <!-- ブラウザの「パスワードを記憶する」機能が働くように、きちんとしたフォームとして送信する -->
+    <form id="login-form" autocomplete="on" onsubmit="event.preventDefault(); doLogin();">
+      <input type="text" id="code" name="username" placeholder="社員コードを入力" inputmode="numeric" autocomplete="username" autofocus>
+      <input type="password" id="pw" name="password" placeholder="パスワードを入力" autocomplete="current-password">
+      <label style="display:flex; align-items:center; gap:6px; font-size:0.8rem; color:#555; margin:-2px 0 12px; text-align:left;">
+        <input type="checkbox" id="rememberMe" checked style="width:auto; margin:0;">
+        ログイン状態を保存する（このパソコンを他の人と共有していない場合）
+      </label>
+      <button id="btn" type="submit">ログイン</button>
+    </form>
     <p style="font-size:0.75rem; color:#888; margin:10px 0 0;">📌 初めての方は、パスワードも社員コードと同じものを入力してください。</p>
+    <p style="font-size:0.7rem; color:#888; margin:6px 0 0;">💡 ログイン後、ブラウザから「パスワードを保存しますか？」と聞かれたら「保存」を選ぶと、次回から入力の手間が減ります。</p>
     <div class="err" id="err">社員コードが見つかりません</div>
   </div>
 
@@ -35,9 +39,11 @@
   <div class="box" id="change-box" style="display:none">
     <h1>🔑 パスワードの変更</h1>
     <p style="font-size:0.8rem; color:#555; margin-top:0;">今のパスワードは社員コードのままです。<br>安全のため、新しいパスワードに変更してください。</p>
-    <input type="password" id="new-pw1" placeholder="新しいパスワード" onkeydown="if(event.key==='Enter') doChangePassword()">
-    <input type="password" id="new-pw2" placeholder="新しいパスワード（確認）" onkeydown="if(event.key==='Enter') doChangePassword()">
-    <button id="change-btn" onclick="doChangePassword()">変更してログイン</button>
+    <form id="change-form" autocomplete="on" onsubmit="event.preventDefault(); doChangePassword();">
+      <input type="password" id="new-pw1" name="new-password" placeholder="新しいパスワード" autocomplete="new-password">
+      <input type="password" id="new-pw2" name="new-password-confirm" placeholder="新しいパスワード（確認）" autocomplete="new-password">
+      <button id="change-btn" type="submit">変更してログイン</button>
+    </form>
     <div class="err" id="change-err"></div>
     <a href="#" id="skip-link" style="display:block; margin-top:12px; font-size:0.8rem; color:#4a90e2;">あとで変更する（このままログイン）</a>
   </div>
@@ -78,7 +84,7 @@
       btn.disabled = true;
       btn.textContent = '確認中…';
       const { data, error } = await sb.from('shift_staff')
-        .select('staff_code, name, retired, is_admin, password')
+        .select('staff_code, name, retired, is_admin, password, password_salt, must_change_password')
         .eq('staff_code', code)
         .maybeSingle();
       btn.disabled = false;
@@ -96,19 +102,44 @@
         return;
       }
 
-      if (pw !== data.password) {
-        err.textContent = 'パスワードが正しくありません';
-        err.style.display = 'block';
-        return;
+      // パスワードの確認方法は2通りある：
+      // ・password_saltがある人（すでにハッシュ化済み）→ 同じソルトでハッシュ化して比較
+      // ・password_saltがない人（まだ昔のまま、生の文字列で保存されている）→ そのまま比較し、
+      //   一致していたらこの場でハッシュ化して保存し直す（次回からはハッシュ化された状態になる）
+      let needsMigration = false;
+      if (data.password_salt) {
+        const hash = await hashPassword(pw, data.password_salt);
+        if (hash !== data.password) {
+          err.textContent = 'パスワードが正しくありません';
+          err.style.display = 'block';
+          return;
+        }
+      } else {
+        if (pw !== data.password) {
+          err.textContent = 'パスワードが正しくありません';
+          err.style.display = 'block';
+          return;
+        }
+        needsMigration = true;
       }
 
       // 初期パスワード（社員コードと同じ）のままなら、変更画面に進む
-      if (data.password === data.staff_code) {
+      const isDefaultPassword = data.must_change_password != null
+        ? data.must_change_password
+        : (pw === data.staff_code); // must_change_passwordの列がまだない場合の後方互換
+      if (isDefaultPassword) {
         pendingAuthData = data;
+        pendingAuthData._migrateFromPlainPassword = needsMigration;
         document.getElementById('login-box').style.display = 'none';
         document.getElementById('change-box').style.display = '';
         document.getElementById('new-pw1').focus();
         return;
+      }
+
+      // まだハッシュ化されていない人は、ログインできたこのタイミングでハッシュ化して保存し直す
+      if (needsMigration) {
+        const rec = await makePasswordRecord(pw);
+        await sb.from('shift_staff').update({ ...rec, must_change_password: false }).eq('staff_code', data.staff_code);
       }
 
       enterApp(data);
@@ -139,8 +170,9 @@
 
       btn.disabled = true;
       btn.textContent = '変更中…';
+      const rec = await makePasswordRecord(pw1);
       const { error } = await sb.from('shift_staff')
-        .update({ password: pw1 })
+        .update({ ...rec, must_change_password: false })
         .eq('staff_code', pendingAuthData.staff_code);
       btn.disabled = false;
       btn.textContent = '変更してログイン';

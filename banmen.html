@@ -496,11 +496,10 @@
     let staffFilterMode = 'relevant'; // 'relevant'=関連のみ / 'all'=全員
     let carFilterMode = 'relevant';   // 'relevant'=関連のみ / 'all'=全車両
     let leftPanelBushoFilter = '';    // 左パネル上部の所属プルダウン（空欄なら絞り込みなし。社員・車両の両方に反映）
-    // 普段使わない所属を盤面から一時的に非表示にする設定（この端末のブラウザだけに保存。設定画面は触らない）
-    let hiddenBushoCodes = new Set();
-    try {
-      hiddenBushoCodes = new Set(JSON.parse(localStorage.getItem('banmen_hidden_bushos') || '[]'));
-    } catch (e) { hiddenBushoCodes = new Set(); }
+    // 所属カードの開閉：基本は「その日、誰か登録されているか」で自動的に決まる
+    // （登録なし→畳む／登録あり→開く）。クリックしたときだけ、その場でひっくり返す。
+    // 日付や盤面タブを切り替えたら、また自動判定からやり直す（上書きはその場限り）
+    let bushoCollapseOverride = new Map(); // bushoCode → true/false（手動で切り替えた分だけ入る）
 
     // 上位部門（例：宅配）ごとに色を割り当てる（同じ部門のカードに同じ色の帯を付けるため）
     let groupColorMap = {};
@@ -521,11 +520,24 @@
       return new RegExp('^(' + words.join('|') + ')(\\d+)$');
     }
 
-    // カードのタイトルをクリックして、その所属を畳んだり開いたりする（タイトルは常に残る）
+    // その所属の今日のカードに、誰か（運転・助手・車番・倉庫・事務・スマホ）が1件でも登録されているか
+    function bushoHasAnyData(bushoCode) {
+      return banmenData.some(r =>
+        r.busho_code === bushoCode && (r.driver || r.jyoshu1 || r.jyoshu2 || r.car_code || r.smaho)
+      );
+    }
+
+    // 今、カードが畳まれているかどうか（手動で切り替えていればそれを優先。していなければデータから自動判定）
+    function isBushoCollapsed(bushoCode) {
+      if (bushoCollapseOverride.has(bushoCode)) return bushoCollapseOverride.get(bushoCode);
+      return !bushoHasAnyData(bushoCode);
+    }
+
+    // カードのタイトルをクリックして、その所属を畳んだり開いたりする（タイトルは常に残る）。
+    // この切り替えはその場限り（この日・この盤面を見ている間だけ）で、保存はしない。
+    // 日付や盤面タブを切り替えると、また「登録があるかどうか」で自動的に判定し直す
     function toggleBushoCollapse(bushoCode) {
-      if (hiddenBushoCodes.has(bushoCode)) hiddenBushoCodes.delete(bushoCode);
-      else hiddenBushoCodes.add(bushoCode);
-      localStorage.setItem('banmen_hidden_bushos', JSON.stringify([...hiddenBushoCodes]));
+      bushoCollapseOverride.set(bushoCode, !isBushoCollapsed(bushoCode));
       buildBoard();
     }
     let todayShiftStaffCodes = new Set(); // 今日の業務シフトに何らかの登録がある社員コード（盤面に自動配置されない種類の登録も含む）
@@ -685,6 +697,8 @@
       const loadId = ++currentLoadId;
       // 日付が変わるので、前の日に「あとで配置する」「×で外した」人の一覧もリセットする
       manuallyFreedStaffCodes = new Set();
+      // 日付が変わるので、カードの手動開閉の上書きもリセットする（また「登録があるか」で自動判定し直す）
+      bushoCollapseOverride = new Map();
 
       document.getElementById('loading').style.display = 'block';
       document.getElementById('main-layout').style.display = 'none';
@@ -1372,10 +1386,15 @@
       const usedSmahoSet = isSmahoPickMode
         ? new Set(banmenData.filter(r => r.smaho).map(r => r.smaho))
         : null;
+      // 休日・有休・健診・講習などで「お休みカード」に入っている人は、今日は貸せないので候補から外す
+      const offTodaySet = isSmahoPickMode
+        ? new Set(banmenData.filter(r => r.busho_code === 'お休み' && r.driver).map(r => r.driver))
+        : null;
       staffRows.forEach(s => {
         if (isSmahoPickMode) {
           if (!s.has_smaho) return;
           if (usedSmahoSet.has(s.staff_code)) return;
+          if (offTodaySet.has(s.staff_code)) return;
         } else {
           // 今日の業務シフトに登録済みの人は非表示。
           // すでに盤面に配置されている人も、「配置済みも表示」がONのとき以外は非表示にする
@@ -1394,8 +1413,9 @@
         el.className = 'list-item staff' + (isUsed ? ' staff-used' : '');
         el.textContent = s.name || s.staff_code;
         // 自分の所属とは違う所属の業務が今日すでに入っている場合、名前をその所属の色にする
-        // （盤面に自動配置されて「配置済み」表示になっている人にも、分かるように色をつける）
-        const otherColor = staffOtherBushoColor[s.staff_code];
+        // （盤面に自動配置されて「配置済み」表示になっている人にも、分かるように色をつける）。
+        // ただし「📱 スマホ（貸せる人）」リストでは、この色分けはかえって見にくく、意味もないので付けない
+        const otherColor = isSmahoPickMode ? null : staffOtherBushoColor[s.staff_code];
         if (otherColor) {
           el.style.color = otherColor;
           el.style.fontWeight = 'bold';
@@ -1439,11 +1459,13 @@
         el.addEventListener('dragstart', onDragStart);
         carList.appendChild(el);
       });
-      document.getElementById('car-list-title').textContent = carFilterMode === 'all'
-        ? '🚛 車両（全車両）'
-        : (leftPanelBushoFilter
-          ? `🚛 車両（${masters.bushoMap[leftPanelBushoFilter]?.busho_name || leftPanelBushoFilter}）`
-          : '🚛 車両（盤面）');
+      document.getElementById('car-list-title').textContent = isSmahoPickMode
+        ? '🚛 車両（該当なし）'
+        : (carFilterMode === 'all'
+          ? '🚛 車両（全車両）'
+          : (leftPanelBushoFilter
+            ? `🚛 車両（${masters.bushoMap[leftPanelBushoFilter]?.busho_name || leftPanelBushoFilter}）`
+            : '🚛 車両（盤面）'));
 
       // 派遣リスト
       const hakenList = document.getElementById('haken-list');
@@ -1770,7 +1792,7 @@
     // ===== 所属カード =====
     function buildBushoCard(bushoCode, busho, configs) {
       const card = document.createElement('div');
-      const isCollapsed = hiddenBushoCodes.has(bushoCode);
+      const isCollapsed = isBushoCollapsed(bushoCode);
       const groupName = busho?.group_name || '';
       const groupColor = groupName ? groupColorMap[groupName] : '';
       card.className = 'busho-card' + (isCollapsed ? ' collapsed' : '') + (groupColor ? ' has-group' : '');
@@ -3732,7 +3754,7 @@
       const bushoGroups = {};
       configData.forEach(c => {
         if (c.sp_jun === 99 || c.sp_jun === 98 || c.sp_jun === 97) return;
-        if (hiddenBushoCodes.has(c.busho_code)) return; // 盤面で畳んでいる（非表示にしている）所属は、エクセルにも出さない
+        if (isBushoCollapsed(c.busho_code)) return; // 盤面で畳んでいる（非表示にしている）所属は、エクセルにも出さない
         if (!bushoGroups[c.busho_code]) {
           bushoGroups[c.busho_code] = { col: (c.col_no || 0) + 1, row: (c.row_no || 0) + 1, hyoji: c.busho_hyoji_jun || 0, items: [] };
         }
