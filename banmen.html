@@ -1856,6 +1856,16 @@
         rightGroup.appendChild(addRowBtn);
       }
 
+      // この所属だけを作り直す（空にする）ボタン（他の所属には影響しない）
+      const recreateBtn = document.createElement('button');
+      recreateBtn.type = 'button';
+      recreateBtn.textContent = '🔄';
+      recreateBtn.title = `${busho?.busho_name || bushoCode}の業務シフト・盤面データを削除して、ゼロから作り直します`;
+      recreateBtn.className = 'add-row-btn-title';
+      recreateBtn.disabled = !canEdit();
+      recreateBtn.onclick = (e) => { e.stopPropagation(); recreateBusho(bushoCode); };
+      rightGroup.appendChild(recreateBtn);
+
       const toggleMark = document.createElement('span');
       toggleMark.className = 'busho-collapse-mark';
       toggleMark.textContent = isCollapsed ? '▶' : '▼';
@@ -3936,6 +3946,49 @@
 
       await loadData(); // 削除後に読み込み直すと、業務シフトから自動で組み立てられる
       showMsg('再作成しました', 'ok');
+    }
+
+    // ===== 所属カード1つだけを、業務シフトごと空にして、ゼロから作り直す（例：大松だけ作り直したい、など）=====
+    async function recreateBusho(bushoCode) {
+      if (!canEdit()) { showMsg('閲覧のみモードのため再作成できません', 'err'); return; }
+      const bushoName = masters.bushoMap[bushoCode]?.busho_name || bushoCode;
+      if (!confirm(`「${bushoName}」のこの日のデータを、盤面だけでなく業務シフトも含めてすべて消して、ゼロから作り直しますか？\n※他の所属には影響しません。休日・有休・健診・講習などの登録は消えません。この操作は元に戻せません`)) return;
+      showMsg(`${bushoName}を作り直し中...`, 'ok');
+
+      const dateStr = getDateStr(currentDate);
+      const yearMonth = getYearMonth(currentDate);
+      const dayCol = getDayCol(currentDate);
+      const dayColB = dayCol + 'b';
+
+      // この所属の業務コード（運転・助手・倉庫・事務など）一覧を取得する。
+      // 休日・有休・健診・講習は別の所属（お休み）として管理されているので、ここでは触れない
+      const { data: gyomuRows, error: gyomuErr } = await sb.from('shift_gyomu').select('gyomu_code').eq('busho_code', bushoCode);
+      if (gyomuErr) { showMsg('作り直しに失敗しました: ' + gyomuErr.message, 'err'); return; }
+      const bushoGyomuCodes = new Set((gyomuRows || []).map(g => g.gyomu_code));
+
+      // この所属の業務コードが入っている人の、業務シフト（午前・午後）をこの日だけ空にする
+      if (bushoGyomuCodes.size > 0) {
+        const { data: shiftRows, error: shiftSelErr } = await sb.from('shift_gyomu_shift')
+          .select(`staff_code, ${dayCol}, ${dayColB}`).eq('yearmonth', yearMonth);
+        if (shiftSelErr) { showMsg('業務シフトの確認に失敗しました: ' + shiftSelErr.message, 'err'); return; }
+        for (const r of (shiftRows || [])) {
+          const updateData = {};
+          if (bushoGyomuCodes.has(r[dayCol])) updateData[dayCol] = null;
+          if (bushoGyomuCodes.has(r[dayColB])) updateData[dayColB] = null;
+          if (Object.keys(updateData).length > 0) {
+            await sb.from('shift_gyomu_shift').update(updateData).eq('staff_code', r.staff_code).eq('yearmonth', yearMonth);
+          }
+        }
+      }
+
+      // 盤面側のデータも削除する
+      const { error: delErr } = await sb.from('shift_banmen').delete().eq('date', dateStr).eq('busho_code', bushoCode);
+      if (delErr) { showMsg('再作成に失敗しました: ' + delErr.message, 'err'); return; }
+
+      logChange('盤面', '作り直し（所属のみ）', `${getDateLabel(currentDate)} ${bushoName}`, '業務シフト・盤面データを削除してゼロから作り直した');
+
+      await loadData(); // 業務シフト側も空になっているので、この所属は完全に空の状態で表示される
+      showMsg(`${bushoName}を作り直しました`, 'ok');
     }
 
     function showMsg(text, type) {
