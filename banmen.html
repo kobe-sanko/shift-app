@@ -77,6 +77,9 @@
     .add-row-btn-title { font-size: 0.68rem; color: inherit; background: rgba(255,255,255,0.35); border: 1px solid rgba(255,255,255,0.7); border-radius: 3px; padding: 0 5px; margin-left: 6px; cursor: pointer; }
     .add-row-btn-title:hover { background: rgba(255,255,255,0.55); }
     .add-row-btn-title:disabled { opacity: 0.4; cursor: default; }
+    .recreate-busho-btn { font-size: 0.68rem; color: #c0392b; background: #fdecea; border: 1px solid #f0b8b0; border-radius: 3px; padding: 0 5px; margin-left: 6px; cursor: pointer; white-space: nowrap; }
+    .recreate-busho-btn:hover { background: #fbd9d4; }
+    .recreate-busho-btn:disabled { opacity: 0.4; cursor: default; }
     .busho-header-name { display: block; text-align: center; }
     .busho-header-right {
       position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
@@ -1859,9 +1862,9 @@
       // この所属だけを作り直す（空にする）ボタン（他の所属には影響しない）
       const recreateBtn = document.createElement('button');
       recreateBtn.type = 'button';
-      recreateBtn.textContent = '🔄';
+      recreateBtn.textContent = '空にする';
       recreateBtn.title = `${busho?.busho_name || bushoCode}の業務シフト・盤面データを削除して、ゼロから作り直します`;
-      recreateBtn.className = 'add-row-btn-title';
+      recreateBtn.className = 'recreate-busho-btn';
       recreateBtn.disabled = !canEdit();
       recreateBtn.onclick = (e) => { e.stopPropagation(); recreateBusho(bushoCode); };
       rightGroup.appendChild(recreateBtn);
