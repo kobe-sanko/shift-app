@@ -93,6 +93,7 @@
     .busho-card.collapsed { opacity: 0.75; }
     .busho-card.collapsed .busho-header { border-radius: 4px; }
     .list-item.car { border-left: 3px solid #e67e22; background: #fffbf0; }
+    .list-item.car-partial { font-size: 0.7rem; font-weight: bold; color: #b7791f; }
     .list-item.haken { border-left: 3px solid #e91e9c; background: #fff0f8; }
 
     /* 左パネル上部：所属で絞り込むプルダウン（社員・車両の両方に反映） */
@@ -1374,7 +1375,28 @@
       const conflictStaffCodes = new Set();
       conflictQueue.forEach(c => c.staffCodes.forEach(code => conflictStaffCodes.add(code)));
 
-      const usedCars = new Set(banmenData.filter(r => r.car_code).map(r => r.car_code));
+      // 車ごとの使用状況（午前／午後）を調べる。倉庫・事務・お休みなど「配送」以外の枠に
+      // 誤って車番が残っていても、それだけで車を丸ごと使用中扱いにしてしまわないよう、
+      // 配送の枠だけを見る（これをしないと、配送以外の枠に残った古い車番のせいで、
+      // 本当は空いている車が左のリストにも盤面にも一切出てこなくなるバグになる）。
+      // さらに、driver_ampm（午前のみ／午後のみ）を見て、半日だけ使われている車は
+      // 残り半日を「空いている」として扱えるようにする。
+      const carUsage = {}; // car_code -> { am: bool, pm: bool }
+      banmenData.forEach(r => {
+        if (!r.car_code || r.gyomu_code !== '配送') return;
+        if (!carUsage[r.car_code]) carUsage[r.car_code] = { am: false, pm: false };
+        if (r.driver_ampm === 'am') {
+          carUsage[r.car_code].am = true;
+        } else if (r.driver_ampm === 'pm') {
+          carUsage[r.car_code].pm = true;
+        } else {
+          carUsage[r.car_code].am = true;
+          carUsage[r.car_code].pm = true;
+        }
+      });
+      const usedCars = new Set(
+        Object.keys(carUsage).filter(code => carUsage[code].am && carUsage[code].pm)
+      );
       const usedHaken = new Set();
       hakenData.forEach(r => { if (r.haken_name) usedHaken.add(r.haken_name + '_' + r.renban); });
 
@@ -1453,12 +1475,17 @@
           return;
         }
         const el = document.createElement('div');
-        el.className = 'list-item car';
-        el.textContent = c.car_code;
+        // 午前だけ・午後だけ使われている車は、空いている方の時間帯をラベルで示す
+        const usage = carUsage[c.car_code];
+        const availAmpm = usage ? (usage.am ? 'pm' : 'am') : null;
+        el.className = 'list-item car' + (usage ? ' car-partial' : '');
+        el.textContent = usage ? `${usage.am ? '午後' : '午前'} ${c.car_code}` : c.car_code;
+        el.title = usage ? `この車は${usage.am ? '午前' : '午後'}は使用中です。${usage.am ? '午後' : '午前'}のみ配置できます` : '';
         el.draggable = canEdit();
         el.dataset.type = 'car';
         el.dataset.code = c.car_code;
         el.dataset.name = c.car_code;
+        if (availAmpm) el.dataset.carAvailAmpm = availAmpm;
         el.addEventListener('dragstart', onDragStart);
         carList.appendChild(el);
       });
@@ -2742,6 +2769,7 @@
         code: e.currentTarget.dataset.code,
         name: e.currentTarget.dataset.name,
         smahoOnly: e.currentTarget.dataset.smahoOnly === '1',
+        carAvailAmpm: e.currentTarget.dataset.carAvailAmpm || null,
       };
       e.dataTransfer.effectAllowed = 'move';
     }
@@ -2831,6 +2859,16 @@
       const existing = banmenData.find(r =>
         r.busho_code === bushoCode && r.gyomu_code === gyomuCode && r.row_no === rowNo
       );
+
+      // 午前だけ・午後だけ空いている車（左リストで「午前 ○○○」「午後 ○○○」と表示されているもの）を、
+      // 空いている時間帯と違う枠（終日の枠や、反対の時間帯の枠）に置こうとしていないか確認する
+      if (dragInfo.type === 'car' && dragInfo.carAvailAmpm) {
+        const targetAmpm = existing?.driver_ampm || null; // この枠の午前午後（nullは終日）
+        if (targetAmpm !== dragInfo.carAvailAmpm) {
+          showMsg(`この車は${dragInfo.carAvailAmpm === 'am' ? '午後' : '午前'}は使用中のため、${dragInfo.carAvailAmpm === 'am' ? '午前' : '午後'}の枠にしか置けません`, 'err');
+          return;
+        }
+      }
 
       // 派遣（haken）の場合：連番を付けて表示用の値を作り、shift_banmen_hakenにも記録する
       let hakenInsertInfo = null; // 新規配置時に使う
