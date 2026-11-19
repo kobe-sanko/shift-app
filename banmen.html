@@ -104,6 +104,11 @@
     }
     .gyomu-block-empty-btn:hover { background: #eef; color: #556; }
     .gyomu-block-empty-btn:disabled { cursor: default; opacity: 0.6; }
+    .gyomu-block-close-btn {
+      float: right; font-size: 0.7rem; color: #999; background: none;
+      border: none; cursor: pointer; padding: 0 4px;
+    }
+    .gyomu-block-close-btn:hover { color: #c00; }
     .list-item.haken { border-left: 3px solid #e91e9c; background: #fff0f8; }
 
     /* 左パネル上部：所属で絞り込むプルダウン（社員・車両の両方に反映） */
@@ -1950,6 +1955,24 @@
             return;
           }
           const block = buildGyomuBlock(bushoCode, cfg);
+          // 「＋」で手動表示したが、まだ空のままのブロックには、
+          // また畳めるように「－」ボタンをラベルの右に付ける
+          if (!hasBlockData && gyomuBlockShowOverride.has(blockKey)) {
+            const label = block.querySelector('.gyomu-label');
+            if (label) {
+              const closeBtn = document.createElement('button');
+              closeBtn.type = 'button';
+              closeBtn.className = 'gyomu-block-close-btn';
+              closeBtn.textContent = '－';
+              closeBtn.title = `${gyomuName}が空のままなら、また畳みます`;
+              closeBtn.onclick = (e) => {
+                e.stopPropagation();
+                gyomuBlockShowOverride.delete(blockKey);
+                buildBoard();
+              };
+              label.appendChild(closeBtn);
+            }
+          }
           body.appendChild(block);
         });
 
