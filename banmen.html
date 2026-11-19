@@ -94,21 +94,14 @@
     .busho-card.collapsed .busho-header { border-radius: 4px; }
     .list-item.car { border-left: 3px solid #e67e22; background: #fffbf0; }
     .list-item.car-partial { font-size: 0.7rem; font-weight: bold; color: #b7791f; }
-    /* その日データが空で畳んでいる配送・倉庫・事務ブロックの「＋」ボタン */
-    .gyomu-block-empty { padding: 2px 4px; }
-    .gyomu-block-empty-btn {
-      display: block; width: 100%; text-align: left;
-      padding: 3px 8px; font-size: 0.72rem; color: #999;
-      background: #f7f7f7; border: 1px dashed #ccc; border-radius: 4px;
-      cursor: pointer;
+    /* 配送・倉庫・事務ラベルの右に出す「＋」（畳んだブロックを開く）／「－」（空のブロックをまた畳む）ボタン */
+    .gyomu-block-toggle-btn {
+      font-size: 0.75rem; font-weight: bold; color: inherit; background: rgba(255,255,255,0.6);
+      border: 1px solid rgba(0,0,0,0.15); border-radius: 3px; cursor: pointer;
+      padding: 0 6px; line-height: 1.5; flex-shrink: 0;
     }
-    .gyomu-block-empty-btn:hover { background: #eef; color: #556; }
-    .gyomu-block-empty-btn:disabled { cursor: default; opacity: 0.6; }
-    .gyomu-block-close-btn {
-      float: right; font-size: 0.7rem; color: #999; background: none;
-      border: none; cursor: pointer; padding: 0 4px;
-    }
-    .gyomu-block-close-btn:hover { color: #c00; }
+    .gyomu-block-toggle-btn:hover { background: #fff; }
+    .gyomu-block-toggle-btn:disabled { cursor: default; opacity: 0.5; }
     .list-item.haken { border-left: 3px solid #e91e9c; background: #fff0f8; }
 
     /* 左パネル上部：所属で絞り込むプルダウン（社員・車両の両方に反映） */
@@ -220,8 +213,11 @@
     .gyomu-block { margin-bottom: 6px; }
     .gyomu-label {
       font-size: 0.72rem; font-weight: bold; padding: 2px 6px;
-      border-radius: 3px 3px 0 0; display: inline-block; margin-bottom: 2px;
+      border-radius: 3px 3px 0 0; display: flex; align-items: center;
+      justify-content: space-between; width: 100%; box-sizing: border-box;
+      margin-bottom: 2px;
     }
+    .gyomu-block-collapsed { margin-bottom: 6px; }
     .gyomu-label.haiso { background: #d0e8ff; color: #1a5276; border-left: 3px solid #2980b9; }
     .gyomu-label.souko { background: #fde8c0; color: #784212; border-left: 3px solid #e67e22; }
     .gyomu-label.jimu  { background: #e8d5ff; color: #4a235a; border-left: 3px solid #8e44ad; }
@@ -1940,20 +1936,33 @@
             r.busho_code === bushoCode && r.gyomu_code === gyomuName &&
             (r.driver || r.jyoshu1 || r.jyoshu2 || r.car_code || r.smaho)
           );
-          if (!hasBlockData && !gyomuBlockShowOverride.has(blockKey)) {
-            const placeholder = document.createElement('div');
-            placeholder.className = 'gyomu-block-empty';
-            const btn = document.createElement('button');
-            btn.type = 'button';
-            btn.className = 'gyomu-block-empty-btn';
-            btn.textContent = `＋ ${gyomuName}`;
-            btn.title = `今日は${gyomuName}に誰もいないため畳んでいます。押すと表示されます`;
-            btn.disabled = !canEdit();
-            btn.onclick = () => { gyomuBlockShowOverride.add(blockKey); buildBoard(); };
-            placeholder.appendChild(btn);
-            body.appendChild(placeholder);
+          const blockIsOpen = hasBlockData || gyomuBlockShowOverride.has(blockKey);
+
+          if (!blockIsOpen) {
+            // 空で畳んだ状態：いつものラベル（配送／倉庫／事務）だけを表示し、右に「＋」を付ける
+            const block = document.createElement('div');
+            block.className = 'gyomu-block gyomu-block-collapsed';
+            const labelClass = gyomuName === '配送' ? 'haiso' : gyomuName === '倉庫' ? 'souko' : 'jimu';
+            const label = document.createElement('div');
+            label.className = `gyomu-label ${labelClass}`;
+            label.textContent = gyomuName;
+            const toggleBtn = document.createElement('button');
+            toggleBtn.type = 'button';
+            toggleBtn.className = 'gyomu-block-toggle-btn';
+            toggleBtn.textContent = '＋';
+            toggleBtn.title = `今日は${gyomuName}に誰もいないため畳んでいます。押すと表示されます`;
+            toggleBtn.disabled = !canEdit();
+            toggleBtn.onclick = (e) => {
+              e.stopPropagation();
+              gyomuBlockShowOverride.add(blockKey);
+              buildBoard();
+            };
+            label.appendChild(toggleBtn);
+            block.appendChild(label);
+            body.appendChild(block);
             return;
           }
+
           const block = buildGyomuBlock(bushoCode, cfg);
           // 「＋」で手動表示したが、まだ空のままのブロックには、
           // また畳めるように「－」ボタンをラベルの右に付ける
@@ -1962,7 +1971,7 @@
             if (label) {
               const closeBtn = document.createElement('button');
               closeBtn.type = 'button';
-              closeBtn.className = 'gyomu-block-close-btn';
+              closeBtn.className = 'gyomu-block-toggle-btn';
               closeBtn.textContent = '－';
               closeBtn.title = `${gyomuName}が空のままなら、また畳みます`;
               closeBtn.onclick = (e) => {
