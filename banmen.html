@@ -94,6 +94,16 @@
     .busho-card.collapsed .busho-header { border-radius: 4px; }
     .list-item.car { border-left: 3px solid #e67e22; background: #fffbf0; }
     .list-item.car-partial { font-size: 0.7rem; font-weight: bold; color: #b7791f; }
+    /* その日データが空で畳んでいる配送・倉庫・事務ブロックの「＋」ボタン */
+    .gyomu-block-empty { padding: 2px 4px; }
+    .gyomu-block-empty-btn {
+      display: block; width: 100%; text-align: left;
+      padding: 3px 8px; font-size: 0.72rem; color: #999;
+      background: #f7f7f7; border: 1px dashed #ccc; border-radius: 4px;
+      cursor: pointer;
+    }
+    .gyomu-block-empty-btn:hover { background: #eef; color: #556; }
+    .gyomu-block-empty-btn:disabled { cursor: default; opacity: 0.6; }
     .list-item.haken { border-left: 3px solid #e91e9c; background: #fff0f8; }
 
     /* 左パネル上部：所属で絞り込むプルダウン（社員・車両の両方に反映） */
@@ -505,6 +515,11 @@
     // 日付や盤面タブを切り替えたら、また自動判定からやり直す（上書きはその場限り）
     let bushoCollapseOverride = new Map(); // bushoCode → true/false（手動で切り替えた分だけ入る）
 
+    // 配送・倉庫・事務の各ブロックのうち、データが空で自動的に畳んでいるものを
+    // 「＋」ボタンで手動で開いた分だけ記録する（bushoCode+'|'+gyomu_code のキー）
+    // 日付や盤面タブを切り替えたら、また自動判定からやり直す
+    let gyomuBlockShowOverride = new Set();
+
     // 上位部門（例：宅配）ごとに色を割り当てる（同じ部門のカードに同じ色の帯を付けるため）
     let groupColorMap = {};
     const GROUP_COLOR_PALETTE = ['#8e44ad', '#16a085', '#d35400', '#2980b9', '#c0392b', '#27ae60', '#f39c12', '#7f8c8d'];
@@ -703,6 +718,8 @@
       manuallyFreedStaffCodes = new Set();
       // 日付が変わるので、カードの手動開閉の上書きもリセットする（また「登録があるか」で自動判定し直す）
       bushoCollapseOverride = new Map();
+      // 日付が変わるので、ブロックの「＋」での手動表示もリセットする（また空なら畳んだ状態からやり直す）
+      gyomuBlockShowOverride = new Set();
 
       document.getElementById('loading').style.display = 'block';
       document.getElementById('main-layout').style.display = 'none';
@@ -1908,8 +1925,30 @@
         const body = document.createElement('div');
         body.className = 'busho-body';
 
-        // hyoji_jun順でブロックを並べる
+        // hyoji_jun順でブロックを並べる。
+        // 配送・倉庫・事務のうち、その日まったく誰も（何も）配置されていないブロックは、
+        // カードの中身をすっきりさせるため表示しない（「＋」ボタンで、いつでも呼び出せる）
         configs.sort((a, b) => a.hyoji_jun - b.hyoji_jun).forEach(cfg => {
+          const gyomuName = cfg.gyomu_code;
+          const blockKey = bushoCode + '|' + gyomuName;
+          const hasBlockData = banmenData.some(r =>
+            r.busho_code === bushoCode && r.gyomu_code === gyomuName &&
+            (r.driver || r.jyoshu1 || r.jyoshu2 || r.car_code || r.smaho)
+          );
+          if (!hasBlockData && !gyomuBlockShowOverride.has(blockKey)) {
+            const placeholder = document.createElement('div');
+            placeholder.className = 'gyomu-block-empty';
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'gyomu-block-empty-btn';
+            btn.textContent = `＋ ${gyomuName}`;
+            btn.title = `今日は${gyomuName}に誰もいないため畳んでいます。押すと表示されます`;
+            btn.disabled = !canEdit();
+            btn.onclick = () => { gyomuBlockShowOverride.add(blockKey); buildBoard(); };
+            placeholder.appendChild(btn);
+            body.appendChild(placeholder);
+            return;
+          }
           const block = buildGyomuBlock(bushoCode, cfg);
           body.appendChild(block);
         });
