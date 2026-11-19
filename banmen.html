@@ -2196,6 +2196,9 @@
       const res = await sb.from('shift_banmen').insert(insert).select().single();
       if (res.error) { showMsg('枠の追加に失敗しました: ' + res.error.message, 'err'); return; }
       banmenData.push(res.data);
+      // 追加した枠はまだ空（運転手や車が入っていない）なので、配送ブロックが
+      // 「空だから畳む」判定のままだと見えなくなってしまう。追加したら必ず開いて見せる
+      gyomuBlockShowOverride.add(bushoCode + '|配送');
       buildBoard();
     }
 
